@@ -636,6 +636,11 @@ LIMIT 500`)
 // 返回已存在的绑定记录，不存在则返回 nil。
 func (r *Repository) FindActiveBindingByUserAndPoint(ctx context.Context, userID uint64, pointID uint64) (*domain.BindRelation, error) {
 	var b domain.BindRelation
+	var (
+		sUserID, sRealtimeID, sNodeID, sPointID, sCreatedBy sql.NullInt64
+		sUnboundAtMS                                           sql.NullTime
+		sExtra                                                 sql.NullString
+	)
 	err := r.db.QueryRowContext(ctx, `
 SELECT
   bind_id, user_id, bind_user_name,
@@ -647,17 +652,17 @@ FROM bind_relations
 WHERE user_id = ? AND point_id = ? AND bind_status = 1
 LIMIT 1`, userID, pointID).Scan(
 		&b.BindID,
-		scanNullUint64(&b.UserID),
+		&sUserID,
 		&b.BindUserName,
 		&b.GatewayID,
-		scanNullUint64(&b.RealtimeID),
-		scanNullUint64(&b.NodeID),
-		scanNullUint64(&b.PointID),
+		&sRealtimeID,
+		&sNodeID,
+		&sPointID,
 		&b.ShedNo, &b.Frequency, &b.DeviceExternalID, &b.FunctionType,
 		&b.BindStatus, &b.BoundAtMS,
-		scanNullTime(&b.UnboundAtMS),
-		scanNullUint64(&b.CreatedBy),
-		scanNullString(&b.Extra),
+		&sUnboundAtMS,
+		&sCreatedBy,
+		&sExtra,
 		&b.CreatedAt, &b.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
@@ -665,6 +670,32 @@ LIMIT 1`, userID, pointID).Scan(
 	}
 	if err != nil {
 		return nil, err
+	}
+	if sUserID.Valid {
+		uid := uint64(sUserID.Int64)
+		b.UserID = &uid
+	}
+	if sRealtimeID.Valid {
+		rid := uint64(sRealtimeID.Int64)
+		b.RealtimeID = &rid
+	}
+	if sNodeID.Valid {
+		nid := uint64(sNodeID.Int64)
+		b.NodeID = &nid
+	}
+	if sPointID.Valid {
+		pid := uint64(sPointID.Int64)
+		b.PointID = &pid
+	}
+	if sCreatedBy.Valid {
+		cb := uint64(sCreatedBy.Int64)
+		b.CreatedBy = &cb
+	}
+	if sUnboundAtMS.Valid {
+		b.UnboundAtMS = &sUnboundAtMS.Time
+	}
+	if sExtra.Valid {
+		b.Extra = &sExtra.String
 	}
 	return &b, nil
 }
