@@ -98,7 +98,16 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("/api/v1/admin/collectors",
 		authMiddleware(secret, adminRoles(http.HandlerFunc(ah.handleCollectors))))
 	mux.Handle("/api/v1/admin/bindings",
-		authMiddleware(secret, adminRoles(http.HandlerFunc(ah.handleBindings))))
+		authMiddleware(secret, adminRoles(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.Method {
+			case http.MethodGet:
+				ah.handleBindings(w, r)
+			case http.MethodPost:
+				ah.handleCreateBinding(w, r)
+			default:
+				writeCode(w, http.StatusMethodNotAllowed, 405, "method not allowed")
+			}
+		}))))
 	mux.Handle("/api/v1/admin/bindings/",
 		authMiddleware(secret, adminRoles(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.Method == http.MethodDelete {

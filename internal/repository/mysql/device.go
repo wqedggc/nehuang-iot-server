@@ -1001,7 +1001,7 @@ SELECT
   bind_status, bound_at_ms, unbound_at_ms, created_by,
   extra, created_at, updated_at
 FROM bind_relations
-WHERE user_id = ?
+WHERE user_id = ? AND bind_status = 1
 ORDER BY updated_at DESC
 LIMIT 500`, userID)
 	if err != nil {
