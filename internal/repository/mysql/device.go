@@ -911,22 +911,53 @@ LIMIT 500`, userID)
 	bindings := make([]domain.BindRelation, 0)
 	for rows.Next() {
 		var b domain.BindRelation
+		var (
+			sUserID, sRealtimeID, sNodeID, sPointID, sCreatedBy sql.NullInt64
+			sUnboundAtMS                                           sql.NullTime
+			sExtra                                                 sql.NullString
+		)
 		if err := rows.Scan(
 			&b.BindID,
-			scanNullUint64(&b.UserID),
+			&sUserID,
 			&b.BindUserName,
 			&b.GatewayID,
-			scanNullUint64(&b.RealtimeID),
-			scanNullUint64(&b.NodeID),
-			scanNullUint64(&b.PointID),
+			&sRealtimeID,
+			&sNodeID,
+			&sPointID,
 			&b.ShedNo, &b.Frequency, &b.DeviceExternalID, &b.FunctionType,
 			&b.BindStatus, &b.BoundAtMS,
-			scanNullTime(&b.UnboundAtMS),
-			scanNullUint64(&b.CreatedBy),
-			scanNullString(&b.Extra),
+			&sUnboundAtMS,
+			&sCreatedBy,
+			&sExtra,
 			&b.CreatedAt, &b.UpdatedAt,
 		); err != nil {
 			return nil, err
+		}
+		if sUserID.Valid {
+			uid := uint64(sUserID.Int64)
+			b.UserID = &uid
+		}
+		if sRealtimeID.Valid {
+			rid := uint64(sRealtimeID.Int64)
+			b.RealtimeID = &rid
+		}
+		if sNodeID.Valid {
+			nid := uint64(sNodeID.Int64)
+			b.NodeID = &nid
+		}
+		if sPointID.Valid {
+			pid := uint64(sPointID.Int64)
+			b.PointID = &pid
+		}
+		if sCreatedBy.Valid {
+			cb := uint64(sCreatedBy.Int64)
+			b.CreatedBy = &cb
+		}
+		if sUnboundAtMS.Valid {
+			b.UnboundAtMS = &sUnboundAtMS.Time
+		}
+		if sExtra.Valid {
+			b.Extra = &sExtra.String
 		}
 		bindings = append(bindings, b)
 	}
@@ -1243,9 +1274,18 @@ func nullableFloat64(v *float64) interface{} {
 
 // scanNullUint64 返回一个可被 Scan 写入的 *sql.NullInt64（MySQL BIGINT UNSIGNED 需用 NullInt64）。
 func scanNullUint64(dest **uint64) interface{} {
-	var n sql.NullInt64
-	*dest = new(uint64)
-	return &n
+	return new(sql.NullInt64)
+}
+
+// assignNullUint64 将 scanNullUint64 扫描的结果赋值给目标指针。
+func assignNullUint64(dest **uint64, v interface{}) {
+	n := v.(*sql.NullInt64)
+	if n.Valid {
+		val := uint64(n.Int64)
+		*dest = &val
+	} else {
+		*dest = nil
+	}
 }
 
 // scanNullInt 返回可被 Scan 写入的 *sql.NullInt64。
