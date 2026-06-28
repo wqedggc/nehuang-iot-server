@@ -9,6 +9,7 @@ configs/mysql/*.cnf
 # 编译产物
 # ============================================================================
 nehuang-server
+hash_password
 *.exe
 *.exe~
 *.dll
