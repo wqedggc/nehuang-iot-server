@@ -189,7 +189,7 @@ curl http://localhost:8080/healthz
 
 ## 七、日常更新部署流程
 
-### 7.1 推荐方式：本地交叉编译 + scp（避免服务器 Go 版本问题）
+### 7.1 标准部署：推送代码 + 服务器编译
 
 ```bash
 # === 本地操作 ===
@@ -200,24 +200,24 @@ git add -A
 git commit -m "描述你的改动"
 git push cnb main
 
-# 交叉编译 Linux 二进制（本地 Go 1.24，目标 CentOS 7）
-GOOS=linux GOARCH=amd64 go build -o nehuang-server-linux ./cmd/server/
-
-# 上传二进制到服务器
-scp -i ~/shore.pem \
-  nehuang-server-linux \
-  root@43.143.208.153:/home/work/nehuang-iot-server/nehuang-server
-
 # === 服务器操作 ===
 ssh -i ~/shore.pem root@43.143.208.153
 
 cd /home/work/nehuang-iot-server
 
-# 停止旧进程
+# 从 CNB 拉取最新代码
+git pull cnb main
+
+# Go 1.20 兼容性处理（本地 go.mod 是 1.24）
+sed -i 's/go 1.24.0/go 1.20/' go.mod
+sed -i '/toolchain/d' go.mod
+
+# 编译
+go build -o nehuang-server ./cmd/server/
+
+# 重启服务
 pkill -f nehuang-server || true
 sleep 1
-
-# 启动新进程
 source .env
 nohup ./nehuang-server > server.log 2>&1 &
 
@@ -227,42 +227,7 @@ curl http://localhost:8080/healthz
 curl http://localhost:8080/readyz
 ```
 
-### 7.2 备用方式：服务器上编译
-
-```bash
-# === 本地：推送代码 ===
-cd ~/Library/Mobile\ Documents/com~apple~CloudDocs/Knowledge/nehuang-iot-server/
-git push cnb main
-
-# === 服务器：拉取编译 ===
-ssh -i ~/shore.pem root@43.143.208.153
-
-cd /home/work/nehuang-iot-server
-
-git pull cnb main
-
-# Go 1.20 兼容性处理（服务器 Go 1.20 vs 本地 Go 1.24）
-sed -i 's/go 1.24.0/go 1.20/' go.mod
-sed -i '/toolchain/d' go.mod
-
-# 降级依赖（仅在依赖变化时需要）
-go get golang.org/x/crypto@v0.17.0
-go get github.com/go-sql-driver/mysql@v1.7.1
-
-# 编译
-go build -o nehuang-server ./cmd/server/
-
-# 重启
-pkill -f nehuang-server || true
-sleep 1
-source .env
-nohup ./nehuang-server > server.log 2>&1 &
-
-# 验证
-curl http://localhost:8080/healthz
-```
-
-### 7.3 更新前端代码
+### 7.2 更新前端代码
 
 ```bash
 # === 本地操作 ===
@@ -297,7 +262,7 @@ curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/admin/
 # → 200
 ```
 
-### 7.4 快速更新（不走 git，直接传文件）
+### 7.3 快速更新（不走 git，直接传文件）
 
 ```bash
 # === 本地：打包上传 prototype ===
@@ -369,7 +334,7 @@ curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/mock/mock-api.js
 
 ## 九、注意事项
 
-1. **Go 版本兼容**：本地开发用 Go 1.24，服务器是 Go 1.20。推荐使用**本地交叉编译**（`GOOS=linux GOARCH=amd64 go build`），避免服务器编译的兼容性问题。
+1. **Go 版本兼容**：本地开发用 Go 1.24，服务器是 Go 1.20。部署时必须在服务器上 `sed` 修改 go.mod 后编译。**不要本地交叉编译后 scp 二进制文件**。
 2. **CORS 中间件**：已在 `server.go` 的 `Routes()` 最外层应用，允许所有来源跨域访问。
 3. **静态文件路由**：Go 1.20 的 FileServer 对 `/admin/index.html` 会 301 到 `/admin/`，所以首页重定向到 `/admin/` 而非 `/admin/index.html`。
 4. **安全组**：需要在腾讯云控制台放行 8080 端口（TCP 入站），否则外网无法访问。
