@@ -3,6 +3,7 @@ package http
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 
 	"nehuang-iot-server/internal/domain"
@@ -67,6 +68,16 @@ type deviceEvent struct {
 
 // handleDeviceEvents 处理 POST /api/v1/adapter/device-events。
 // 认证使用 X-Adapter-Token header，不走用户 JWT。
+//
+// 数据可靠性保证：
+//  1. 先读 Body 全部字节 → 确保网络层数据完整接收
+//  2. json.Unmarshal 解析 → 验证 JSON 格式
+//  3. 完整 payload（含 protocol_version, source_type, message_id,
+//     gateway_name, gateway_external_id, remote_ip, remote_port,
+//     reported_at_ms, events[]）以 JSON 字符串存入 payload_snapshot
+//  4. raw_device_events INSERT 必须在所有业务逻辑之前执行
+//  5. INSERT 失败 → 直接返回 500，不执行任何业务逻辑
+//  6. INSERT 成功 → 再按 events[] 逐条处理，失败不丢失原始数据
 func (h *adapterHandler) handleDeviceEvents(w http.ResponseWriter, r *http.Request) {
 	// 校验 Adapter Token。
 	token := r.Header.Get("X-Adapter-Token")
@@ -75,17 +86,27 @@ func (h *adapterHandler) handleDeviceEvents(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	// 1. 先读取原始 Body 字节，确保网络层数据完整接收。
+	bodyBytes, err := readAllBody(r)
+	if err != nil {
+		writeCode(w, http.StatusBadRequest, 400, "failed to read request body: "+err.Error())
+		return
+	}
+
+	// 2. 解析 JSON（验证格式）。
 	var envelope deviceEventEnvelope
-	if err := json.NewDecoder(r.Body).Decode(&envelope); err != nil {
+	if err := json.Unmarshal(bodyBytes, &envelope); err != nil {
 		writeCode(w, http.StatusBadRequest, 400, "invalid request body: "+err.Error())
 		return
 	}
 
-	// 将整个 envelope 序列化为快照字符串。
-	payloadBytes, _ := json.Marshal(envelope)
-	payloadSnapshot := string(payloadBytes)
+	// 3. 构建 payload_snapshot（完整原始数据，一字不丢）。
+	//    使用原始 bodyBytes 而非 json.Marshal(envelope)，避免反序列化再序列化
+	//    导致的字段顺序/精度/空白字符差异。
+	payloadSnapshot := string(bodyBytes)
 
-	// 1. 先写 raw_device_events（原始事件保留，不做推断）。
+	// 4. 先写 raw_device_events（原始事件保留，不做推断）。
+	//    这一步在所有业务逻辑之前，确保即使后续处理失败，原始数据也不丢失。
 	rawEvent := &domain.RawDeviceEvent{
 		GatewayName:     strPtr(envelope.GatewayName),
 		EventType:       domain.RawEventWork, // 默认 work，后续按 event_type 细分
@@ -102,7 +123,7 @@ func (h *adapterHandler) handleDeviceEvents(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// 2. 按 gateway_external_id 查找或创建云边设备。
+	// 5. 按 gateway_external_id 查找或创建云边设备。
 	gateway, err := h.repo.FindGatewayByExternalID(r.Context(), envelope.GatewayExternalID)
 	if err != nil {
 		_ = h.repo.UpdateRawEventParseStatus(r.Context(), rawEventID, domain.ParseStatusFailed, strPtr("find gateway error: "+err.Error()))
@@ -115,7 +136,7 @@ func (h *adapterHandler) handleDeviceEvents(w http.ResponseWriter, r *http.Reque
 		gatewayID = gateway.GatewayID
 	}
 
-	// 3. 逐条处理 events[]。
+	// 6. 逐条处理 events[]。
 	parseFailed := false
 	var parseError string
 	for _, ev := range envelope.Events {
@@ -228,7 +249,7 @@ func (h *adapterHandler) handleDeviceEvents(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
-	// 4. 更新 raw_device_events 解析状态。
+	// 7. 更新 raw_device_events 解析状态。
 	if parseFailed {
 		_ = h.repo.UpdateRawEventParseStatus(r.Context(), rawEventID, domain.ParseStatusFailed, strPtr(parseError))
 	} else {
@@ -247,6 +268,14 @@ func (h *adapterHandler) handleDeviceEvents(w http.ResponseWriter, r *http.Reque
 			"status":       "ok",
 		},
 	})
+}
+
+// readAllBody 读取请求体全部字节，失败返回错误。
+// 与 json.NewDecoder(r.Body).Decode() 不同，此函数先完整读取原始字节，
+// 保证 payload_snapshot 中存储的是硬件原始数据，而非 Go 结构体二次序列化结果。
+func readAllBody(r *http.Request) ([]byte, error) {
+	defer r.Body.Close()
+	return io.ReadAll(r.Body)
 }
 
 // strPtr 返回字符串指针，nil 时返回 nil。
