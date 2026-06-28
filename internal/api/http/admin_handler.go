@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
 	"nehuang-iot-server/internal/auth"
@@ -16,6 +18,20 @@ type adminRepository interface {
 	GetUserByUsername(ctx context.Context, username string) (*domain.User, error)
 	GetUserByID(ctx context.Context, userID uint64) (*domain.User, error)
 	UpdateLastLogin(ctx context.Context, userID uint64, t time.Time) error
+	// 管理端用户列表。
+	ListUsers(ctx context.Context) ([]domain.User, error)
+	// 管理端采集执行器列表（全量）。
+	ListCollectors(ctx context.Context) ([]domain.CollectorNode, error)
+	// 管理端绑定关系列表（全量）。
+	ListBindings(ctx context.Context) ([]domain.BindRelation, error)
+	// 创建绑定关系。
+	CreateBinding(ctx context.Context, b *domain.BindRelation) error
+	// 解绑（软删除，更新 bind_status=2）。
+	UnbindRelation(ctx context.Context, bindID uint64) error
+	// 管理端原始事件列表。
+	ListRawEvents(ctx context.Context, limit int) ([]domain.RawDeviceEvent, error)
+	// 管理端控制日志列表。
+	ListControlLogs(ctx context.Context, limit int) ([]domain.ControlLogSummary, error)
 }
 
 // adminHandler handles all /api/v1/admin/* endpoints.
@@ -141,11 +157,160 @@ func (h *adminHandler) me(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"data": map[string]any{
-			"user_id":         user.UserID,
-			"username":        username,
-			"role":            uint8(user.Role),
-			"display_name":    displayName,
+			"user_id":          user.UserID,
+			"username":         username,
+			"role":             uint8(user.Role),
+			"display_name":     displayName,
 			"last_login_at_ms": lastLoginStr,
 		},
 	})
+}
+
+// handleUsers 处理 GET /api/v1/admin/users。
+// 返回所有用户列表。
+func (h *adminHandler) handleUsers(w http.ResponseWriter, r *http.Request) {
+	users, err := h.repo.ListUsers(r.Context())
+	if err != nil {
+		writeCode(w, http.StatusInternalServerError, 500, "internal error: "+err.Error())
+		return
+	}
+
+	// 转换为前端期望的格式。
+	type userItem struct {
+		UserID       uint64 `json:"user_id"`
+		Username     string `json:"username"`
+		DisplayName  string `json:"display_name"`
+		Role         uint8  `json:"role"`
+		RoleLabel    string `json:"role_label"`
+		UserType     uint8  `json:"user_type"`
+		Status       uint8  `json:"status"`
+		StatusLabel  string `json:"status_label"`
+		BindingCount int    `json:"binding_count"`
+	}
+
+	roleLabels := map[uint8]string{1: "超级管理员", 2: "管理员", 3: "农户"}
+	statusLabels := map[uint8]string{1: "正常", 2: "已禁用", 3: "已删除"}
+
+	items := make([]userItem, 0, len(users))
+	for _, u := range users {
+		uname := ""
+		if u.Username != nil {
+			uname = *u.Username
+		}
+		dname := ""
+		if u.DisplayName != nil {
+			dname = *u.DisplayName
+		}
+		items = append(items, userItem{
+			UserID:       u.UserID,
+			Username:     uname,
+			DisplayName:  dname,
+			Role:         uint8(u.Role),
+			RoleLabel:    roleLabels[uint8(u.Role)],
+			UserType:     uint8(u.UserType),
+			Status:       uint8(u.Status),
+			StatusLabel:  statusLabels[uint8(u.Status)],
+			BindingCount: 0,
+		})
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"data": items})
+}
+
+// handleCollectors 处理 GET /api/v1/admin/collectors。
+// 返回所有采集执行器列表（全量）。
+func (h *adminHandler) handleCollectors(w http.ResponseWriter, r *http.Request) {
+	collectors, err := h.repo.ListCollectors(r.Context())
+	if err != nil {
+		writeCode(w, http.StatusInternalServerError, 500, "internal error: "+err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"data": collectors})
+}
+
+// handleBindings 处理 GET /api/v1/admin/bindings。
+// 返回所有绑定关系列表。
+func (h *adminHandler) handleBindings(w http.ResponseWriter, r *http.Request) {
+	bindings, err := h.repo.ListBindings(r.Context())
+	if err != nil {
+		writeCode(w, http.StatusInternalServerError, 500, "internal error: "+err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"data": bindings})
+}
+
+// handleCreateBinding 处理 POST /api/v1/admin/bindings。
+// 创建新的绑定关系。
+func (h *adminHandler) handleCreateBinding(w http.ResponseWriter, r *http.Request) {
+	var b domain.BindRelation
+	if err := json.NewDecoder(r.Body).Decode(&b); err != nil {
+		writeCode(w, http.StatusBadRequest, 400, "invalid request body")
+		return
+	}
+
+	if err := h.repo.CreateBinding(r.Context(), &b); err != nil {
+		writeCode(w, http.StatusInternalServerError, 500, "failed to create binding: "+err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"data": b})
+}
+
+// handleUnbind 处理 DELETE /api/v1/admin/bindings/{id}。
+// 解绑（软删除）。
+func (h *adminHandler) handleUnbind(w http.ResponseWriter, r *http.Request) {
+	// 从路径提取 bind_id：/api/v1/admin/bindings/{id}
+	path := strings.TrimPrefix(r.URL.Path, "/api/v1/admin/bindings/")
+	bindID, err := strconv.ParseUint(path, 10, 64)
+	if err != nil {
+		writeCode(w, http.StatusBadRequest, 400, "invalid bind id")
+		return
+	}
+
+	if err := h.repo.UnbindRelation(r.Context(), bindID); err != nil {
+		writeCode(w, http.StatusInternalServerError, 500, "failed to unbind: "+err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{"deleted": true}})
+}
+
+// handleRawEvents 处理 GET /api/v1/admin/raw-events。
+// 返回原始设备事件列表。
+func (h *adminHandler) handleRawEvents(w http.ResponseWriter, r *http.Request) {
+	limit := 100
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 && parsed <= 200 {
+			limit = parsed
+		}
+	}
+
+	events, err := h.repo.ListRawEvents(r.Context(), limit)
+	if err != nil {
+		writeCode(w, http.StatusInternalServerError, 500, "internal error: "+err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"data": events})
+}
+
+// handleControlLogs 处理 GET /api/v1/admin/control-logs。
+// 返回控制日志列表。
+func (h *adminHandler) handleControlLogs(w http.ResponseWriter, r *http.Request) {
+	limit := 100
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 && parsed <= 200 {
+			limit = parsed
+		}
+	}
+
+	logs, err := h.repo.ListControlLogs(r.Context(), limit)
+	if err != nil {
+		writeCode(w, http.StatusInternalServerError, 500, "internal error: "+err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"data": logs})
 }

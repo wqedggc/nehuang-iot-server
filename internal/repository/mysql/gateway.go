@@ -65,6 +65,8 @@ func (r *Repository) Dashboard(ctx context.Context) (map[string]any, error) {
 	var gatewayCount int64
 	var onlineGatewayCount int64
 	var collectorCount int64
+	var farmerCount int64
+	var sensorDataCount int64
 
 	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM cloud_gateways`).Scan(&gatewayCount); err != nil {
 		return nil, err
@@ -72,7 +74,13 @@ func (r *Repository) Dashboard(ctx context.Context) (map[string]any, error) {
 	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM cloud_gateways WHERE online_status = 1`).Scan(&onlineGatewayCount); err != nil {
 		return nil, err
 	}
-	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM device_realtime_maps`).Scan(&collectorCount); err != nil {
+	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM collector_nodes WHERE node_status = 1`).Scan(&collectorCount); err != nil {
+		return nil, err
+	}
+	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM users WHERE user_type = 2 AND status = 1`).Scan(&farmerCount); err != nil {
+		return nil, err
+	}
+	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sensor_data`).Scan(&sensorDataCount); err != nil {
 		return nil, err
 	}
 
@@ -85,6 +93,8 @@ func (r *Repository) Dashboard(ctx context.Context) (map[string]any, error) {
 		"gateway_count":        gatewayCount,
 		"online_gateway_count": onlineGatewayCount,
 		"collector_count":      collectorCount,
+		"farmer_count":         farmerCount,
+		"today_reports":        sensorDataCount,
 		"last_raw_event_at_ms": lastRawEventAt,
 	}, nil
 }

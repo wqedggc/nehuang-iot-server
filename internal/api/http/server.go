@@ -23,17 +23,23 @@ type repository interface {
 	gatewayRepository
 	adminRepository
 	miniRepository
+	adapterRepository
 }
 
 // Server is the HTTP API server, holding dependencies for all handlers.
 type Server struct {
-	repo   repository
-	jwtCfg config.JWTConfig
+	repo         repository
+	jwtCfg       config.JWTConfig
+	adapterToken string
 }
 
 // NewServer constructs a Server with the given repository and JWT configuration.
-func NewServer(repo repository, jwtCfg config.JWTConfig) *Server {
-	return &Server{repo: repo, jwtCfg: jwtCfg}
+func NewServer(repo repository, cfg config.Config) *Server {
+	return &Server{
+		repo:         repo,
+		jwtCfg:       cfg.JWT,
+		adapterToken: cfg.AdapterToken,
+	}
 }
 
 // Routes builds the http.Handler with all routes and middleware applied.
@@ -46,27 +52,76 @@ func (s *Server) Routes() http.Handler {
 
 	secret := []byte(s.jwtCfg.Secret)
 	adminRoles := roleMiddleware(domain.RoleSuperAdmin, domain.RoleAdmin)
+	farmerRoles := roleMiddleware(domain.RoleSuperAdmin, domain.RoleAdmin, domain.RoleFarmer)
 
 	ah := &adminHandler{repo: s.repo, jwtCfg: s.jwtCfg}
 	mh := &miniHandler{repo: s.repo, jwtCfg: s.jwtCfg}
+	adh := &adapterHandler{repo: s.repo, adapterToken: s.adapterToken}
 
-	// Admin auth — public.
+	// ─── Adapter API（X-Adapter-Token 认证，不走用户 JWT） ───
+	mux.HandleFunc("/api/v1/adapter/device-events", adh.handleDeviceEvents)
+
+	// ─── Admin auth — public ───
 	mux.HandleFunc("/api/v1/admin/login", ah.login)
 
-	// Admin protected.
+	// ─── Admin protected ───
 	mux.Handle("/api/v1/admin/me",
 		authMiddleware(secret, adminRoles(http.HandlerFunc(ah.me))))
 	mux.Handle("/api/v1/admin/dashboard",
 		authMiddleware(secret, adminRoles(http.HandlerFunc(s.dashboard))))
+	mux.Handle("/api/v1/admin/users",
+		authMiddleware(secret, adminRoles(http.HandlerFunc(ah.handleUsers))))
+	mux.Handle("/api/v1/admin/collectors",
+		authMiddleware(secret, adminRoles(http.HandlerFunc(ah.handleCollectors))))
+	mux.Handle("/api/v1/admin/bindings",
+		authMiddleware(secret, adminRoles(http.HandlerFunc(ah.handleBindings))))
+	mux.Handle("/api/v1/admin/bindings/",
+		authMiddleware(secret, adminRoles(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodDelete {
+				ah.handleUnbind(w, r)
+			} else if r.Method == http.MethodPost {
+				ah.handleCreateBinding(w, r)
+			} else {
+				writeCode(w, http.StatusMethodNotAllowed, 405, "method not allowed")
+			}
+		}))))
+	mux.Handle("/api/v1/admin/raw-events",
+		authMiddleware(secret, adminRoles(http.HandlerFunc(ah.handleRawEvents))))
+	mux.Handle("/api/v1/admin/control-logs",
+		authMiddleware(secret, adminRoles(http.HandlerFunc(ah.handleControlLogs))))
 
-	// Mini-program auth — public (dev/test only).
+	// ─── Mini-program auth — public (dev/test only) ───
 	mux.HandleFunc("/api/v1/mini/mock-login", mh.mockLogin)
 
-	// Gateway list — protected.
+	// ─── Mini-program protected ───
+	mux.Handle("/api/v1/mini/me",
+		authMiddleware(secret, farmerRoles(http.HandlerFunc(mh.handleMe))))
+	mux.Handle("/api/v1/mini/devices",
+		authMiddleware(secret, farmerRoles(http.HandlerFunc(mh.handleDevices))))
+	mux.Handle("/api/v1/mini/devices/",
+		authMiddleware(secret, farmerRoles(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// 路由分发：/api/v1/mini/devices/{id}/realtime 或 /history 或 /control
+			path := r.URL.Path
+			if r.Method == http.MethodGet {
+				if hasSuffix(path, "/realtime") {
+					mh.handleDeviceRealtime(w, r)
+				} else if hasSuffix(path, "/history") {
+					mh.handleDeviceHistory(w, r)
+				} else {
+					writeCode(w, http.StatusNotFound, 404, "not found")
+				}
+			} else if r.Method == http.MethodPost && hasSuffix(path, "/control") {
+				mh.handleControl(w, r)
+			} else {
+				writeCode(w, http.StatusMethodNotAllowed, 405, "method not allowed")
+			}
+		}))))
+
+	// ─── Gateway list — protected ───
 	mux.Handle("/api/v1/gateways",
 		authMiddleware(secret, adminRoles(http.HandlerFunc(s.listGateways))))
 
-	// Static frontend files (prototype HTML/CSS/JS).
+	// ─── Static frontend files (prototype HTML/CSS/JS) ───
 	// Go 1.20 FileServer: accessing /admin/index.html directly causes a 301
 	// redirect to /admin/.  Use /admin/ instead — FileServer auto-serves
 	// index.html when the directory path is requested.
@@ -82,6 +137,10 @@ func (s *Server) Routes() http.Handler {
 	})
 
 	return corsMiddleware(loggingMiddleware(mux))
+}
+
+func hasSuffix(path, suffix string) bool {
+	return len(path) >= len(suffix) && path[len(path)-len(suffix):] == suffix
 }
 
 func (s *Server) healthz(w http.ResponseWriter, r *http.Request) {

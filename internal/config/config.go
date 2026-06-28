@@ -12,9 +12,10 @@ import (
 
 // Config is the top-level application configuration.
 type Config struct {
-	HTTPAddr string
-	MySQL    MySQLConfig
-	JWT      JWTConfig
+	HTTPAddr     string
+	MySQL        MySQLConfig
+	JWT          JWTConfig
+	AdapterToken string // Adapter API 认证 token，从环境变量 NEHUANG_ADAPTER_TOKEN 读取
 }
 
 // MySQLConfig holds MySQL connection parameters loaded from a .cnf file.
@@ -47,6 +48,8 @@ func Load() (Config, error) {
 			AdminTokenTTL:  24 * time.Hour,
 			FarmerTokenTTL: 72 * time.Hour,
 		},
+		// Adapter API 认证 token，服务端和 Mock 脚本共用。
+		AdapterToken: envDefault("NEHUANG_ADAPTER_TOKEN", "nehuang-adapter-dev-token"),
 	}
 
 	credPath := envDefault("NEHUANG_MYSQL_DEFAULTS_FILE", filepath.Join("configs", "mysql", "nehuang_agent.cnf"))

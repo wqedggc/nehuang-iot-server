@@ -27,7 +27,7 @@ func main() {
 	defer db.Close()
 
 	repo := mysqlrepo.New(db)
-	handler := httpapi.NewServer(repo, cfg.JWT)
+	handler := httpapi.NewServer(repo, cfg)
 
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
