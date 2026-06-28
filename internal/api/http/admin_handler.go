@@ -20,10 +20,18 @@ type adminRepository interface {
 	UpdateLastLogin(ctx context.Context, userID uint64, t time.Time) error
 	// 管理端用户列表。
 	ListUsers(ctx context.Context) ([]domain.User, error)
+	// 管理端农户详情（含绑定数）。
+	GetFarmerByID(ctx context.Context, userID uint64) (*domain.User, int, error)
+	// 管理端编辑农户资料。
+	UpdateFarmer(ctx context.Context, userID uint64, updates map[string]any) error
+	// 管理端农户列表（user_type=2, status<>3, keyword 模糊搜索）。
+	ListFarmers(ctx context.Context, keyword string) ([]domain.User, []int, error)
 	// 管理端采集执行器列表（全量）。
 	ListCollectors(ctx context.Context) ([]domain.CollectorNode, error)
 	// 管理端绑定关系列表（全量）。
 	ListBindings(ctx context.Context) ([]domain.BindRelation, error)
+	// 按用户 ID 查询绑定关系。
+	ListBindingsByUserID(ctx context.Context, userID uint64) ([]domain.BindRelation, error)
 	// 创建绑定关系。
 	CreateBinding(ctx context.Context, b *domain.BindRelation) error
 	// 解绑（软删除，更新 bind_status=2）。
@@ -32,6 +40,12 @@ type adminRepository interface {
 	ListRawEvents(ctx context.Context, limit int) ([]domain.RawDeviceEvent, error)
 	// 管理端控制日志列表。
 	ListControlLogs(ctx context.Context, limit int) ([]domain.ControlLogSummary, error)
+	// 设备树查询。
+	GetDeviceTree(ctx context.Context) ([]domain.DeviceTreeNode, error)
+	// 按 point_id 查询功能点。
+	FindDevicePointByID(ctx context.Context, pointID uint64) (*domain.DevicePoint, error)
+	// 按 user_id + point_id 查询 active 绑定。
+	FindActiveBindingByUserAndPoint(ctx context.Context, userID uint64, pointID uint64) (*domain.BindRelation, error)
 }
 
 // adminHandler handles all /api/v1/admin/* endpoints.
@@ -241,16 +255,79 @@ func (h *adminHandler) handleBindings(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"data": bindings})
 }
 
+// createBindingRequest is the JSON body for POST /api/v1/admin/bindings.
+type createBindingRequest struct {
+	UserID  uint64 `json:"user_id"`
+	PointID uint64 `json:"point_id"`
+}
+
 // handleCreateBinding 处理 POST /api/v1/admin/bindings。
-// 创建新的绑定关系。
+// 以 point_id 为核心创建绑定关系。从 device_points 表关联补全 gateway_id、node_id 等字段。
+// 重复绑定同一 active point 幂等成功（直接返回已有绑定）。
 func (h *adminHandler) handleCreateBinding(w http.ResponseWriter, r *http.Request) {
-	var b domain.BindRelation
-	if err := json.NewDecoder(r.Body).Decode(&b); err != nil {
+	var req createBindingRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeCode(w, http.StatusBadRequest, 400, "invalid request body")
 		return
 	}
+	if req.UserID == 0 || req.PointID == 0 {
+		writeCode(w, http.StatusBadRequest, 400, "user_id and point_id are required")
+		return
+	}
 
-	if err := h.repo.CreateBinding(r.Context(), &b); err != nil {
+	ctx := r.Context()
+
+	// 幂等检查：是否已存在 active 绑定。
+	existing, err := h.repo.FindActiveBindingByUserAndPoint(ctx, req.UserID, req.PointID)
+	if err != nil {
+		writeCode(w, http.StatusInternalServerError, 500, "internal error: "+err.Error())
+		return
+	}
+	if existing != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"data": existing})
+		return
+	}
+
+	// 查询 device_point 补全字段。
+	point, err := h.repo.FindDevicePointByID(ctx, req.PointID)
+	if err != nil {
+		writeCode(w, http.StatusInternalServerError, 500, "internal error: "+err.Error())
+		return
+	}
+	if point == nil {
+		writeCode(w, http.StatusNotFound, 404, "device point not found")
+		return
+	}
+
+	// 查询用户信息获取 bind_user_name。
+	user, err := h.repo.GetUserByID(ctx, req.UserID)
+	if err != nil {
+		writeCode(w, http.StatusInternalServerError, 500, "internal error: "+err.Error())
+		return
+	}
+	if user == nil {
+		writeCode(w, http.StatusNotFound, 404, "user not found")
+		return
+	}
+
+	bindUserName := ""
+	if user.DisplayName != nil {
+		bindUserName = *user.DisplayName
+	}
+
+	b := &domain.BindRelation{
+		UserID:           &req.UserID,
+		BindUserName:     bindUserName,
+		GatewayID:        point.GatewayID,
+		NodeID:           &point.NodeID,
+		PointID:          &point.PointID,
+		ShedNo:           "",
+		Frequency:        point.Frequency,
+		DeviceExternalID: point.DeviceExternalID,
+		FunctionType:     point.FunctionType,
+	}
+
+	if err := h.repo.CreateBinding(ctx, b); err != nil {
 		writeCode(w, http.StatusInternalServerError, 500, "failed to create binding: "+err.Error())
 		return
 	}
@@ -313,4 +390,210 @@ func (h *adminHandler) handleControlLogs(w http.ResponseWriter, r *http.Request)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"data": logs})
+}
+
+// handleDeviceTree 处理 GET /api/v1/admin/device-tree。
+// 返回设备树：gateway → collector → point 三层结构。
+func (h *adminHandler) handleDeviceTree(w http.ResponseWriter, r *http.Request) {
+	tree, err := h.repo.GetDeviceTree(r.Context())
+	if err != nil {
+		writeCode(w, http.StatusInternalServerError, 500, "internal error: "+err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"data": tree})
+}
+
+// handleFarmerBindings 处理 GET /api/v1/admin/farmers/{user_id}/bindings。
+// 返回指定农户的所有绑定关系（含 active 和已解绑）。
+func (h *adminHandler) handleFarmerBindings(w http.ResponseWriter, r *http.Request) {
+	// 从路径提取 user_id：/api/v1/admin/farmers/{user_id}/bindings
+	path := strings.TrimPrefix(r.URL.Path, "/api/v1/admin/farmers/")
+	path = strings.TrimSuffix(path, "/bindings")
+	userID, err := strconv.ParseUint(path, 10, 64)
+	if err != nil {
+		writeCode(w, http.StatusBadRequest, 400, "invalid user id")
+		return
+	}
+
+	bindings, err := h.repo.ListBindingsByUserID(r.Context(), userID)
+	if err != nil {
+		writeCode(w, http.StatusInternalServerError, 500, "internal error: "+err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"data": bindings})
+}
+
+// handleFarmerDetail 处理 GET /api/v1/admin/farmers/{user_id}。
+// 返回农户详情，含 binding_count。
+func (h *adminHandler) handleFarmerDetail(w http.ResponseWriter, r *http.Request) {
+	// 从路径提取 user_id：/api/v1/admin/farmers/{user_id}
+	path := strings.TrimPrefix(r.URL.Path, "/api/v1/admin/farmers/")
+	// 可能带有 /bindings 后缀，需要处理
+	path = strings.TrimSuffix(path, "/bindings")
+	userID, err := strconv.ParseUint(path, 10, 64)
+	if err != nil {
+		writeCode(w, http.StatusBadRequest, 400, "invalid user id")
+		return
+	}
+
+	user, bindingCount, err := h.repo.GetFarmerByID(r.Context(), userID)
+	if err != nil {
+		writeCode(w, http.StatusInternalServerError, 500, "internal error: "+err.Error())
+		return
+	}
+	if user == nil {
+		writeCode(w, http.StatusNotFound, 404, "farmer not found")
+		return
+	}
+
+	displayName := ""
+	if user.DisplayName != nil {
+		displayName = *user.DisplayName
+	}
+	mobile := ""
+	if user.Mobile != nil {
+		mobile = *user.Mobile
+	}
+	address := ""
+	if user.Address != nil {
+		address = *user.Address
+	}
+	remark := ""
+	if user.Remark != nil {
+		remark = *user.Remark
+	}
+	wechatOpenID := ""
+	if user.WechatOpenID != nil {
+		wechatOpenID = *user.WechatOpenID
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"data": map[string]any{
+			"user_id":       user.UserID,
+			"display_name":  displayName,
+			"mobile":        mobile,
+			"address":       address,
+			"remark":        remark,
+			"wechat_openid": wechatOpenID,
+			"status":        uint8(user.Status),
+			"binding_count": bindingCount,
+			"created_at":    user.CreatedAt.UTC().Format("2006-01-02T15:04:05.000Z"),
+			"updated_at":    user.UpdatedAt.UTC().Format("2006-01-02T15:04:05.000Z"),
+		},
+	})
+}
+
+// handleFarmerUpdate 处理 PATCH /api/v1/admin/farmers/{user_id}。
+// 编辑农户资料：display_name, mobile, address, remark, status。
+func (h *adminHandler) handleFarmerUpdate(w http.ResponseWriter, r *http.Request) {
+	// 从路径提取 user_id：/api/v1/admin/farmers/{user_id}
+	path := strings.TrimPrefix(r.URL.Path, "/api/v1/admin/farmers/")
+	userID, err := strconv.ParseUint(path, 10, 64)
+	if err != nil {
+		writeCode(w, http.StatusBadRequest, 400, "invalid user id")
+		return
+	}
+
+	var req struct {
+		DisplayName *string           `json:"display_name"`
+		Mobile      *string           `json:"mobile"`
+		Address     *string           `json:"address"`
+		Remark      *string           `json:"remark"`
+		Status      *domain.UserStatus `json:"status"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeCode(w, http.StatusBadRequest, 400, "invalid request body")
+		return
+	}
+
+	updates := map[string]any{
+		"display_name": nil,
+		"mobile":       nil,
+		"address":      nil,
+		"remark":       nil,
+		"status":       nil,
+	}
+	if req.DisplayName != nil {
+		updates["display_name"] = *req.DisplayName
+	}
+	if req.Mobile != nil {
+		updates["mobile"] = *req.Mobile
+	}
+	if req.Address != nil {
+		updates["address"] = *req.Address
+	}
+	if req.Remark != nil {
+		updates["remark"] = *req.Remark
+	}
+	if req.Status != nil {
+		updates["status"] = uint8(*req.Status)
+	}
+
+	if err := h.repo.UpdateFarmer(r.Context(), userID, updates); err != nil {
+		writeCode(w, http.StatusInternalServerError, 500, "failed to update farmer: "+err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{"updated": true}})
+}
+
+// handleFarmers 处理 GET /api/v1/admin/farmers。
+// 返回农户列表（user_type=2, status<>3），支持 keyword 搜索。
+func (h *adminHandler) handleFarmers(w http.ResponseWriter, r *http.Request) {
+	keyword := r.URL.Query().Get("keyword")
+
+	users, bindingCounts, err := h.repo.ListFarmers(r.Context(), keyword)
+	if err != nil {
+		writeCode(w, http.StatusInternalServerError, 500, "internal error: "+err.Error())
+		return
+	}
+
+	type farmerItem struct {
+		UserID       uint64 `json:"user_id"`
+		DisplayName  string `json:"display_name"`
+		Mobile       string `json:"mobile"`
+		WechatOpenID string `json:"wechat_openid"`
+		Status       uint8  `json:"status"`
+		StatusLabel  string `json:"status_label"`
+		BindingCount int    `json:"binding_count"`
+		CreatedAt    string `json:"created_at"`
+		UpdatedAt    string `json:"updated_at"`
+	}
+
+	statusLabels := map[uint8]string{1: "正常", 2: "已禁用", 3: "已删除"}
+
+	items := make([]farmerItem, 0, len(users))
+	for i, u := range users {
+		dname := ""
+		if u.DisplayName != nil {
+			dname = *u.DisplayName
+		}
+		mobile := ""
+		if u.Mobile != nil {
+			mobile = *u.Mobile
+		}
+		openID := ""
+		if u.WechatOpenID != nil {
+			openID = *u.WechatOpenID
+		}
+		bc := 0
+		if i < len(bindingCounts) {
+			bc = bindingCounts[i]
+		}
+		items = append(items, farmerItem{
+			UserID:       u.UserID,
+			DisplayName:  dname,
+			Mobile:       mobile,
+			WechatOpenID: openID,
+			Status:       uint8(u.Status),
+			StatusLabel:  statusLabels[uint8(u.Status)],
+			BindingCount: bc,
+			CreatedAt:    u.CreatedAt.UTC().Format("2006-01-02T15:04:05.000Z"),
+			UpdatedAt:    u.UpdatedAt.UTC().Format("2006-01-02T15:04:05.000Z"),
+		})
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"data": items})
 }

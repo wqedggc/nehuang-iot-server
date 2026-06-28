@@ -66,6 +66,16 @@ func (h *miniHandler) mockLogin(w http.ResponseWriter, r *http.Request) {
 		isNewUser = true
 		displayName := req.MockNickname
 		openID := req.MockOpenID
+
+		// If no nickname provided, generate a default display name.
+		if displayName == "" {
+			suffix := openID
+			if len(suffix) > 6 {
+				suffix = suffix[len(suffix)-6:]
+			}
+			displayName = "测试农户_" + suffix
+		}
+
 		newUser := &domain.User{
 			UserType:     domain.UserTypeFarmer,
 			Role:         domain.RoleFarmer,
@@ -97,11 +107,17 @@ func (h *miniHandler) mockLogin(w http.ResponseWriter, r *http.Request) {
 	// Best-effort update; do not fail the login on error.
 	_ = h.repo.UpdateLastLogin(r.Context(), user.UserID, now)
 
+	displayName := ""
+	if user.DisplayName != nil {
+		displayName = *user.DisplayName
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
 		"data": map[string]any{
-			"token":       token,
-			"user_id":     user.UserID,
-			"is_new_user": isNewUser,
+			"token":        token,
+			"user_id":      user.UserID,
+			"is_new_user":  isNewUser,
+			"display_name": displayName,
 		},
 	})
 }

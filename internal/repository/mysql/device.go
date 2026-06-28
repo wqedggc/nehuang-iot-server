@@ -589,7 +589,7 @@ VALUES
 
 // ─── 绑定关系 ───
 
-// ListBindings 返回所有绑定关系列表。
+// ListBindings 返回所有 active 绑定关系列表。
 func (r *Repository) ListBindings(ctx context.Context) ([]domain.BindRelation, error) {
 	rows, err := r.db.QueryContext(ctx, `
 SELECT
@@ -602,6 +602,307 @@ FROM bind_relations
 WHERE bind_status = 1
 ORDER BY updated_at DESC
 LIMIT 500`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	bindings := make([]domain.BindRelation, 0)
+	for rows.Next() {
+		var b domain.BindRelation
+		if err := rows.Scan(
+			&b.BindID,
+			scanNullUint64(&b.UserID),
+			&b.BindUserName,
+			&b.GatewayID,
+			scanNullUint64(&b.RealtimeID),
+			scanNullUint64(&b.NodeID),
+			scanNullUint64(&b.PointID),
+			&b.ShedNo, &b.Frequency, &b.DeviceExternalID, &b.FunctionType,
+			&b.BindStatus, &b.BoundAtMS,
+			scanNullTime(&b.UnboundAtMS),
+			scanNullUint64(&b.CreatedBy),
+			scanNullString(&b.Extra),
+			&b.CreatedAt, &b.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		bindings = append(bindings, b)
+	}
+	return bindings, rows.Err()
+}
+
+// FindActiveBindingByUserAndPoint 检查是否已存在用户对某个功能点的 active 绑定。
+// 返回已存在的绑定记录，不存在则返回 nil。
+func (r *Repository) FindActiveBindingByUserAndPoint(ctx context.Context, userID uint64, pointID uint64) (*domain.BindRelation, error) {
+	var b domain.BindRelation
+	err := r.db.QueryRowContext(ctx, `
+SELECT
+  bind_id, user_id, bind_user_name,
+  gateway_id, realtime_id, node_id, point_id,
+  shed_no, frequency, device_external_id, function_type,
+  bind_status, bound_at_ms, unbound_at_ms, created_by,
+  extra, created_at, updated_at
+FROM bind_relations
+WHERE user_id = ? AND point_id = ? AND bind_status = 1
+LIMIT 1`, userID, pointID).Scan(
+		&b.BindID,
+		scanNullUint64(&b.UserID),
+		&b.BindUserName,
+		&b.GatewayID,
+		scanNullUint64(&b.RealtimeID),
+		scanNullUint64(&b.NodeID),
+		scanNullUint64(&b.PointID),
+		&b.ShedNo, &b.Frequency, &b.DeviceExternalID, &b.FunctionType,
+		&b.BindStatus, &b.BoundAtMS,
+		scanNullTime(&b.UnboundAtMS),
+		scanNullUint64(&b.CreatedBy),
+		scanNullString(&b.Extra),
+		&b.CreatedAt, &b.UpdatedAt,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &b, nil
+}
+
+// FindDevicePointByID 按 point_id 查询单个功能点。
+func (r *Repository) FindDevicePointByID(ctx context.Context, pointID uint64) (*domain.DevicePoint, error) {
+	var p domain.DevicePoint
+	var bestMin, bestMax sql.NullFloat64
+	var realValue sql.NullFloat64
+
+	err := r.db.QueryRowContext(ctx, `
+SELECT
+  point_id, node_id, gateway_id, frequency, device_external_id,
+  function_type, channel_no, point_name, unit,
+  best_min, best_max, real_value, real_temp,
+  value_status, run_mode, controllable_status,
+  rel1_status, rel2_status, operation_state,
+  poll_interval, point_status, last_report_at_ms,
+  last_raw_event_id, remark, extra, created_at, updated_at
+FROM device_points
+WHERE point_id = ?
+LIMIT 1`, pointID).Scan(
+		&p.PointID, &p.NodeID, &p.GatewayID, &p.Frequency, &p.DeviceExternalID,
+		&p.FunctionType, &p.ChannelNo, &p.PointName, &p.Unit,
+		&bestMin, &bestMax, &realValue, &p.RealTemp,
+		&p.ValueStatus, &p.RunMode, &p.ControllableStatus,
+		&p.Rel1Status, &p.Rel2Status, &p.OperationState,
+		&p.PollInterval, &p.PointStatus,
+		scanNullTime(&p.LastReportAtMS),
+		scanNullUint64(&p.LastRawEventID),
+		scanNullString(&p.Remark), scanNullString(&p.Extra),
+		&p.CreatedAt, &p.UpdatedAt,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if bestMin.Valid {
+		p.BestMin = &bestMin.Float64
+	}
+	if bestMax.Valid {
+		p.BestMax = &bestMax.Float64
+	}
+	if realValue.Valid {
+		p.RealValue = &realValue.Float64
+	}
+	return &p, nil
+}
+
+// GetDeviceTree 返回设备树：gateway → collector → point 三层结构。
+func (r *Repository) GetDeviceTree(ctx context.Context) ([]domain.DeviceTreeNode, error) {
+	// 1. 查询所有 active gateways。
+	gwRows, err := r.db.QueryContext(ctx, `
+SELECT gateway_id, gateway_name, online_status
+FROM cloud_gateways
+ORDER BY gateway_id ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer gwRows.Close()
+
+	type gwRow struct {
+		ID     uint64
+		Name   string
+		Status uint8
+	}
+	var gateways []gwRow
+	for gwRows.Next() {
+		var g gwRow
+		if err := gwRows.Scan(&g.ID, &g.Name, &g.Status); err != nil {
+			return nil, err
+		}
+		gateways = append(gateways, g)
+	}
+	if err := gwRows.Err(); err != nil {
+		return nil, err
+	}
+	if len(gateways) == 0 {
+		return []domain.DeviceTreeNode{}, nil
+	}
+
+	// 2. 查询所有 active collector_nodes。
+	colRows, err := r.db.QueryContext(ctx, `
+SELECT node_id, gateway_id, frequency, device_external_id
+FROM collector_nodes
+WHERE node_status = 1
+ORDER BY gateway_id ASC, node_id ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer colRows.Close()
+
+	type colRow struct {
+		NodeID    uint64
+		GatewayID uint64
+		Frequency int
+		DevExtID  string
+	}
+	var collectors []colRow
+	for colRows.Next() {
+		var c colRow
+		if err := colRows.Scan(&c.NodeID, &c.GatewayID, &c.Frequency, &c.DevExtID); err != nil {
+			return nil, err
+		}
+		collectors = append(collectors, c)
+	}
+	if err := colRows.Err(); err != nil {
+		return nil, err
+	}
+
+	// 3. 查询所有 active device_points。
+	ptRows, err := r.db.QueryContext(ctx, `
+SELECT point_id, node_id, function_type, point_name, channel_no
+FROM device_points
+WHERE point_status = 1
+ORDER BY node_id ASC, channel_no ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer ptRows.Close()
+
+	type ptRow struct {
+		PointID  uint64
+		NodeID   uint64
+		FuncType uint8
+		FuncName string
+		ChNo     int
+	}
+	var points []ptRow
+	for ptRows.Next() {
+		var p ptRow
+		if err := ptRows.Scan(&p.PointID, &p.NodeID, &p.FuncType, &p.FuncName, &p.ChNo); err != nil {
+			return nil, err
+		}
+		points = append(points, p)
+	}
+	if err := ptRows.Err(); err != nil {
+		return nil, err
+	}
+
+	// 4. 查询所有 active 绑定关系，建立 point_id → user_id 映射。
+	bindRows, err := r.db.QueryContext(ctx, `
+SELECT point_id, user_id
+FROM bind_relations
+WHERE bind_status = 1`)
+	if err != nil {
+		return nil, err
+	}
+	defer bindRows.Close()
+
+	boundMap := make(map[uint64]uint64) // point_id → user_id
+	for bindRows.Next() {
+		var pid, uid uint64
+		if err := bindRows.Scan(&pid, &uid); err != nil {
+			return nil, err
+		}
+		boundMap[pid] = uid
+	}
+	if err := bindRows.Err(); err != nil {
+		return nil, err
+	}
+
+	// 5. 组装树结构。
+	// 建立索引：gateway_id → collectors, node_id → points。
+	colByGW := make(map[uint64][]colRow)
+	for _, c := range collectors {
+		colByGW[c.GatewayID] = append(colByGW[c.GatewayID], c)
+	}
+	ptByNode := make(map[uint64][]ptRow)
+	for _, p := range points {
+		ptByNode[p.NodeID] = append(ptByNode[p.NodeID], p)
+	}
+
+	funcNameLabel := func(ft uint8) string {
+		switch ft {
+		case 1: return "温度"
+		case 2: return "墒情"
+		case 3: return "限位"
+		case 4: return "继电器"
+		case 5: return "水泵"
+		case 6: return "风机"
+		default: return "未知"
+		}
+	}
+
+	tree := make([]domain.DeviceTreeNode, 0, len(gateways))
+	for _, g := range gateways {
+		node := domain.DeviceTreeNode{
+			GatewayID:   g.ID,
+			GatewayName: g.Name,
+			Status:      g.Status,
+			Collectors:  make([]domain.DeviceTreeCollector, 0),
+		}
+		for _, c := range colByGW[g.ID] {
+			col := domain.DeviceTreeCollector{
+				NodeID:           c.NodeID,
+				DeviceExternalID: c.DevExtID,
+				Frequency:        c.Frequency,
+				Points:           make([]domain.DeviceTreePoint, 0),
+			}
+			for _, p := range ptByNode[c.NodeID] {
+				boundUserID, isBound := boundMap[p.PointID]
+				var boundUserIDPtr *uint64
+				if isBound {
+					boundUserIDPtr = &boundUserID
+				}
+				col.Points = append(col.Points, domain.DeviceTreePoint{
+					PointID:      p.PointID,
+					FunctionType: p.FuncType,
+					FunctionName: funcNameLabel(p.FuncType),
+					ChannelNo:    p.ChNo,
+					IsBound:      isBound,
+					BoundUserID:  boundUserIDPtr,
+				})
+			}
+			node.Collectors = append(node.Collectors, col)
+		}
+		tree = append(tree, node)
+	}
+
+	return tree, nil
+}
+
+// ListBindingsByUserID 返回指定用户的所有绑定关系（含 active 和已解绑）。
+func (r *Repository) ListBindingsByUserID(ctx context.Context, userID uint64) ([]domain.BindRelation, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT
+  bind_id, user_id, bind_user_name,
+  gateway_id, realtime_id, node_id, point_id,
+  shed_no, frequency, device_external_id, function_type,
+  bind_status, bound_at_ms, unbound_at_ms, created_by,
+  extra, created_at, updated_at
+FROM bind_relations
+WHERE user_id = ?
+ORDER BY updated_at DESC
+LIMIT 500`, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -718,11 +1019,128 @@ LIMIT ?`, limit)
 
 // ─── 用户列表 ───
 
+// ListFarmers 返回农户列表（user_type=2, status<>3），支持 keyword 模糊搜索。
+// 返回用户列表和对应的 binding_count。
+func (r *Repository) ListFarmers(ctx context.Context, keyword string) ([]domain.User, []int, error) {
+	var rows *sql.Rows
+	var err error
+
+	if keyword != "" {
+		like := "%" + keyword + "%"
+		rows, err = r.db.QueryContext(ctx, `
+SELECT
+  u.user_id, u.user_type, u.role, u.username, u.mobile,
+  u.address, u.remark,
+  u.wechat_openid, u.wechat_unionid, u.password_hash,
+  u.display_name, u.avatar_url, u.status,
+  u.last_login_at_ms, u.created_at, u.updated_at,
+  COALESCE(bc.cnt, 0) AS binding_count
+FROM users u
+LEFT JOIN (
+  SELECT user_id, COUNT(*) AS cnt
+  FROM bind_relations
+  WHERE bind_status = 1
+  GROUP BY user_id
+) bc ON u.user_id = bc.user_id
+WHERE u.user_type = 2 AND u.status <> 3
+  AND (u.display_name LIKE ? OR u.mobile LIKE ? OR u.wechat_openid LIKE ?)
+ORDER BY u.created_at DESC
+LIMIT 200`, like, like, like)
+	} else {
+		rows, err = r.db.QueryContext(ctx, `
+SELECT
+  u.user_id, u.user_type, u.role, u.username, u.mobile,
+  u.address, u.remark,
+  u.wechat_openid, u.wechat_unionid, u.password_hash,
+  u.display_name, u.avatar_url, u.status,
+  u.last_login_at_ms, u.created_at, u.updated_at,
+  COALESCE(bc.cnt, 0) AS binding_count
+FROM users u
+LEFT JOIN (
+  SELECT user_id, COUNT(*) AS cnt
+  FROM bind_relations
+  WHERE bind_status = 1
+  GROUP BY user_id
+) bc ON u.user_id = bc.user_id
+WHERE u.user_type = 2 AND u.status <> 3
+ORDER BY u.created_at DESC
+LIMIT 200`)
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+
+	users := make([]domain.User, 0)
+	bindingCounts := make([]int, 0)
+	for rows.Next() {
+		var u domain.User
+		var bc int
+		var (
+			username      sql.NullString
+			mobile        sql.NullString
+			address       sql.NullString
+			remark        sql.NullString
+			wechatOpenID  sql.NullString
+			wechatUnionID sql.NullString
+			passwordHash  sql.NullString
+			displayName   sql.NullString
+			avatarURL     sql.NullString
+			lastLoginAtMS sql.NullTime
+		)
+		if err := rows.Scan(
+			&u.UserID, &u.UserType, &u.Role,
+			&username, &mobile,
+			&address, &remark,
+			&wechatOpenID, &wechatUnionID, &passwordHash,
+			&displayName, &avatarURL, &u.Status,
+			&lastLoginAtMS, &u.CreatedAt, &u.UpdatedAt,
+			&bc,
+		); err != nil {
+			return nil, nil, err
+		}
+		if username.Valid {
+			u.Username = &username.String
+		}
+		if mobile.Valid {
+			u.Mobile = &mobile.String
+		}
+		if address.Valid {
+			u.Address = &address.String
+		}
+		if remark.Valid {
+			u.Remark = &remark.String
+		}
+		if wechatOpenID.Valid {
+			u.WechatOpenID = &wechatOpenID.String
+		}
+		if wechatUnionID.Valid {
+			u.WechatUnionID = &wechatUnionID.String
+		}
+		if passwordHash.Valid {
+			u.PasswordHash = &passwordHash.String
+		}
+		if displayName.Valid {
+			u.DisplayName = &displayName.String
+		}
+		if avatarURL.Valid {
+			u.AvatarURL = &avatarURL.String
+		}
+		if lastLoginAtMS.Valid {
+			u.LastLoginAtMS = &lastLoginAtMS.Time
+		}
+		users = append(users, u)
+		bindingCounts = append(bindingCounts, bc)
+	}
+	return users, bindingCounts, rows.Err()
+}
+
 // ListUsers 返回所有用户列表。
 func (r *Repository) ListUsers(ctx context.Context) ([]domain.User, error) {
 	rows, err := r.db.QueryContext(ctx, `
 SELECT
   user_id, user_type, role, username, mobile,
+  address, remark,
   wechat_openid, wechat_unionid, password_hash,
   display_name, avatar_url, status,
   last_login_at_ms, created_at, updated_at
@@ -740,6 +1158,8 @@ LIMIT 200`)
 		var (
 			username      sql.NullString
 			mobile        sql.NullString
+			address       sql.NullString
+			remark        sql.NullString
 			wechatOpenID  sql.NullString
 			wechatUnionID sql.NullString
 			passwordHash  sql.NullString
@@ -750,6 +1170,7 @@ LIMIT 200`)
 		if err := rows.Scan(
 			&u.UserID, &u.UserType, &u.Role,
 			&username, &mobile,
+			&address, &remark,
 			&wechatOpenID, &wechatUnionID, &passwordHash,
 			&displayName, &avatarURL, &u.Status,
 			&lastLoginAtMS, &u.CreatedAt, &u.UpdatedAt,
@@ -761,6 +1182,12 @@ LIMIT 200`)
 		}
 		if mobile.Valid {
 			u.Mobile = &mobile.String
+		}
+		if address.Valid {
+			u.Address = &address.String
+		}
+		if remark.Valid {
+			u.Remark = &remark.String
 		}
 		if wechatOpenID.Valid {
 			u.WechatOpenID = &wechatOpenID.String

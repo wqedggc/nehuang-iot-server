@@ -36,6 +36,8 @@ type User struct {
 	Role          Role
 	Username      *string    // nullable; used for admin login
 	Mobile        *string    // nullable
+	Address       *string    // nullable
+	Remark        *string    // nullable
 	WechatOpenID  *string    // nullable; used for mini-program login
 	WechatUnionID *string    // nullable
 	PasswordHash  *string    // nullable; bcrypt hash

@@ -294,3 +294,31 @@ type MiniDeviceHistory struct {
 	BestMax   *float64           `json:"best_max"`
 	Points    []MiniHistoryPoint `json:"points"`
 }
+
+// ─── 设备树（管理端 device-tree 接口） ───
+
+// DeviceTreeNode 是设备树的顶层节点，对应一个 cloud_gateway。
+type DeviceTreeNode struct {
+	GatewayID   uint64               `json:"gateway_id"`
+	GatewayName string               `json:"gateway_name"`
+	Status      uint8                `json:"status"`
+	Collectors  []DeviceTreeCollector `json:"collectors"`
+}
+
+// DeviceTreeCollector 是设备树的第二层，对应一个 collector_node。
+type DeviceTreeCollector struct {
+	NodeID           uint64            `json:"node_id"`
+	DeviceExternalID string            `json:"device_external_id"`
+	Frequency        int               `json:"frequency"`
+	Points           []DeviceTreePoint `json:"points"`
+}
+
+// DeviceTreePoint 是设备树的第三层，对应一个 device_point。
+type DeviceTreePoint struct {
+	PointID      uint64  `json:"point_id"`
+	FunctionType uint8   `json:"function_type"`
+	FunctionName string  `json:"function_name"`
+	ChannelNo    int     `json:"channel_no"`
+	IsBound      bool    `json:"is_bound"`
+	BoundUserID  *uint64 `json:"bound_user_id"`
+}

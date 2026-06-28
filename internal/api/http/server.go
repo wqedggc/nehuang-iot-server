@@ -90,6 +90,30 @@ func (s *Server) Routes() http.Handler {
 		authMiddleware(secret, adminRoles(http.HandlerFunc(ah.handleRawEvents))))
 	mux.Handle("/api/v1/admin/control-logs",
 		authMiddleware(secret, adminRoles(http.HandlerFunc(ah.handleControlLogs))))
+	mux.Handle("/api/v1/admin/device-tree",
+		authMiddleware(secret, adminRoles(http.HandlerFunc(ah.handleDeviceTree))))
+	mux.Handle("/api/v1/admin/farmers/",
+		authMiddleware(secret, adminRoles(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// 路由分发：
+			// GET  /api/v1/admin/farmers/{user_id}/bindings → 农户绑定列表
+			// GET  /api/v1/admin/farmers/{user_id}          → 农户详情
+			// PATCH /api/v1/admin/farmers/{user_id}         → 编辑农户资料
+			path := r.URL.Path
+			if r.Method == http.MethodGet {
+				if hasSuffix(path, "/bindings") {
+					ah.handleFarmerBindings(w, r)
+				} else {
+					ah.handleFarmerDetail(w, r)
+				}
+			} else if r.Method == http.MethodPatch {
+				ah.handleFarmerUpdate(w, r)
+			} else {
+				writeCode(w, http.StatusMethodNotAllowed, 405, "method not allowed")
+			}
+		}))))
+	// GET /api/v1/admin/farmers（不带尾随路径）→ 农户列表
+	mux.Handle("/api/v1/admin/farmers",
+		authMiddleware(secret, adminRoles(http.HandlerFunc(ah.handleFarmers))))
 
 	// ─── Mini-program auth — public (dev/test only) ───
 	mux.HandleFunc("POST /api/v1/mini/mock-login", mh.mockLogin)

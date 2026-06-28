@@ -15,6 +15,7 @@ func (r *Repository) GetUserByUsername(ctx context.Context, username string) (*d
 	row := r.db.QueryRowContext(ctx, `
 SELECT
   user_id, user_type, role, username, mobile,
+  address, remark,
   wechat_openid, wechat_unionid, password_hash,
   display_name, avatar_url, status,
   last_login_at_ms, created_at, updated_at
@@ -30,6 +31,7 @@ func (r *Repository) GetUserByOpenID(ctx context.Context, openid string) (*domai
 	row := r.db.QueryRowContext(ctx, `
 SELECT
   user_id, user_type, role, username, mobile,
+  address, remark,
   wechat_openid, wechat_unionid, password_hash,
   display_name, avatar_url, status,
   last_login_at_ms, created_at, updated_at
@@ -53,16 +55,19 @@ func (r *Repository) CreateUser(ctx context.Context, u *domain.User) error {
 	_, err := r.db.ExecContext(ctx, `
 INSERT INTO users
   (user_id, user_type, role, username, mobile,
+   address, remark,
    wechat_openid, wechat_unionid, password_hash,
    display_name, avatar_url, status,
    last_login_at_ms, created_at, updated_at)
 VALUES
   (?, ?, ?, ?, ?,
+   ?, ?,
    ?, ?, ?,
    ?, ?, ?,
    ?, ?, ?)`,
 		u.UserID, uint8(u.UserType), uint8(u.Role),
 		nullableString(u.Username), nullableString(u.Mobile),
+		nullableString(u.Address), nullableString(u.Remark),
 		nullableString(u.WechatOpenID), nullableString(u.WechatUnionID),
 		nullableString(u.PasswordHash),
 		nullableString(u.DisplayName), nullableString(u.AvatarURL),
@@ -88,6 +93,7 @@ func (r *Repository) GetUserByID(ctx context.Context, userID uint64) (*domain.Us
 	row := r.db.QueryRowContext(ctx, `
 SELECT
   user_id, user_type, role, username, mobile,
+  address, remark,
   wechat_openid, wechat_unionid, password_hash,
   display_name, avatar_url, status,
   last_login_at_ms, created_at, updated_at
@@ -104,6 +110,8 @@ func scanUser(row *sql.Row) (*domain.User, error) {
 	var (
 		username      sql.NullString
 		mobile        sql.NullString
+		address       sql.NullString
+		remark        sql.NullString
 		wechatOpenID  sql.NullString
 		wechatUnionID sql.NullString
 		passwordHash  sql.NullString
@@ -115,6 +123,7 @@ func scanUser(row *sql.Row) (*domain.User, error) {
 	err := row.Scan(
 		&u.UserID, &u.UserType, &u.Role,
 		&username, &mobile,
+		&address, &remark,
 		&wechatOpenID, &wechatUnionID, &passwordHash,
 		&displayName, &avatarURL, &u.Status,
 		&lastLoginAtMS, &u.CreatedAt, &u.UpdatedAt,
@@ -131,6 +140,12 @@ func scanUser(row *sql.Row) (*domain.User, error) {
 	}
 	if mobile.Valid {
 		u.Mobile = &mobile.String
+	}
+	if address.Valid {
+		u.Address = &address.String
+	}
+	if remark.Valid {
+		u.Remark = &remark.String
 	}
 	if wechatOpenID.Valid {
 		u.WechatOpenID = &wechatOpenID.String
@@ -168,4 +183,113 @@ func nullableTime(t *time.Time) sql.NullTime {
 		return sql.NullTime{}
 	}
 	return sql.NullTime{Time: *t, Valid: true}
+}
+
+// GetFarmerByID retrieves a farmer user (user_type=2) with active binding count.
+// Returns (nil, nil) when no matching farmer is found.
+func (r *Repository) GetFarmerByID(ctx context.Context, userID uint64) (*domain.User, int, error) {
+	row := r.db.QueryRowContext(ctx, `
+SELECT
+  u.user_id, u.user_type, u.role, u.username, u.mobile,
+  u.address, u.remark,
+  u.wechat_openid, u.wechat_unionid, u.password_hash,
+  u.display_name, u.avatar_url, u.status,
+  u.last_login_at_ms, u.created_at, u.updated_at,
+  COALESCE(bc.cnt, 0) AS binding_count
+FROM users u
+LEFT JOIN (
+  SELECT user_id, COUNT(*) AS cnt
+  FROM bind_relations
+  WHERE bind_status = 1
+  GROUP BY user_id
+) bc ON u.user_id = bc.user_id
+WHERE u.user_id = ? AND u.user_type = 2
+LIMIT 1`, userID)
+
+	var u domain.User
+	var bindingCount int
+	var (
+		username      sql.NullString
+		mobile        sql.NullString
+		address       sql.NullString
+		remark        sql.NullString
+		wechatOpenID  sql.NullString
+		wechatUnionID sql.NullString
+		passwordHash  sql.NullString
+		displayName   sql.NullString
+		avatarURL     sql.NullString
+		lastLoginAtMS sql.NullTime
+	)
+
+	err := row.Scan(
+		&u.UserID, &u.UserType, &u.Role,
+		&username, &mobile,
+		&address, &remark,
+		&wechatOpenID, &wechatUnionID, &passwordHash,
+		&displayName, &avatarURL, &u.Status,
+		&lastLoginAtMS, &u.CreatedAt, &u.UpdatedAt,
+		&bindingCount,
+	)
+	if err == sql.ErrNoRows {
+		return nil, 0, nil
+	}
+	if err != nil {
+		return nil, 0, err
+	}
+
+	if username.Valid {
+		u.Username = &username.String
+	}
+	if mobile.Valid {
+		u.Mobile = &mobile.String
+	}
+	if address.Valid {
+		u.Address = &address.String
+	}
+	if remark.Valid {
+		u.Remark = &remark.String
+	}
+	if wechatOpenID.Valid {
+		u.WechatOpenID = &wechatOpenID.String
+	}
+	if wechatUnionID.Valid {
+		u.WechatUnionID = &wechatUnionID.String
+	}
+	if passwordHash.Valid {
+		u.PasswordHash = &passwordHash.String
+	}
+	if displayName.Valid {
+		u.DisplayName = &displayName.String
+	}
+	if avatarURL.Valid {
+		u.AvatarURL = &avatarURL.String
+	}
+	if lastLoginAtMS.Valid {
+		u.LastLoginAtMS = &lastLoginAtMS.Time
+	}
+
+	return &u, bindingCount, nil
+}
+
+// UpdateFarmer updates editable fields for a farmer user.
+func (r *Repository) UpdateFarmer(ctx context.Context, userID uint64, updates map[string]any) error {
+	now := time.Now()
+	_, err := r.db.ExecContext(ctx, `
+UPDATE users
+SET display_name = COALESCE(?, display_name),
+    mobile       = COALESCE(?, mobile),
+    address      = COALESCE(?, address),
+    remark       = COALESCE(?, remark),
+    status       = COALESCE(?, status),
+    updated_at   = ?
+WHERE user_id = ? AND user_type = 2`,
+		updates["display_name"],
+		updates["mobile"],
+		updates["address"],
+		updates["remark"],
+		updates["status"],
+		now,
+		userID,
+	)
+	return err
 }
