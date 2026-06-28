@@ -126,6 +126,26 @@ const (
 	FuncTypeFan         FunctionType = 6 // 风机
 )
 
+// FunctionTypeName returns the Chinese name for a FunctionType.
+func (ft FunctionType) FunctionTypeName() string {
+	switch ft {
+	case FuncTypeTemperature:
+		return "温度"
+	case FuncTypeSoil:
+		return "墒情"
+	case FuncTypeLimit:
+		return "限位"
+	case FuncTypeRelay:
+		return "继电器"
+	case FuncTypePump:
+		return "水泵"
+	case FuncTypeFan:
+		return "风机"
+	default:
+		return "未知"
+	}
+}
+
 // ValueStatus 数值状态。
 type ValueStatus uint8
 
@@ -321,4 +341,23 @@ type DeviceTreePoint struct {
 	ChannelNo    int     `json:"channel_no"`
 	IsBound      bool    `json:"is_bound"`
 	BoundUserID  *uint64 `json:"bound_user_id,string"`
+}
+
+// DevicePointSearchResult 是管理端设备点位搜索的结果视图。
+type DevicePointSearchResult struct {
+	PointID          uint64       `json:"point_id,string"`
+	GatewayID        uint64       `json:"gateway_id,string"`
+	GatewayName      string       `json:"gateway_name"`
+	NodeID           uint64       `json:"node_id,string"`
+	Frequency        int          `json:"frequency"`
+	DeviceExternalID string       `json:"device_external_id"`
+	FunctionType     FunctionType `json:"function_type"`
+	FunctionName     string       `json:"function_name"`
+	ChannelNo        int          `json:"channel_no"`
+	PointName        string       `json:"point_name"`
+	Unit             string       `json:"unit"`
+	ShedNo           string       `json:"shed_no"`
+	IsBound          bool         `json:"is_bound"`
+	BindUserID       *uint64      `json:"bind_user_id,string,omitempty"`
+	BindUserName     string       `json:"bind_user_name,omitempty"`
 }

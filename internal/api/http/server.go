@@ -115,6 +115,8 @@ func (s *Server) Routes() http.Handler {
 		authMiddleware(secret, adminRoles(http.HandlerFunc(ah.handleControlLogs))))
 	mux.Handle("/api/v1/admin/device-tree",
 		authMiddleware(secret, adminRoles(http.HandlerFunc(ah.handleDeviceTree))))
+	mux.Handle("/api/v1/admin/device-points",
+		authMiddleware(secret, adminRoles(http.HandlerFunc(ah.handleDevicePointSearch))))
 	mux.Handle("/api/v1/admin/farmers/",
 		authMiddleware(secret, adminRoles(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// 路由分发：
@@ -149,7 +151,15 @@ func (s *Server) Routes() http.Handler {
 
 	// ─── Mini-program protected ───
 	mux.Handle("/api/v1/mini/me",
-		authMiddleware(secret, farmerRoles(http.HandlerFunc(mh.handleMe))))
+		authMiddleware(secret, farmerRoles(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodGet {
+				mh.handleMe(w, r)
+			} else if r.Method == http.MethodPatch {
+				mh.handleUpdateMe(w, r)
+			} else {
+				writeCode(w, http.StatusMethodNotAllowed, 405, "method not allowed")
+			}
+		}))))
 	mux.Handle("/api/v1/mini/devices",
 		authMiddleware(secret, farmerRoles(http.HandlerFunc(mh.handleDevices))))
 	mux.Handle("/api/v1/mini/devices/",

@@ -271,6 +271,52 @@ LIMIT 1`, userID)
 	return &u, bindingCount, nil
 }
 
+// UpdateMiniProfile updates editable profile fields for a mini-program farmer user.
+// Only display_name, mobile, address, remark are allowed. Empty values are skipped.
+// The caller is responsible for validating that the user is a farmer (user_type=2).
+func (r *Repository) UpdateMiniProfile(ctx context.Context, userID uint64, updates map[string]string) error {
+	// Whitelist of allowed columns for mini-program self-edit.
+	allowedColumns := map[string]bool{
+		"display_name": true,
+		"mobile":       true,
+		"address":      true,
+		"remark":       true,
+	}
+
+	// Build dynamic SET clause with only non-empty fields.
+	var setClauses []string
+	var args []any
+	for col, val := range updates {
+		if !allowedColumns[col] {
+			continue
+		}
+		if val == "" {
+			continue
+		}
+		setClauses = append(setClauses, col+" = ?")
+		args = append(args, val)
+	}
+	if len(setClauses) == 0 {
+		return nil // nothing to update
+	}
+
+	// Build final SQL.
+	query := "UPDATE users SET "
+	for i, clause := range setClauses {
+		if i > 0 {
+			query += ", "
+		}
+		query += clause
+	}
+	query += ", updated_at = ? WHERE user_id = ? AND user_type = 2"
+
+	now := time.Now()
+	args = append(args, now, userID)
+
+	_, err := r.db.ExecContext(ctx, query, args...)
+	return err
+}
+
 // UpdateFarmer updates editable fields for a farmer user.
 func (r *Repository) UpdateFarmer(ctx context.Context, userID uint64, updates map[string]any) error {
 	now := time.Now()

@@ -1356,6 +1356,89 @@ LIMIT 200`)
 
 // ─── 辅助函数 ───
 
+// SearchDevicePoints 按关键字搜索功能点，支持按绑定状态过滤。
+func (r *Repository) SearchDevicePoints(ctx context.Context, keyword string, bindStatus string) ([]domain.DevicePointSearchResult, error) {
+	var args []interface{}
+	whereClause := ""
+
+	if keyword != "" {
+		like := "%" + keyword + "%"
+		whereClause = ` AND (dp.point_name LIKE ? OR cg.gateway_name LIKE ? OR cn.device_external_id LIKE ? OR cn.shed_no LIKE ?)`
+		args = append(args, like, like, like, like)
+	}
+
+	switch bindStatus {
+	case "unbound":
+		whereClause += ` AND br.bind_id IS NULL`
+	case "bound":
+		whereClause += ` AND br.bind_id IS NOT NULL`
+	}
+
+	query := `SELECT
+  dp.point_id, dp.gateway_id, cg.gateway_name,
+  dp.node_id, cn.frequency, cn.device_external_id,
+  dp.function_type, dp.point_name, dp.unit,
+  dp.channel_no, cn.shed_no,
+  CASE WHEN br.bind_id IS NOT NULL THEN 1 ELSE 0 END AS is_bound,
+  br.user_id AS bind_user_id,
+  br.bind_user_name
+FROM device_points dp
+JOIN cloud_gateways cg ON dp.gateway_id = cg.gateway_id
+JOIN collector_nodes cn ON dp.node_id = cn.node_id
+LEFT JOIN bind_relations br ON dp.point_id = br.point_id AND br.bind_status = 1
+WHERE dp.point_status = 1` + whereClause + `
+ORDER BY dp.gateway_id, cn.frequency, dp.channel_no
+LIMIT 50`
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	results := make([]domain.DevicePointSearchResult, 0)
+	for rows.Next() {
+		var s domain.DevicePointSearchResult
+		var isBound int
+		var bindUserID sql.NullInt64
+		var bindUserName sql.NullString
+
+		if err := rows.Scan(
+			&s.PointID,
+			&s.GatewayID,
+			&s.GatewayName,
+			&s.NodeID,
+			&s.Frequency,
+			&s.DeviceExternalID,
+			&s.FunctionType,
+			&s.PointName,
+			&s.Unit,
+			&s.ChannelNo,
+			&s.ShedNo,
+			&isBound,
+			&bindUserID,
+			&bindUserName,
+		); err != nil {
+			return nil, err
+		}
+
+		s.IsBound = isBound == 1
+		if bindUserID.Valid {
+			uid := uint64(bindUserID.Int64)
+			s.BindUserID = &uid
+		}
+		if bindUserName.Valid {
+			s.BindUserName = bindUserName.String
+		}
+		s.FunctionName = s.FunctionType.FunctionTypeName()
+
+		results = append(results, s)
+	}
+	return results, rows.Err()
+}
+
+// ─── 辅助函数 ───
+
 // 常量别名，避免写魔数。
 const (
 	RunModeAuto = 1

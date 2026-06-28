@@ -19,6 +19,8 @@ type miniRepository interface {
 	CreateUser(ctx context.Context, u *domain.User) error
 	UpdateLastLogin(ctx context.Context, userID uint64, t time.Time) error
 	GetUserByID(ctx context.Context, userID uint64) (*domain.User, error)
+	// 更新农户自编辑资料（display_name, mobile, address, remark）。
+	UpdateMiniProfile(ctx context.Context, userID uint64, updates map[string]string) error
 	// 获取用户绑定的功能点列表（C 端设备列表）。
 	ListMiniDevices(ctx context.Context, userID uint64) ([]domain.MiniDevice, error)
 	// 获取单个功能点详情（实时数据）。
@@ -145,6 +147,18 @@ func (h *miniHandler) handleMe(w http.ResponseWriter, r *http.Request) {
 	if user.DisplayName != nil {
 		displayName = *user.DisplayName
 	}
+	mobile := ""
+	if user.Mobile != nil {
+		mobile = *user.Mobile
+	}
+	address := ""
+	if user.Address != nil {
+		address = *user.Address
+	}
+	remark := ""
+	if user.Remark != nil {
+		remark = *user.Remark
+	}
 
 	// 统计绑定点位数量。
 	devices, _ := h.repo.ListMiniDevices(r.Context(), claims.UserID)
@@ -154,8 +168,107 @@ func (h *miniHandler) handleMe(w http.ResponseWriter, r *http.Request) {
 		"data": map[string]any{
 			"user_id":       idStr(user.UserID),
 			"display_name":  displayName,
+			"mobile":        mobile,
+			"address":       address,
+			"remark":        remark,
 			"role":          uint8(user.Role),
 			"binding_count": bindingCount,
+		},
+	})
+}
+
+// handleUpdateMe 处理 PATCH /api/v1/mini/me。
+// 允许农户修改自己的 display_name、mobile、address、remark。
+// user_id 从 JWT claims 中获取，不允许请求体传入。
+func (h *miniHandler) handleUpdateMe(w http.ResponseWriter, r *http.Request) {
+	claims, ok := ClaimsFromContext(r.Context())
+	if !ok {
+		writeCode(w, http.StatusUnauthorized, 401, "missing claims")
+		return
+	}
+
+	// 解析请求体。
+	var req struct {
+		DisplayName string `json:"display_name"`
+		Mobile      string `json:"mobile"`
+		Address     string `json:"address"`
+		Remark      string `json:"remark"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeCode(w, http.StatusBadRequest, 400, "invalid request body")
+		return
+	}
+
+	// 校验 display_name：1-64 字符。
+	if req.DisplayName != "" {
+		runes := []rune(req.DisplayName)
+		if len(runes) < 1 || len(runes) > 64 {
+			writeCode(w, http.StatusBadRequest, 400, "display_name must be 1-64 characters")
+			return
+		}
+	}
+
+	// 校验 mobile/address/remark：最长 512 字符。
+	for field, val := range map[string]string{
+		"mobile":  req.Mobile,
+		"address": req.Address,
+		"remark":  req.Remark,
+	} {
+		if len([]rune(val)) > 512 {
+			writeCode(w, http.StatusBadRequest, 400, field+" must be at most 512 characters")
+			return
+		}
+	}
+
+	// 构建更新 map。
+	updates := map[string]string{
+		"display_name": req.DisplayName,
+		"mobile":       req.Mobile,
+		"address":      req.Address,
+		"remark":       req.Remark,
+	}
+
+	if err := h.repo.UpdateMiniProfile(r.Context(), claims.UserID, updates); err != nil {
+		writeCode(w, http.StatusInternalServerError, 500, "internal error")
+		return
+	}
+
+	// 回读更新后的用户资料。
+	user, err := h.repo.GetUserByID(r.Context(), claims.UserID)
+	if err != nil {
+		writeCode(w, http.StatusInternalServerError, 500, "internal error")
+		return
+	}
+	if user == nil {
+		writeCode(w, http.StatusNotFound, 404, "user not found")
+		return
+	}
+
+	displayName := ""
+	if user.DisplayName != nil {
+		displayName = *user.DisplayName
+	}
+	mobile := ""
+	if user.Mobile != nil {
+		mobile = *user.Mobile
+	}
+	address := ""
+	if user.Address != nil {
+		address = *user.Address
+	}
+	remark := ""
+	if user.Remark != nil {
+		remark = *user.Remark
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"data": map[string]any{
+			"user_id":      idStr(user.UserID),
+			"display_name": displayName,
+			"mobile":       mobile,
+			"address":      address,
+			"remark":       remark,
+			"role":         uint8(user.Role),
 		},
 	})
 }

@@ -49,6 +49,8 @@ type adminRepository interface {
 	FindActiveBindingByUserAndPoint(ctx context.Context, userID uint64, pointID uint64) (*domain.BindRelation, error)
 	// 按 point_id 查询 active 绑定（用于冲突检测：检查 point 是否已被任意用户绑定）。
 	FindActiveBindingByPoint(ctx context.Context, pointID uint64) (*domain.BindRelation, error)
+	// 管理端设备点位搜索。
+	SearchDevicePoints(ctx context.Context, keyword string, bindStatus string) ([]domain.DevicePointSearchResult, error)
 }
 
 // adminHandler handles all /api/v1/admin/* endpoints.
@@ -263,8 +265,8 @@ func (h *adminHandler) handleBindings(w http.ResponseWriter, r *http.Request) {
 
 // createBindingRequest is the JSON body for POST /api/v1/admin/bindings.
 type createBindingRequest struct {
-	UserID  uint64 `json:"user_id"`
-	PointID uint64 `json:"point_id"`
+	UserID  string `json:"user_id"`
+	PointID string `json:"point_id"`
 }
 
 // handleCreateBinding 处理 POST /api/v1/admin/bindings。
@@ -279,15 +281,26 @@ func (h *adminHandler) handleCreateBinding(w http.ResponseWriter, r *http.Reques
 		writeCode(w, http.StatusBadRequest, 400, "invalid request body")
 		return
 	}
-	if req.UserID == 0 || req.PointID == 0 {
+	if req.UserID == "" || req.PointID == "" {
 		writeCode(w, http.StatusBadRequest, 400, "user_id and point_id are required")
+		return
+	}
+
+	userID, err := strconv.ParseUint(req.UserID, 10, 64)
+	if err != nil {
+		writeCode(w, http.StatusBadRequest, 400, "invalid user_id")
+		return
+	}
+	pointID, err := strconv.ParseUint(req.PointID, 10, 64)
+	if err != nil {
+		writeCode(w, http.StatusBadRequest, 400, "invalid point_id")
 		return
 	}
 
 	ctx := r.Context()
 
 	// Step 1: 检查 point 是否已被任意用户 active 绑定（冲突检测）。
-	existingByPoint, err := h.repo.FindActiveBindingByPoint(ctx, req.PointID)
+	existingByPoint, err := h.repo.FindActiveBindingByPoint(ctx, pointID)
 	if err != nil {
 		writeCode(w, http.StatusInternalServerError, 500, "internal error: "+err.Error())
 		return
@@ -297,7 +310,7 @@ func (h *adminHandler) handleCreateBinding(w http.ResponseWriter, r *http.Reques
 		if existingByPoint.UserID != nil {
 			existingUserID = *existingByPoint.UserID
 		}
-		if existingUserID == req.UserID {
+		if existingUserID == userID {
 			// 同一用户重复绑定 → 幂等返回
 			writeJSON(w, http.StatusOK, map[string]any{"data": existingByPoint})
 			return
@@ -316,7 +329,7 @@ func (h *adminHandler) handleCreateBinding(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Step 2: 查询 device_point 补全字段。
-	point, err := h.repo.FindDevicePointByID(ctx, req.PointID)
+	point, err := h.repo.FindDevicePointByID(ctx, pointID)
 	if err != nil {
 		writeCode(w, http.StatusInternalServerError, 500, "internal error: "+err.Error())
 		return
@@ -327,7 +340,7 @@ func (h *adminHandler) handleCreateBinding(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Step 3: 查询用户信息获取 bind_user_name。
-	user, err := h.repo.GetUserByID(ctx, req.UserID)
+	user, err := h.repo.GetUserByID(ctx, userID)
 	if err != nil {
 		writeCode(w, http.StatusInternalServerError, 500, "internal error: "+err.Error())
 		return
@@ -343,7 +356,7 @@ func (h *adminHandler) handleCreateBinding(w http.ResponseWriter, r *http.Reques
 	}
 
 	b := &domain.BindRelation{
-		UserID:           &req.UserID,
+		UserID:           &userID,
 		BindUserName:     bindUserName,
 		GatewayID:        point.GatewayID,
 		NodeID:           &point.NodeID,
@@ -355,12 +368,12 @@ func (h *adminHandler) handleCreateBinding(w http.ResponseWriter, r *http.Reques
 	}
 
 	if err := h.repo.CreateBinding(ctx, b); err != nil {
-		log.Printf("[handleCreateBinding] repo.CreateBinding failed: user_id=%d point_id=%d err=%v", req.UserID, req.PointID, err)
+		log.Printf("[handleCreateBinding] repo.CreateBinding failed: user_id=%d point_id=%d err=%v", userID, pointID, err)
 		writeCode(w, http.StatusInternalServerError, 500, "failed to create binding: "+err.Error())
 		return
 	}
 
-	log.Printf("[handleCreateBinding] success: bind_id=%d user_id=%d point_id=%d", b.BindID, req.UserID, req.PointID)
+	log.Printf("[handleCreateBinding] success: bind_id=%d user_id=%d point_id=%d", b.BindID, userID, pointID)
 
 	writeJSON(w, http.StatusOK, map[string]any{"data": b})
 }
@@ -370,6 +383,7 @@ func (h *adminHandler) handleCreateBinding(w http.ResponseWriter, r *http.Reques
 func (h *adminHandler) handleUnbind(w http.ResponseWriter, r *http.Request) {
 	// 从路径提取 bind_id：/api/v1/admin/bindings/{id}
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1/admin/bindings/")
+	path = strings.TrimSpace(path)
 	bindID, err := strconv.ParseUint(path, 10, 64)
 	if err != nil {
 		writeCode(w, http.StatusBadRequest, 400, "invalid bind id")
@@ -434,12 +448,28 @@ func (h *adminHandler) handleDeviceTree(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, map[string]any{"data": tree})
 }
 
+// handleDevicePointSearch 处理 GET /api/v1/admin/device-points。
+// 支持 keyword 和 bind_status 查询参数。
+func (h *adminHandler) handleDevicePointSearch(w http.ResponseWriter, r *http.Request) {
+	keyword := r.URL.Query().Get("keyword")
+	bindStatus := r.URL.Query().Get("bind_status")
+
+	results, err := h.repo.SearchDevicePoints(r.Context(), keyword, bindStatus)
+	if err != nil {
+		writeCode(w, http.StatusInternalServerError, 500, "internal error: "+err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"data": results})
+}
+
 // handleFarmerBindings 处理 GET /api/v1/admin/farmers/{user_id}/bindings。
 // 返回指定农户的所有绑定关系（含 active 和已解绑）。
 func (h *adminHandler) handleFarmerBindings(w http.ResponseWriter, r *http.Request) {
 	// 从路径提取 user_id：/api/v1/admin/farmers/{user_id}/bindings
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1/admin/farmers/")
 	path = strings.TrimSuffix(path, "/bindings")
+	path = strings.TrimSpace(path)
 	userID, err := strconv.ParseUint(path, 10, 64)
 	if err != nil {
 		writeCode(w, http.StatusBadRequest, 400, "invalid user id")
@@ -462,6 +492,7 @@ func (h *adminHandler) handleFarmerDetail(w http.ResponseWriter, r *http.Request
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1/admin/farmers/")
 	// 可能带有 /bindings 后缀，需要处理
 	path = strings.TrimSuffix(path, "/bindings")
+	path = strings.TrimSpace(path)
 	userID, err := strconv.ParseUint(path, 10, 64)
 	if err != nil {
 		writeCode(w, http.StatusBadRequest, 400, "invalid user id")
@@ -520,6 +551,7 @@ func (h *adminHandler) handleFarmerDetail(w http.ResponseWriter, r *http.Request
 func (h *adminHandler) handleFarmerUpdate(w http.ResponseWriter, r *http.Request) {
 	// 从路径提取 user_id：/api/v1/admin/farmers/{user_id}
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1/admin/farmers/")
+	path = strings.TrimSpace(path)
 	userID, err := strconv.ParseUint(path, 10, 64)
 	if err != nil {
 		writeCode(w, http.StatusBadRequest, 400, "invalid user id")
