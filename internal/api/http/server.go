@@ -67,16 +67,17 @@ func (s *Server) Routes() http.Handler {
 		authMiddleware(secret, adminRoles(http.HandlerFunc(s.listGateways))))
 
 	// Static frontend files (prototype HTML/CSS/JS).
-	mux.Handle("/admin/", http.StripPrefix("/admin/", http.FileServer(http.Dir("./prototype/admin"))))
-	mux.Handle("/mini/", http.StripPrefix("/mini/", http.FileServer(http.Dir("./prototype/mini"))))
-	mux.Handle("/mock/", http.StripPrefix("/mock/", http.FileServer(http.Dir("./prototype/mock"))))
-	// Root redirect to admin/index.html
+	// Use a single file server at / to serve all static assets under ./prototype,
+	// then register API routes above so they take precedence.
+	fs := http.FileServer(http.Dir("./prototype"))
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/" {
-			http.NotFound(w, r)
+		// Only serve static files — API routes are already handled by explicit
+		// registrations above (ServeMux picks the most specific match first).
+		if r.URL.Path == "/" {
+			http.Redirect(w, r, "/admin/index.html", http.StatusFound)
 			return
 		}
-		http.Redirect(w, r, "/admin/index.html", http.StatusFound)
+		fs.ServeHTTP(w, r)
 	})
 
 	return corsMiddleware(loggingMiddleware(mux))
