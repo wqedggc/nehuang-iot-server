@@ -122,7 +122,7 @@ admin_login() {
 
   # 提取 token
   local token
-  token=$(echo "$resp_body" | jq -r '.data.token // empty')
+  token=$(echo "$resp_body" | jq -r '(.data.token // empty)' 2>/dev/null || echo "")
   if [[ -z "$token" ]]; then
     echo "[ERROR] 无法从登录响应中提取 token: $resp_body" >&2
     return 1
@@ -157,11 +157,11 @@ get_farmer_bindings() {
   bindings=$(echo "$resp_body" | jq -c --arg uid "$farmer_id" \
     '.data[] | select(.user_id == ($uid | tonumber) and .bind_status == 1) | {
       point_id: .point_id,
-      gateway_name: .gateway_name // "",
+      gateway_name: (if .gateway_name then .gateway_name else "" end),
       frequency: .frequency,
       device_external_id: .device_external_id,
       function_type: .function_type,
-      channel_no: .channel_no // 1
+      channel_no: (if .channel_no then .channel_no else 1 end)
     }')
 
   echo "$bindings"

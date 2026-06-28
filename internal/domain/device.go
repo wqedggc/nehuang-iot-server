@@ -184,24 +184,24 @@ type SensorData struct {
 
 // BindRelation 对应 bind_relations 表。
 type BindRelation struct {
-	BindID           uint64
-	UserID           *uint64
-	BindUserName     string
-	GatewayID        uint64
-	RealtimeID       *uint64
-	NodeID           *uint64
-	PointID          *uint64
-	ShedNo           string
-	Frequency        int
-	DeviceExternalID string
-	FunctionType     FunctionType
-	BindStatus       BindStatus
-	BoundAtMS        time.Time
-	UnboundAtMS      *time.Time
-	CreatedBy        *uint64
-	Extra            *string
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
+	BindID           uint64      `json:"bind_id"`
+	UserID           *uint64     `json:"user_id"`
+	BindUserName     string      `json:"bind_user_name"`
+	GatewayID        uint64      `json:"gateway_id"`
+	RealtimeID       *uint64     `json:"realtime_id"`
+	NodeID           *uint64     `json:"node_id"`
+	PointID          *uint64     `json:"point_id"`
+	ShedNo           string      `json:"shed_no"`
+	Frequency        int         `json:"frequency"`
+	DeviceExternalID string      `json:"device_external_id"`
+	FunctionType     FunctionType `json:"function_type"`
+	BindStatus       BindStatus  `json:"bind_status"`
+	BoundAtMS        time.Time   `json:"bound_at_ms"`
+	UnboundAtMS      *time.Time  `json:"unbound_at_ms"`
+	CreatedBy        *uint64     `json:"created_by"`
+	Extra            *string     `json:"extra"`
+	CreatedAt        time.Time   `json:"created_at"`
+	UpdatedAt        time.Time   `json:"updated_at"`
 }
 
 // BindStatus 绑定状态。
