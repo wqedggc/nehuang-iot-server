@@ -207,7 +207,7 @@
   }
 
   // ---------- Dashboard ----------
-  var currentDashboardRange = '1d';
+  var currentDashboardRange = '24h';
   var currentDashboardData = null;
 
   async function renderDashboard(container) {
@@ -232,7 +232,7 @@
       };
       var ranges = ['1h', '6h', '24h', '7d'];
       var rangeBtns = ranges.map(function (r) {
-        var active = r === (d.range || '1d') ? ' btn-primary' : ' btn-outline';
+        var active = r === (d.range || '24h') ? ' btn-primary' : ' btn-outline';
         return '<button class="btn btn-sm' + active + '" onclick="switchDashboardRange(\'' + r + '\')">' + (rangeLabels[r] || r) + '</button>';
       }).join('');
 
