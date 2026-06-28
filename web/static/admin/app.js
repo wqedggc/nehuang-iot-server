@@ -188,23 +188,132 @@
   }
 
   // ---------- Dashboard ----------
+
+  var dashboardRange = '1d'; // 当前选中的时间范围
+
+  function buildDashboardRangeBar() {
+    var ranges = [
+      { value: '1d', label: '近1天' },
+      { value: '3d', label: '近3天' },
+      { value: '7d', label: '近7天' },
+      { value: '30d', label: '近30天' }
+    ];
+    var html = '<div class="dashboard-range-bar" style="display:flex;gap:8px;margin-bottom:16px">';
+    for (var i = 0; i < ranges.length; i++) {
+      var r = ranges[i];
+      var activeClass = r.value === dashboardRange ? ' btn-primary' : ' btn-outline';
+      html += '<button class="btn btn-sm' + activeClass + '" onclick="dashboardSetRange(\'' + r.value + '\')">' + r.label + '</button>';
+    }
+    html += '</div>';
+    return html;
+  }
+
+  function dashboardSetRange(rangeStr) {
+    dashboardRange = rangeStr;
+    renderPage();
+  }
+
+  function formatPercent(val) {
+    if (val == null || isNaN(val)) return '--';
+    return val.toFixed(2) + '%';
+  }
+
+  function formatLatestTime(iso) {
+    if (!iso) return '--';
+    try {
+      var d = new Date(iso);
+      var pad = function (n) { return n.toString().padStart(2, '0'); };
+      return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+    } catch (e) { return iso; }
+  }
+
   async function renderDashboard(container) {
     container.innerHTML = '<div class="loading-state"><div class="loading-spinner"></div><p>加载仪表盘...</p></div>';
-    try {
-      var res = await MockAPI.getDashboard();
-      if (!res.data) { container.innerHTML = '<div class="error-state"><p>加载失败</p><button class="btn btn-outline btn-sm" onclick="renderPage()">重试</button></div>'; return; }
-      var d = res.data;
 
-      var html = '<div class="stat-grid">' +
-        '<div class="stat-card"><div class="stat-card-label">在线云边设备</div><div class="stat-card-value">' + d.online_gateways + '<span style="font-size:16px;font-weight:400;color:var(--color-text-muted)"> / ' + d.total_gateways + '</span></div></div>' +
-        '<div class="stat-card"><div class="stat-card-label">采集执行器</div><div class="stat-card-value">' + d.total_collectors + '</div><div class="stat-card-sub">功能点数</div></div>' +
-        '<div class="stat-card"><div class="stat-card-label">农户数量</div><div class="stat-card-value">' + d.farmer_count + '</div></div>' +
-        '<div class="stat-card"><div class="stat-card-label">今日上报数据</div><div class="stat-card-value">' + d.today_reports.toLocaleString() + '</div><div class="stat-card-sub">最近上报：' + formatTime(d.last_report_time) + '</div></div>' +
+    try {
+      var res = await MockAPI.getDashboardRange(dashboardRange);
+
+      // 处理 HTTP 错误状态
+      if (res.code && res.code !== 200) {
+        // 401: 跳登录
+        if (res.code === 401 || res.code === 4011 || res.code === 4012 || res.code === 4013) {
+          localStorage.removeItem('admin_token');
+          localStorage.removeItem('admin_user');
+          navigate('login');
+          return;
+        }
+        // 403: 无管理员权限
+        if (res.code === 403 || res.code === 4031 || res.code === 4033) {
+          container.innerHTML = '<div class="error-state"><p>无管理员权限，请使用管理员账号登录</p><button class="btn btn-outline btn-sm" onclick="doLogout()">重新登录</button></div>';
+          return;
+        }
+        // 400: 参数错误
+        if (res.code === 400) {
+          container.innerHTML = '<div class="error-state"><p>请求参数错误：' + escHtml(res.message || '') + '</p><button class="btn btn-outline btn-sm" onclick="renderPage()">重试</button></div>';
+          return;
+        }
+        // 其他错误
+        container.innerHTML = '<div class="error-state"><p>' + escHtml(res.message || '服务器错误') + '</p><button class="btn btn-outline btn-sm" onclick="renderPage()">重试</button></div>';
+        return;
+      }
+
+      // 不允许 fallback mock：data 为空视为错误
+      if (!res.data) {
+        container.innerHTML = '<div class="error-state"><p>获取仪表盘数据失败</p><button class="btn btn-outline btn-sm" onclick="renderPage()">重试</button></div>';
+        return;
+      }
+
+      var d = res.data;
+      var u = d.users || {};
+      var dev = d.devices || {};
+      var ing = d.ingest || {};
+      var ctl = d.control || {};
+
+      var html = buildDashboardRangeBar();
+
+      // ── 第一行：用户统计 ──
+      html += '<div class="stat-grid">' +
+        '<div class="stat-card"><div class="stat-card-label">总用户数</div><div class="stat-card-value">' + (u.total_users || 0).toLocaleString() + '</div><div class="stat-card-sub">管理员 ' + (u.admin_count || 0) + ' / 农户 ' + (u.farmer_count || 0) + '</div></div>' +
+        '<div class="stat-card"><div class="stat-card-label">活跃农户</div><div class="stat-card-value">' + (u.active_farmer_count || 0).toLocaleString() + '</div></div>' +
+        '<div class="stat-card"><div class="stat-card-label">禁用农户</div><div class="stat-card-value">' + (u.disabled_farmer_count || 0).toLocaleString() + '</div></div>' +
+      '</div>';
+
+      // ── 第二行：设备统计 ──
+      html += '<div class="stat-grid">' +
+        '<div class="stat-card"><div class="stat-card-label">云边设备</div><div class="stat-card-value">' + (dev.gateway_online || 0) + '<span style="font-size:16px;font-weight:400;color:var(--color-text-muted)"> / ' + (dev.gateway_total || 0) + '</span></div><div class="stat-card-sub">在线 / 总数</div></div>' +
+        '<div class="stat-card"><div class="stat-card-label">采集执行器</div><div class="stat-card-value">' + (dev.collector_node_total || 0).toLocaleString() + '</div></div>' +
+        '<div class="stat-card"><div class="stat-card-label">功能点</div><div class="stat-card-value">' + (dev.device_point_total || 0).toLocaleString() + '</div><div class="stat-card-sub">已绑定 ' + (dev.bound_point_count || 0) + ' / 未绑定 ' + (dev.unbound_point_count || 0) + '</div></div>' +
+      '</div>';
+
+      // ── 第三行：设备状态 ──
+      html += '<div class="stat-grid">' +
+        '<div class="stat-card"><div class="stat-card-label">正常功能点</div><div class="stat-card-value" style="color:var(--color-success)">' + (dev.normal_point_count || 0).toLocaleString() + '</div></div>' +
+        '<div class="stat-card"><div class="stat-card-label">异常功能点</div><div class="stat-card-value" style="color:var(--color-warning)">' + (dev.abnormal_point_count || 0).toLocaleString() + '</div></div>' +
+        '<div class="stat-card"><div class="stat-card-label">离线功能点</div><div class="stat-card-value" style="color:var(--color-danger)">' + (dev.offline_point_count || 0).toLocaleString() + '</div></div>' +
+        '<div class="stat-card"><div class="stat-card-label">最近上报时间</div><div class="stat-card-value" style="font-size:16px">' + formatLatestTime(dev.latest_report_time) + '</div></div>' +
+      '</div>';
+
+      // ── 第四行：数据上报统计 ──
+      html += '<div class="stat-grid">' +
+        '<div class="stat-card"><div class="stat-card-label">原始事件数</div><div class="stat-card-value">' + (ing.raw_event_count || 0).toLocaleString() + '</div></div>' +
+        '<div class="stat-card"><div class="stat-card-label">遥测数据</div><div class="stat-card-value">' + (ing.telemetry_count || 0).toLocaleString() + '</div></div>' +
+        '<div class="stat-card"><div class="stat-card-label">注册事件</div><div class="stat-card-value">' + (ing.register_count || 0).toLocaleString() + '</div></div>' +
+        '<div class="stat-card"><div class="stat-card-label">工作上报</div><div class="stat-card-value">' + (ing.work_count || 0).toLocaleString() + '</div></div>' +
+        '<div class="stat-card"><div class="stat-card-label">控制结果</div><div class="stat-card-value">' + (ing.control_result_count || 0).toLocaleString() + '</div></div>' +
+      '</div>';
+
+      // ── 第五行：心跳 + 控制成功率 ──
+      html += '<div class="stat-grid">' +
+        '<div class="stat-card"><div class="stat-card-label">心跳总数</div><div class="stat-card-value">' + (ing.heartbeat_total || 0).toLocaleString() + '</div><div class="stat-card-sub">成功 ' + (ing.heartbeat_success || 0) + ' / 失败 ' + (ing.heartbeat_failed || 0) + '</div></div>' +
+        '<div class="stat-card"><div class="stat-card-label">心跳成功率</div><div class="stat-card-value">' + formatPercent(ing.heartbeat_success_rate) + '</div></div>' +
+        '<div class="stat-card"><div class="stat-card-label">控制命令</div><div class="stat-card-value">' + (ctl.control_command_count || 0).toLocaleString() + '</div><div class="stat-card-sub">成功 ' + (ctl.control_success_count || 0) + ' / 失败 ' + (ctl.control_failed_count || 0) + ' / 超时 ' + (ctl.control_timeout_count || 0) + '</div></div>' +
+        '<div class="stat-card"><div class="stat-card-label">控制成功率</div><div class="stat-card-value">' + formatPercent(ctl.control_success_rate) + '</div></div>' +
       '</div>';
 
       container.innerHTML = html;
     } catch (e) {
-      container.innerHTML = '<div class="error-state"><p>加载失败</p><button class="btn btn-outline btn-sm" onclick="renderPage()">重试</button></div>';
+      // 网络错误不显示 mock 数据
+      container.innerHTML = '<div class="error-state"><p>网络请求失败，请检查服务是否可用</p><button class="btn btn-outline btn-sm" onclick="renderPage()">重试</button></div>';
     }
   }
 
@@ -540,6 +649,7 @@
   });
 
   // 暴露
+  window.dashboardSetRange = dashboardSetRange;
   window.navigate = navigate;
   window.renderPage = renderPage;
   window.doLogout = doLogout;

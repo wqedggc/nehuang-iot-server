@@ -8,6 +8,7 @@ import (
 
 	"nehuang-iot-server/internal/config"
 	"nehuang-iot-server/internal/domain"
+	"nehuang-iot-server/internal/service"
 	"nehuang-iot-server/web"
 )
 
@@ -15,7 +16,6 @@ import (
 type gatewayRepository interface {
 	Ping() error
 	ListGateways(ctx context.Context, limit int) ([]domain.Gateway, error)
-	Dashboard(ctx context.Context) (map[string]any, error)
 }
 
 // repository aggregates all repository capabilities needed by the HTTP server.
@@ -25,6 +25,7 @@ type repository interface {
 	adminRepository
 	miniRepository
 	adapterRepository
+	service.DashboardRepository
 }
 
 // Server is the HTTP API server, holding dependencies for all handlers.
@@ -71,6 +72,10 @@ func (s *Server) Routes() http.Handler {
 	mh := &miniHandler{repo: s.repo, jwtCfg: s.jwtCfg}
 	adh := &adapterHandler{repo: s.repo, adapterToken: s.adapterToken}
 
+	// Dashboard handler（独立文件，注入 service 层）
+	dashSvc := service.NewDashboardService(s.repo)
+	dashH := &adminDashboardHandler{svc: dashSvc}
+
 	// ─── Adapter API（X-Adapter-Token 认证，不走用户 JWT） ───
 	mux.HandleFunc("/api/v1/adapter/device-events", adh.handleDeviceEvents)
 
@@ -87,7 +92,7 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("/api/v1/admin/me",
 		authMiddleware(secret, adminRoles(http.HandlerFunc(ah.me))))
 	mux.Handle("/api/v1/admin/dashboard",
-		authMiddleware(secret, adminRoles(http.HandlerFunc(s.dashboard))))
+		authMiddleware(secret, adminRoles(http.HandlerFunc(dashH.handleDashboard))))
 	mux.Handle("/api/v1/admin/users",
 		authMiddleware(secret, adminRoles(http.HandlerFunc(ah.handleUsers))))
 	mux.Handle("/api/v1/admin/collectors",
@@ -215,15 +220,6 @@ func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status": "ready",
 	})
-}
-
-func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
-	data, err := s.repo.Dashboard(r.Context())
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"data": data})
 }
 
 func (s *Server) listGateways(w http.ResponseWriter, r *http.Request) {

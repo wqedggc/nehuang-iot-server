@@ -181,6 +181,72 @@
     };
   }
 
+  // getDashboardV2 返回新的 Dashboard 完整结构（mock 数据）。
+  function getDashboardV2(range) {
+    var now = new Date();
+    var tzOffset = now.getTimezoneOffset();
+    var tzSign = tzOffset <= 0 ? '+' : '-';
+    var tzH = Math.abs(Math.floor(tzOffset / 60)).toString().padStart(2, '0');
+    var tzM = Math.abs(tzOffset % 60).toString().padStart(2, '0');
+    var generatedAt = now.getFullYear() + '-' +
+      (now.getMonth() + 1).toString().padStart(2, '0') + '-' +
+      now.getDate().toString().padStart(2, '0') + 'T' +
+      now.getHours().toString().padStart(2, '0') + ':' +
+      now.getMinutes().toString().padStart(2, '0') + ':' +
+      now.getSeconds().toString().padStart(2, '0') + '.000' +
+      tzSign + tzH + ':' + tzM;
+
+    var onlineGateways = MOCK_GATEWAYS.filter(function (g) { return g.online_status === 1; }).length;
+    var totalGateways = MOCK_GATEWAYS.length;
+    var normalCollectors = MOCK_COLLECTORS.filter(function (c) { return c.status === 'normal' || c.status === 'on'; }).length;
+    var abnormalCollectors = MOCK_COLLECTORS.filter(function (c) { return c.status === 'high' || c.status === 'low'; }).length;
+    var offlineCollectors = MOCK_COLLECTORS.filter(function (c) { return c.status === 'offline'; }).length;
+
+    return {
+      range: range,
+      generated_at: generatedAt,
+      users: {
+        total_users: MOCK_USERS.filter(function (u) { return u.status !== 3; }).length,
+        admin_count: MOCK_USERS.filter(function (u) { return u.user_type === 1 && u.status !== 3; }).length,
+        farmer_count: MOCK_USERS.filter(function (u) { return u.user_type === 2 && u.status !== 3; }).length,
+        active_farmer_count: MOCK_USERS.filter(function (u) { return u.user_type === 2 && u.status === 1; }).length,
+        disabled_farmer_count: MOCK_USERS.filter(function (u) { return u.user_type === 2 && u.status === 2; }).length
+      },
+      devices: {
+        gateway_total: totalGateways,
+        gateway_online: onlineGateways,
+        gateway_offline: totalGateways - onlineGateways,
+        collector_node_total: MOCK_COLLECTORS.length,
+        device_point_total: MOCK_COLLECTORS.length,
+        bound_point_count: MOCK_BINDINGS.length,
+        unbound_point_count: MOCK_COLLECTORS.length - MOCK_BINDINGS.length,
+        normal_point_count: normalCollectors,
+        abnormal_point_count: abnormalCollectors,
+        offline_point_count: offlineCollectors,
+        latest_report_time: '2026-06-28T21:53:45.000+08:00'
+      },
+      ingest: {
+        raw_event_count: 12847,
+        telemetry_count: 10234,
+        register_count: 12,
+        heartbeat_count: 3600,
+        work_count: 8500,
+        control_result_count: 735,
+        heartbeat_total: 3600,
+        heartbeat_success: 3580,
+        heartbeat_failed: 20,
+        heartbeat_success_rate: 99.44
+      },
+      control: {
+        control_command_count: 735,
+        control_success_count: 700,
+        control_failed_count: 25,
+        control_timeout_count: 10,
+        control_success_rate: 95.24
+      }
+    };
+  }
+
   let nextBindId = 10;
 
   // ============================================================
@@ -246,8 +312,10 @@
       const user = MOCK_USERS.find(u => u.user_id === uid) || MOCK_USERS[0];
       return { data: { user_id: user.user_id, username: user.username || '', role: user.role, display_name: user.display_name } };
     },
-    'GET /api/v1/admin/dashboard': function () {
-      return { data: getDashboard() };
+    'GET /api/v1/admin/dashboard': function (params, query) {
+      // 支持 range 参数，mock 返回完整结构
+      var range = (query && query.range) || '1d';
+      return { data: getDashboardV2(range) };
     },
     'GET /api/v1/admin/users': function () {
       const users = MOCK_USERS.map(u => {
@@ -475,6 +543,10 @@
 
     getDashboard: async function () {
       return request('GET', '/api/v1/admin/dashboard');
+    },
+
+    getDashboardRange: async function (range) {
+      return request('GET', '/api/v1/admin/dashboard?range=' + (range || '1d'));
     },
 
     getUsers: async function () {
