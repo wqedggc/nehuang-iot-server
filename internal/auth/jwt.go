@@ -22,11 +22,12 @@ var (
 
 // Claims holds the data embedded inside a JWT payload.
 type Claims struct {
-	UserID   uint64      `json:"user_id"`
+	UserID   uint64         `json:"user_id"`
 	UserType domain.UserType `json:"user_type"`
-	Role     domain.Role     `json:"role"`
-	IssuedAt int64           `json:"iat"` // Unix milliseconds
-	ExpireAt int64           `json:"exp"` // Unix milliseconds
+	Role     domain.Role    `json:"role"`
+	Aud      string         `json:"aud"` // "admin" or "mini" — distinguishes admin vs farmer tokens
+	IssuedAt int64          `json:"iat"` // Unix milliseconds
+	ExpireAt int64          `json:"exp"` // Unix milliseconds
 }
 
 // jwtHeader is the fixed base64url-encoded HS256 header.

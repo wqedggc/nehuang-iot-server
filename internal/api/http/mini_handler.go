@@ -95,6 +95,7 @@ func (h *miniHandler) mockLogin(w http.ResponseWriter, r *http.Request) {
 		UserID:   user.UserID,
 		UserType: user.UserType,
 		Role:     user.Role,
+		Aud:      "mini",
 		IssuedAt: now.UnixMilli(),
 		ExpireAt: now.Add(h.jwtCfg.FarmerTokenTTL).UnixMilli(),
 	}

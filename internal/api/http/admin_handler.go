@@ -111,6 +111,7 @@ func (h *adminHandler) login(w http.ResponseWriter, r *http.Request) {
 		UserID:   user.UserID,
 		UserType: user.UserType,
 		Role:     user.Role,
+		Aud:      "admin",
 		IssuedAt: now.UnixMilli(),
 		ExpireAt: now.Add(h.jwtCfg.AdminTokenTTL).UnixMilli(),
 	}

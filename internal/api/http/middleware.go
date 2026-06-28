@@ -34,6 +34,14 @@ func loggingMiddleware(next http.Handler) http.Handler {
 
 // authMiddleware parses the "Authorization: Bearer <token>" header, verifies the
 // HS256 signature and expiry, and stores the resulting Claims in the request context.
+// Additionally, it enforces that the token's "aud" (audience) field matches the
+// API path prefix:
+//   - /api/v1/admin/* requires aud="admin"
+//   - /api/v1/mini/*  requires aud="mini"
+//
+// A farmer token (aud="mini") accessing admin endpoints returns 403 Forbidden.
+// An admin token (aud="admin") accessing mini endpoints returns 403 Forbidden.
+//
 // Responds with 401 if the token is absent, malformed, or expired.
 func authMiddleware(secret []byte, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -53,6 +61,21 @@ func authMiddleware(secret []byte, next http.Handler) http.Handler {
 			writeCode(w, http.StatusUnauthorized, 4012, "invalid token")
 			return
 		}
+
+		// ─── Audience-based path enforcement ───
+		path := r.URL.Path
+		if strings.HasPrefix(path, "/api/v1/admin/") || path == "/api/v1/admin" {
+			if claims.Aud != "admin" {
+				writeCode(w, http.StatusForbidden, 4034, "admin API requires admin token, got token with aud="+claims.Aud)
+				return
+			}
+		} else if strings.HasPrefix(path, "/api/v1/mini/") || path == "/api/v1/mini" {
+			if claims.Aud != "mini" {
+				writeCode(w, http.StatusForbidden, 4035, "mini API requires farmer token, got token with aud="+claims.Aud)
+				return
+			}
+		}
+		// Other paths (e.g. /api/v1/gateways) — no aud enforcement, roleMiddleware handles it.
 
 		ctx := context.WithValue(r.Context(), claimsKey, claims)
 		next.ServeHTTP(w, r.WithContext(ctx))
