@@ -1,6 +1,8 @@
 module nehuang-iot-server
 
-go 1.20
+go 1.24.0
+
+toolchain go1.24.13
 
 require github.com/go-sql-driver/mysql v1.9.3
 
