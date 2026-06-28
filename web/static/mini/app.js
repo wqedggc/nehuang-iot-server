@@ -490,42 +490,52 @@
       var html = '';
 
       // ── 我的资料卡片 ──
-      html += '<div class="settings-section">' +
-        '<h3 style="margin:0 0 12px 0;font-size:16px;font-weight:600">我的资料</h3>' +
-        '<div class="settings-item"><span class="settings-item-label">名称</span><span class="settings-item-value" id="profile-display-name">' + escHtml(u.display_name) + '</span></div>' +
-        '<div class="settings-item"><span class="settings-item-label">手机号</span><span class="settings-item-value" id="profile-mobile">' + escHtml(u.mobile) + '</span></div>' +
-        '<div class="settings-item"><span class="settings-item-label">地址</span><span class="settings-item-value" id="profile-address">' + escHtml(u.address) + '</span></div>' +
-        '<div class="settings-item"><span class="settings-item-label">备注</span><span class="settings-item-value" id="profile-remark">' + escHtml(u.remark) + '</span></div>' +
-        '<div class="settings-item"><span class="settings-item-label">角色</span><span class="settings-item-value">' + (u.role === 3 ? '农户' : '其他') + '</span></div>' +
-        '<div class="settings-item"><span class="settings-item-label">已绑定设备</span><span class="settings-item-value">' + u.binding_count + ' 台</span></div>' +
-        '<button class="btn btn-outline btn-block" id="btn-edit-profile" style="margin-top:12px">编辑资料</button>' +
+      var nameChar = (u.display_name || '?').charAt(0);
+      html += '<div class="profile-card">' +
+        '<div class="profile-card-top">' +
+          '<div class="profile-avatar">' + escHtml(nameChar) + '</div>' +
+          '<div class="profile-card-meta">' +
+            '<div class="profile-card-name">' + escHtml(u.display_name) + '</div>' +
+            '<div class="profile-card-bindings">已绑定 ' + u.binding_count + ' 台设备</div>' +
+          '</div>' +
+          '<button class="btn-pill-edit" id="btn-edit-profile">编辑资料</button>' +
+        '</div>' +
+        '<div class="profile-card-divider"></div>' +
+        '<div class="profile-card-fields">' +
+          profileField('手机号', u.mobile) +
+          profileField('地址', u.address) +
+          profileField('备注', u.remark) +
+        '</div>' +
       '</div>';
 
       // ── 编辑表单（默认隐藏）──
       html += '<div class="settings-section" id="profile-edit-form" style="display:none">' +
-        '<h3 style="margin:0 0 12px 0;font-size:16px;font-weight:600">编辑资料</h3>' +
-        '<div class="form-group">' +
-          '<label class="form-label">名称</label>' +
-          '<input class="form-input" id="edit-display-name" type="text" placeholder="请输入名称" maxlength="64" value="' + escHtml(u.display_name) + '">' +
-          '<p class="form-hint">1-64 个字符</p>' +
+        '<div class="edit-form-header">' +
+          '<button class="btn-icon" id="btn-cancel-edit"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>' +
+          '<h3 style="font-size:17px;font-weight:600">编辑资料</h3>' +
+          '<div style="width:36px"></div>' +
         '</div>' +
-        '<div class="form-group">' +
-          '<label class="form-label">手机号</label>' +
-          '<input class="form-input" id="edit-mobile" type="text" placeholder="请输入手机号" maxlength="512" value="' + escHtml(u.mobile) + '">' +
+        '<div class="edit-form-body">' +
+          '<div class="form-group">' +
+            '<label class="form-label">名称</label>' +
+            '<input class="form-input" id="edit-display-name" type="text" placeholder="请输入名称" maxlength="64" value="' + escHtml(u.display_name) + '">' +
+            '<p class="form-hint" style="text-align:left">1-64 个字符</p>' +
+          '</div>' +
+          '<div class="form-group">' +
+            '<label class="form-label">手机号</label>' +
+            '<input class="form-input" id="edit-mobile" type="text" placeholder="请输入手机号" maxlength="512" value="' + escHtml(u.mobile) + '">' +
+          '</div>' +
+          '<div class="form-group">' +
+            '<label class="form-label">地址</label>' +
+            '<input class="form-input" id="edit-address" type="text" placeholder="请输入地址" maxlength="512" value="' + escHtml(u.address) + '">' +
+          '</div>' +
+          '<div class="form-group">' +
+            '<label class="form-label">备注</label>' +
+            '<input class="form-input" id="edit-remark" type="text" placeholder="请输入备注" maxlength="512" value="' + escHtml(u.remark) + '">' +
+          '</div>' +
+          '<button class="btn btn-primary btn-block" id="btn-save-profile">保存</button>' +
+          '<p class="form-hint" id="profile-edit-error" style="color:var(--color-danger);display:none;margin-top:12px"></p>' +
         '</div>' +
-        '<div class="form-group">' +
-          '<label class="form-label">地址</label>' +
-          '<input class="form-input" id="edit-address" type="text" placeholder="请输入地址" maxlength="512" value="' + escHtml(u.address) + '">' +
-        '</div>' +
-        '<div class="form-group">' +
-          '<label class="form-label">备注</label>' +
-          '<input class="form-input" id="edit-remark" type="text" placeholder="请输入备注" maxlength="512" value="' + escHtml(u.remark) + '">' +
-        '</div>' +
-        '<div style="display:flex;gap:8px;margin-top:12px">' +
-          '<button class="btn btn-primary" id="btn-save-profile" style="flex:1">保存</button>' +
-          '<button class="btn btn-outline" id="btn-cancel-edit" style="flex:1">取消</button>' +
-        '</div>' +
-        '<p class="form-hint" id="profile-edit-error" style="color:var(--color-danger);display:none"></p>' +
       '</div>';
 
       // ── 退出登录 ──
@@ -589,10 +599,22 @@
             u.remark = saveRes.data.remark;
 
             // 更新卡片展示
-            $('#profile-display-name').textContent = saveRes.data.display_name || '';
-            $('#profile-mobile').textContent = saveRes.data.mobile || '';
-            $('#profile-address').textContent = saveRes.data.address || '';
-            $('#profile-remark').textContent = saveRes.data.remark || '';
+            var nameChar = (saveRes.data.display_name || '?').charAt(0);
+            var avatarEl = document.querySelector('.profile-avatar');
+            if (avatarEl) avatarEl.textContent = nameChar;
+            var nameEl = document.querySelector('.profile-card-name');
+            if (nameEl) nameEl.textContent = saveRes.data.display_name || '';
+
+            // 更新字段
+            var fields = document.querySelectorAll('.profile-field-value');
+            var fieldValues = [saveRes.data.mobile, saveRes.data.address, saveRes.data.remark];
+            for (var i = 0; i < fields.length && i < fieldValues.length; i++) {
+              var v = fieldValues[i];
+              var hasV = v && v.trim();
+              fields[i].textContent = hasV ? v : '未设置';
+              if (hasV) { fields[i].classList.remove('is-empty'); }
+              else { fields[i].classList.add('is-empty'); }
+            }
 
             // 隐藏编辑表单
             $('#profile-edit-form').style.display = 'none';
@@ -632,6 +654,14 @@
   function escHtml(str) {
     if (str == null) return '';
     return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  function profileField(label, value) {
+    var hasVal = value && value.trim();
+    return '<div class="profile-field">' +
+      '<span class="profile-field-label">' + escHtml(label) + '</span>' +
+      '<span class="profile-field-value' + (hasVal ? '' : ' is-empty') + '">' + (hasVal ? escHtml(value) : '未设置') + '</span>' +
+    '</div>';
   }
 
   function loadScript(src) {
