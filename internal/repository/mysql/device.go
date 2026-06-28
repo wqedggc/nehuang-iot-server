@@ -3,6 +3,7 @@ package mysql
 import (
 	"context"
 	"database/sql"
+	"log"
 	"time"
 
 	"nehuang-iot-server/internal/domain"
@@ -1075,6 +1076,12 @@ func (r *Repository) CreateBinding(ctx context.Context, b *domain.BindRelation) 
 	b.CreatedAt = now
 	b.UpdatedAt = now
 
+	uid := nullableUint64(b.UserID)
+	rid := nullableUint64(b.RealtimeID)
+	nid := nullableUint64(b.NodeID)
+	pid := nullableUint64(b.PointID)
+	cbid := nullableUint64(b.CreatedBy)
+
 	_, err := r.db.ExecContext(ctx, `
 INSERT INTO bind_relations
   (bind_id, user_id, bind_user_name,
@@ -1083,12 +1090,16 @@ INSERT INTO bind_relations
    bind_status, bound_at_ms, created_by, created_at, updated_at)
 VALUES
   (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		b.BindID, nullableUint64(b.UserID), b.BindUserName,
-		b.GatewayID, nullableUint64(b.RealtimeID), nullableUint64(b.NodeID), nullableUint64(b.PointID),
+		b.BindID, uid, b.BindUserName,
+		b.GatewayID, rid, nid, pid,
 		b.ShedNo, b.Frequency, b.DeviceExternalID, uint8(b.FunctionType),
-		uint8(b.BindStatus), b.BoundAtMS, nullableUint64(b.CreatedBy),
+		uint8(b.BindStatus), b.BoundAtMS, cbid,
 		b.CreatedAt, b.UpdatedAt,
 	)
+	if err != nil {
+		log.Printf("[CreateBinding] INSERT failed: bind_id=%d user_id=%v point_id=%v gateway_id=%d err=%v",
+			b.BindID, uid, pid, b.GatewayID, err)
+	}
 	return err
 }
 

@@ -3,6 +3,7 @@ package http
 import (
 	"context"
 	"encoding/json"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -250,10 +251,12 @@ func (h *adminHandler) handleCollectors(w http.ResponseWriter, r *http.Request) 
 func (h *adminHandler) handleBindings(w http.ResponseWriter, r *http.Request) {
 	bindings, err := h.repo.ListBindings(r.Context())
 	if err != nil {
+		log.Printf("[handleBindings] ListBindings failed: %v", err)
 		writeCode(w, http.StatusInternalServerError, 500, "internal error: "+err.Error())
 		return
 	}
 
+	log.Printf("[handleBindings] returned %d bindings", len(bindings))
 	writeJSON(w, http.StatusOK, map[string]any{"data": bindings})
 }
 
@@ -351,9 +354,12 @@ func (h *adminHandler) handleCreateBinding(w http.ResponseWriter, r *http.Reques
 	}
 
 	if err := h.repo.CreateBinding(ctx, b); err != nil {
+		log.Printf("[handleCreateBinding] repo.CreateBinding failed: user_id=%d point_id=%d err=%v", req.UserID, req.PointID, err)
 		writeCode(w, http.StatusInternalServerError, 500, "failed to create binding: "+err.Error())
 		return
 	}
+
+	log.Printf("[handleCreateBinding] success: bind_id=%d user_id=%d point_id=%d", b.BindID, req.UserID, req.PointID)
 
 	writeJSON(w, http.StatusOK, map[string]any{"data": b})
 }
