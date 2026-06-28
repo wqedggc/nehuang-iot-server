@@ -47,9 +47,21 @@ func NewServer(repo repository, cfg config.Config) *Server {
 func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
 
-	// Health probes — no auth required.
-	mux.HandleFunc("GET /healthz", s.healthz)
-	mux.HandleFunc("GET /readyz", s.readyz)
+	// Health probes — no auth required (Go 1.20 compatible: check Method inside handler).
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			writeCode(w, http.StatusMethodNotAllowed, 405, "method not allowed")
+			return
+		}
+		s.healthz(w, r)
+	})
+	mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			writeCode(w, http.StatusMethodNotAllowed, 405, "method not allowed")
+			return
+		}
+		s.readyz(w, r)
+	})
 
 	secret := []byte(s.jwtCfg.Secret)
 	adminRoles := roleMiddleware(domain.RoleSuperAdmin, domain.RoleAdmin)
@@ -62,8 +74,14 @@ func (s *Server) Routes() http.Handler {
 	// ─── Adapter API（X-Adapter-Token 认证，不走用户 JWT） ───
 	mux.HandleFunc("/api/v1/adapter/device-events", adh.handleDeviceEvents)
 
-	// ─── Admin auth — public ───
-	mux.HandleFunc("POST /api/v1/admin/login", ah.login)
+	// ─── Admin auth — public (Go 1.20 compatible) ───
+	mux.HandleFunc("/api/v1/admin/login", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeCode(w, http.StatusMethodNotAllowed, 405, "method not allowed")
+			return
+		}
+		ah.login(w, r)
+	})
 
 	// ─── Admin protected ───
 	mux.Handle("/api/v1/admin/me",
@@ -115,8 +133,14 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("/api/v1/admin/farmers",
 		authMiddleware(secret, adminRoles(http.HandlerFunc(ah.handleFarmers))))
 
-	// ─── Mini-program auth — public (dev/test only) ───
-	mux.HandleFunc("POST /api/v1/mini/mock-login", mh.mockLogin)
+	// ─── Mini-program auth — public (dev/test only, Go 1.20 compatible) ───
+	mux.HandleFunc("/api/v1/mini/mock-login", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeCode(w, http.StatusMethodNotAllowed, 405, "method not allowed")
+			return
+		}
+		mh.mockLogin(w, r)
+	})
 
 	// ─── Mini-program protected ───
 	mux.Handle("/api/v1/mini/me",
