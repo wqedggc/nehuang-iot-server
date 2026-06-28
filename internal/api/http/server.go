@@ -47,8 +47,8 @@ func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
 
 	// Health probes — no auth required.
-	mux.HandleFunc("/healthz", s.healthz)
-	mux.HandleFunc("/readyz", s.readyz)
+	mux.HandleFunc("GET /healthz", s.healthz)
+	mux.HandleFunc("GET /readyz", s.readyz)
 
 	secret := []byte(s.jwtCfg.Secret)
 	adminRoles := roleMiddleware(domain.RoleSuperAdmin, domain.RoleAdmin)
@@ -62,7 +62,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/v1/adapter/device-events", adh.handleDeviceEvents)
 
 	// ─── Admin auth — public ───
-	mux.HandleFunc("/api/v1/admin/login", ah.login)
+	mux.HandleFunc("POST /api/v1/admin/login", ah.login)
 
 	// ─── Admin protected ───
 	mux.Handle("/api/v1/admin/me",
@@ -91,7 +91,7 @@ func (s *Server) Routes() http.Handler {
 		authMiddleware(secret, adminRoles(http.HandlerFunc(ah.handleControlLogs))))
 
 	// ─── Mini-program auth — public (dev/test only) ───
-	mux.HandleFunc("/api/v1/mini/mock-login", mh.mockLogin)
+	mux.HandleFunc("POST /api/v1/mini/mock-login", mh.mockLogin)
 
 	// ─── Mini-program protected ───
 	mux.Handle("/api/v1/mini/me",
@@ -122,9 +122,6 @@ func (s *Server) Routes() http.Handler {
 		authMiddleware(secret, adminRoles(http.HandlerFunc(s.listGateways))))
 
 	// ─── Static frontend files (prototype HTML/CSS/JS) ───
-	// Go 1.20 FileServer: accessing /admin/index.html directly causes a 301
-	// redirect to /admin/.  Use /admin/ instead — FileServer auto-serves
-	// index.html when the directory path is requested.
 	mux.Handle("/admin/", http.StripPrefix("/admin/", http.FileServer(http.Dir("./prototype/admin"))))
 	mux.Handle("/mini/", http.StripPrefix("/mini/", http.FileServer(http.Dir("./prototype/mini"))))
 	mux.Handle("/mock/", http.StripPrefix("/mock/", http.FileServer(http.Dir("./prototype/mock"))))
