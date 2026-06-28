@@ -69,6 +69,9 @@ func (m *mockAdminRepo) FindActiveBindingByUserAndPoint(ctx context.Context, use
 func (m *mockAdminRepo) FindActiveBindingByPoint(ctx context.Context, pointID uint64) (*domain.BindRelation, error) {
 	return nil, nil
 }
+func (m *mockAdminRepo) SearchDevicePoints(ctx context.Context, keyword string, bindStatus string) ([]domain.DevicePointSearchResult, error) {
+	return nil, nil
+}
 
 // ─── Scenario 7: Admin login JWT contains aud="admin" ────────────────────────
 

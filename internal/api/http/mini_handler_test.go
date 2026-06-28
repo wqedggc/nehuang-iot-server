@@ -43,6 +43,9 @@ func (m *mockMiniRepo) GetMiniDeviceHistory(ctx context.Context, pointID uint64,
 func (m *mockMiniRepo) CheckBindRelation(ctx context.Context, userID uint64, pointID uint64) (bool, error) {
 	return false, nil
 }
+func (m *mockMiniRepo) UpdateMiniProfile(ctx context.Context, userID uint64, updates map[string]string) error {
+	return nil
+}
 
 // ─── Scenario 7: Mini login JWT contains aud="mini" ──────────────────────────
 

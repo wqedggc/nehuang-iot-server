@@ -1361,11 +1361,7 @@ func (r *Repository) SearchDevicePoints(ctx context.Context, keyword string, bin
 	var args []interface{}
 	whereClause := ""
 
-	if keyword != "" {
-		like := "%" + keyword + "%"
-		whereClause = ` AND (dp.point_name LIKE ? OR cg.gateway_name LIKE ? OR cn.device_external_id LIKE ? OR cn.shed_no LIKE ?)`
-		args = append(args, like, like, like, like)
-	}
+	// keyword 过滤放在应用层（handler），因为 function_name 是通过 function_type 映射的，SQL 无法匹配
 
 	switch bindStatus {
 	case "unbound":

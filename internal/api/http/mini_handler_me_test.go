@@ -104,8 +104,7 @@ func parseResp(t *testing.T, body []byte) map[string]interface{} {
 	return resp
 }
 
-// strPtr returns a pointer to the given string.
-func strPtr(s string) *string { return &s }
+// (strPtr is already defined in adapter_handler.go — no need to redeclare)
 
 // ─── Scenario 1: GET /api/v1/mini/me 返回完整资料 ──────────────────────────────
 
@@ -127,7 +126,7 @@ func TestHandleMe_ReturnsFullProfile(t *testing.T) {
 			Status:      domain.UserStatusActive,
 		},
 		miniDevices: []domain.MiniDevice{
-			{DeReID: 1}, {DeReID: 11}, {DeReID: 21}, {DeReID: 101},
+			{PointID: 1}, {PointID: 11}, {PointID: 21}, {PointID: 101},
 		},
 	}
 
@@ -362,10 +361,23 @@ func TestHandleUpdateMe_PartialUpdate(t *testing.T) {
 	}
 }
 
-// ─── Scenario 3: admin token 调 PATCH /api/v1/mini/me 返回 403 ────────────────
+// ─── Scenario 3: admin token 调 PATCH /api/v1/mini/me 由中间件拦截 403 ────────
+//
+// NOTE: The handleUpdateMe handler itself does NOT check role/aud —
+// that enforcement is done by authMiddleware + roleMiddleware in server.go.
+// When the handler is called directly (bypassing middleware), it will process
+// the request normally (returning 404 if user not found in mock repo).
+// The 403 is enforced at the middleware level, tested in middleware_test.go.
+//
+// This test verifies the handler's behavior when admin claims are present
+// but the middleware has already passed the request through (should not happen
+// in production because middleware blocks it first).
 
-func TestHandleUpdateMe_AdminToken_Returns403(t *testing.T) {
-	repo := &mockMiniRepoExt{}
+func TestHandleUpdateMe_AdminToken_Returns404_UserNotFound(t *testing.T) {
+	repo := &mockMiniRepoExt{
+		// userByID returns nil (user not found) because admin user_id=1
+		// is not in the mock repo for mini handler
+	}
 	handler := makeMiniHandler(repo)
 
 	body := `{"display_name":"hack"}`
@@ -377,15 +389,22 @@ func TestHandleUpdateMe_AdminToken_Returns403(t *testing.T) {
 
 	handler.handleUpdateMe(rec, req)
 
-	if rec.Code != http.StatusForbidden {
-		t.Errorf("admin token on mini PATCH: want 403, got %d, body=%s", rec.Code, rec.Body.String())
+	// Handler processes request normally (middleware would have blocked this).
+	// The mock repo returns nil user, so the handler returns 404.
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("admin token on mini PATCH (direct call): want 404 (user not found), got %d, body=%s", rec.Code, rec.Body.String())
 	}
 }
 
-// ─── Scenario 3b: admin token 调 GET /api/v1/mini/me 返回 403 ─────────────────
+// ─── Scenario 3b: admin token 调 GET /api/v1/mini/me 由中间件拦截 403 ─────────
+//
+// Same as above: the handler doesn't check role, middleware does.
+// Direct handler call with admin claims processes normally.
 
-func TestHandleMe_AdminToken_Returns403(t *testing.T) {
-	repo := &mockMiniRepoExt{}
+func TestHandleMe_AdminToken_Returns404_UserNotFound(t *testing.T) {
+	repo := &mockMiniRepoExt{
+		// userByID returns nil — admin user_id=1 not found
+	}
 	handler := makeMiniHandler(repo)
 
 	req := httptest.NewRequest("GET", "/api/v1/mini/me", nil)
@@ -394,8 +413,66 @@ func TestHandleMe_AdminToken_Returns403(t *testing.T) {
 
 	handler.handleMe(rec, req)
 
+	// Handler processes request normally — middleware blocks this in production.
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("admin token on mini GET /me (direct call): want 404 (user not found), got %d", rec.Code)
+	}
+}
+
+// ─── Scenario 3c: Integration test — admin token through middleware returns 403 ─
+//
+// This test verifies the FULL middleware chain (authMiddleware + roleMiddleware)
+// correctly blocks admin tokens from accessing mini endpoints.
+
+func TestMiddleware_AdminToken_AccessMiniMe_Returns403(t *testing.T) {
+	// Build the middleware chain as server.go does for /api/v1/mini/me
+	secret := []byte(testSecret)
+	farmerRoles := roleMiddleware(domain.RoleSuperAdmin, domain.RoleAdmin, domain.RoleFarmer)
+
+	repo := &mockMiniRepoExt{
+		userByID: &domain.User{
+			UserID:      3,
+			UserType:    domain.UserTypeFarmer,
+			Role:        domain.RoleFarmer,
+			DisplayName: strPtr("test"),
+			Status:      domain.UserStatusActive,
+		},
+	}
+	handler := makeMiniHandler(repo)
+
+	// Build the same chain as server.go line 153-162
+	miniMeHandler := authMiddleware(secret, farmerRoles(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			handler.handleMe(w, r)
+		} else if r.Method == http.MethodPatch {
+			handler.handleUpdateMe(w, r)
+		} else {
+			writeCode(w, http.StatusMethodNotAllowed, 405, "method not allowed")
+		}
+	})))
+
+	// Test GET with admin token
+	req := httptest.NewRequest("GET", "/api/v1/mini/me", nil)
+	token := helperSign(1, domain.UserTypeAdmin, domain.RoleSuperAdmin, "admin")
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+
+	miniMeHandler.ServeHTTP(rec, req)
+
 	if rec.Code != http.StatusForbidden {
-		t.Errorf("admin token on mini GET /me: want 403, got %d", rec.Code)
+		t.Errorf("admin token GET /api/v1/mini/me through middleware: want 403, got %d, body=%s", rec.Code, rec.Body.String())
+	}
+
+	// Test PATCH with admin token
+	req2 := httptest.NewRequest("PATCH", "/api/v1/mini/me", strings.NewReader(`{"display_name":"hack"}`))
+	req2.Header.Set("Content-Type", "application/json")
+	req2.Header.Set("Authorization", "Bearer "+token)
+	rec2 := httptest.NewRecorder()
+
+	miniMeHandler.ServeHTTP(rec2, req2)
+
+	if rec2.Code != http.StatusForbidden {
+		t.Errorf("admin token PATCH /api/v1/mini/me through middleware: want 403, got %d, body=%s", rec2.Code, rec2.Body.String())
 	}
 }
 
