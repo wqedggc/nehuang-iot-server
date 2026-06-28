@@ -46,6 +46,8 @@ type adminRepository interface {
 	FindDevicePointByID(ctx context.Context, pointID uint64) (*domain.DevicePoint, error)
 	// 按 user_id + point_id 查询 active 绑定。
 	FindActiveBindingByUserAndPoint(ctx context.Context, userID uint64, pointID uint64) (*domain.BindRelation, error)
+	// 按 point_id 查询 active 绑定（用于冲突检测：检查 point 是否已被任意用户绑定）。
+	FindActiveBindingByPoint(ctx context.Context, pointID uint64) (*domain.BindRelation, error)
 }
 
 // adminHandler handles all /api/v1/admin/* endpoints.
@@ -171,7 +173,7 @@ func (h *adminHandler) me(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"data": map[string]any{
-			"user_id":          user.UserID,
+			"user_id":          idStr(user.UserID),
 			"username":         username,
 			"role":             uint8(user.Role),
 			"display_name":     displayName,
@@ -191,7 +193,7 @@ func (h *adminHandler) handleUsers(w http.ResponseWriter, r *http.Request) {
 
 	// 转换为前端期望的格式。
 	type userItem struct {
-		UserID       uint64 `json:"user_id"`
+		UserID       string `json:"user_id"`
 		Username     string `json:"username"`
 		DisplayName  string `json:"display_name"`
 		Role         uint8  `json:"role"`
@@ -216,7 +218,7 @@ func (h *adminHandler) handleUsers(w http.ResponseWriter, r *http.Request) {
 			dname = *u.DisplayName
 		}
 		items = append(items, userItem{
-			UserID:       u.UserID,
+			UserID:       idStr(u.UserID),
 			Username:     uname,
 			DisplayName:  dname,
 			Role:         uint8(u.Role),
@@ -262,8 +264,11 @@ type createBindingRequest struct {
 }
 
 // handleCreateBinding 处理 POST /api/v1/admin/bindings。
-// 以 point_id 为核心创建绑定关系。从 device_points 表关联补全 gateway_id、node_id 等字段。
-// 重复绑定同一 active point 幂等成功（直接返回已有绑定）。
+// 以 point_id 为核心创建绑定关系。
+// 规则：
+//   - point 已 active 绑定给同一用户 → 幂等返回 200（已有绑定）
+//   - point 已 active 绑定给其他用户 → 返回 409 conflict
+//   - point 无 active 绑定 → 创建新绑定
 func (h *adminHandler) handleCreateBinding(w http.ResponseWriter, r *http.Request) {
 	var req createBindingRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -277,18 +282,36 @@ func (h *adminHandler) handleCreateBinding(w http.ResponseWriter, r *http.Reques
 
 	ctx := r.Context()
 
-	// 幂等检查：是否已存在 active 绑定。
-	existing, err := h.repo.FindActiveBindingByUserAndPoint(ctx, req.UserID, req.PointID)
+	// Step 1: 检查 point 是否已被任意用户 active 绑定（冲突检测）。
+	existingByPoint, err := h.repo.FindActiveBindingByPoint(ctx, req.PointID)
 	if err != nil {
 		writeCode(w, http.StatusInternalServerError, 500, "internal error: "+err.Error())
 		return
 	}
-	if existing != nil {
-		writeJSON(w, http.StatusOK, map[string]any{"data": existing})
+	if existingByPoint != nil {
+		existingUserID := uint64(0)
+		if existingByPoint.UserID != nil {
+			existingUserID = *existingByPoint.UserID
+		}
+		if existingUserID == req.UserID {
+			// 同一用户重复绑定 → 幂等返回
+			writeJSON(w, http.StatusOK, map[string]any{"data": existingByPoint})
+			return
+		}
+		// 其他用户已绑定 → conflict
+		writeJSON(w, http.StatusConflict, map[string]any{
+			"code":    409,
+			"message": "device point already bound to another user",
+			"data": map[string]any{
+				"existing_user_id":   idStr(existingUserID),
+				"existing_bind_id":   idStr(existingByPoint.BindID),
+				"existing_user_name": existingByPoint.BindUserName,
+			},
+		})
 		return
 	}
 
-	// 查询 device_point 补全字段。
+	// Step 2: 查询 device_point 补全字段。
 	point, err := h.repo.FindDevicePointByID(ctx, req.PointID)
 	if err != nil {
 		writeCode(w, http.StatusInternalServerError, 500, "internal error: "+err.Error())
@@ -299,7 +322,7 @@ func (h *adminHandler) handleCreateBinding(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// 查询用户信息获取 bind_user_name。
+	// Step 3: 查询用户信息获取 bind_user_name。
 	user, err := h.repo.GetUserByID(ctx, req.UserID)
 	if err != nil {
 		writeCode(w, http.StatusInternalServerError, 500, "internal error: "+err.Error())
@@ -471,7 +494,7 @@ func (h *adminHandler) handleFarmerDetail(w http.ResponseWriter, r *http.Request
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"data": map[string]any{
-			"user_id":       user.UserID,
+			"user_id":       idStr(user.UserID),
 			"display_name":  displayName,
 			"mobile":        mobile,
 			"address":       address,
@@ -551,7 +574,7 @@ func (h *adminHandler) handleFarmers(w http.ResponseWriter, r *http.Request) {
 	}
 
 	type farmerItem struct {
-		UserID       uint64 `json:"user_id"`
+		UserID       string `json:"user_id"`
 		DisplayName  string `json:"display_name"`
 		Mobile       string `json:"mobile"`
 		WechatOpenID string `json:"wechat_openid"`
@@ -583,7 +606,7 @@ func (h *adminHandler) handleFarmers(w http.ResponseWriter, r *http.Request) {
 			bc = bindingCounts[i]
 		}
 		items = append(items, farmerItem{
-			UserID:       u.UserID,
+			UserID:       idStr(u.UserID),
 			DisplayName:  dname,
 			Mobile:       mobile,
 			WechatOpenID: openID,

@@ -184,13 +184,13 @@ type SensorData struct {
 
 // BindRelation 对应 bind_relations 表。
 type BindRelation struct {
-	BindID           uint64      `json:"bind_id"`
-	UserID           *uint64     `json:"user_id"`
+	BindID           uint64      `json:"bind_id,string"`
+	UserID           *uint64     `json:"user_id,string"`
 	BindUserName     string      `json:"bind_user_name"`
-	GatewayID        uint64      `json:"gateway_id"`
-	RealtimeID       *uint64     `json:"realtime_id"`
-	NodeID           *uint64     `json:"node_id"`
-	PointID          *uint64     `json:"point_id"`
+	GatewayID        uint64      `json:"gateway_id,string"`
+	RealtimeID       *uint64     `json:"realtime_id,string"`
+	NodeID           *uint64     `json:"node_id,string"`
+	PointID          *uint64     `json:"point_id,string"`
 	ShedNo           string      `json:"shed_no"`
 	Frequency        int         `json:"frequency"`
 	DeviceExternalID string      `json:"device_external_id"`
@@ -198,7 +198,7 @@ type BindRelation struct {
 	BindStatus       BindStatus  `json:"bind_status"`
 	BoundAtMS        time.Time   `json:"bound_at_ms"`
 	UnboundAtMS      *time.Time  `json:"unbound_at_ms"`
-	CreatedBy        *uint64     `json:"created_by"`
+	CreatedBy        *uint64     `json:"created_by,string"`
 	Extra            *string     `json:"extra"`
 	CreatedAt        time.Time   `json:"created_at"`
 	UpdatedAt        time.Time   `json:"updated_at"`
@@ -217,8 +217,8 @@ const (
 
 // ControlLogSummary 控制日志列表摘要，供管理端控制日志页使用。
 type ControlLogSummary struct {
-	OpID         uint64    `json:"op_id"`
-	GatewayID    uint64    `json:"gateway_id"`
+	OpID         uint64    `json:"op_id,string"`
+	GatewayID    uint64    `json:"gateway_id,string"`
 	GatewayName  string    `json:"gateway_name"`
 	BindUserName string    `json:"bind_usr_name"`
 	Frequency    int       `json:"freq"`
@@ -237,8 +237,8 @@ type ControlLogSummary struct {
 
 // MiniDevice 是 C 端"我的设备"列表的聚合视图，将 bind_relations 与 device_points 合并。
 type MiniDevice struct {
-	PointID          uint64   `json:"point_id"`
-	GatewayID        uint64   `json:"gateway_id"`
+	PointID          uint64   `json:"point_id,string"`
+	GatewayID        uint64   `json:"gateway_id,string"`
 	GatewayName      string   `json:"gateway_name"`
 	ShedNo           string   `json:"shed_no"`
 	Frequency        int      `json:"freq"`
@@ -256,7 +256,7 @@ type MiniDevice struct {
 
 // MiniDeviceDetail C 端设备详情（实时数据）。
 type MiniDeviceDetail struct {
-	PointID          uint64   `json:"point_id"`
+	PointID          uint64   `json:"point_id,string"`
 	GatewayName      string   `json:"gateway_name"`
 	ShedNo           string   `json:"shed_no"`
 	Frequency        int      `json:"freq"`
@@ -287,7 +287,7 @@ type MiniHistoryPoint struct {
 
 // MiniDeviceHistory C 端历史数据响应。
 type MiniDeviceHistory struct {
-	PointID   uint64             `json:"point_id"`
+	PointID   uint64             `json:"point_id,string"`
 	FuncName  string             `json:"func_name"`
 	Unit      string             `json:"unit"`
 	BestMin   *float64           `json:"best_min"`
@@ -299,7 +299,7 @@ type MiniDeviceHistory struct {
 
 // DeviceTreeNode 是设备树的顶层节点，对应一个 cloud_gateway。
 type DeviceTreeNode struct {
-	GatewayID   uint64               `json:"gateway_id"`
+	GatewayID   uint64               `json:"gateway_id,string"`
 	GatewayName string               `json:"gateway_name"`
 	Status      uint8                `json:"status"`
 	Collectors  []DeviceTreeCollector `json:"collectors"`
@@ -307,7 +307,7 @@ type DeviceTreeNode struct {
 
 // DeviceTreeCollector 是设备树的第二层，对应一个 collector_node。
 type DeviceTreeCollector struct {
-	NodeID           uint64            `json:"node_id"`
+	NodeID           uint64            `json:"node_id,string"`
 	DeviceExternalID string            `json:"device_external_id"`
 	Frequency        int               `json:"frequency"`
 	Points           []DeviceTreePoint `json:"points"`
@@ -315,10 +315,10 @@ type DeviceTreeCollector struct {
 
 // DeviceTreePoint 是设备树的第三层，对应一个 device_point。
 type DeviceTreePoint struct {
-	PointID      uint64  `json:"point_id"`
+	PointID      uint64  `json:"point_id,string"`
 	FunctionType uint8   `json:"function_type"`
 	FunctionName string  `json:"function_name"`
 	ChannelNo    int     `json:"channel_no"`
 	IsBound      bool    `json:"is_bound"`
-	BoundUserID  *uint64 `json:"bound_user_id"`
+	BoundUserID  *uint64 `json:"bound_user_id,string"`
 }

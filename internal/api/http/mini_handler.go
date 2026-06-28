@@ -115,7 +115,7 @@ func (h *miniHandler) mockLogin(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"data": map[string]any{
 			"token":        token,
-			"user_id":      user.UserID,
+			"user_id":      idStr(user.UserID),
 			"is_new_user":  isNewUser,
 			"display_name": displayName,
 		},
@@ -151,7 +151,7 @@ func (h *miniHandler) handleMe(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"data": map[string]any{
-			"user_id":       user.UserID,
+			"user_id":       idStr(user.UserID),
 			"display_name":  displayName,
 			"role":          uint8(user.Role),
 			"binding_count": bindingCount,

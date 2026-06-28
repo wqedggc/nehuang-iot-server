@@ -700,6 +700,75 @@ LIMIT 1`, userID, pointID).Scan(
 	return &b, nil
 }
 
+// FindActiveBindingByPoint 按 point_id 查询 active 绑定（不限制 user_id）。
+// 用于冲突检测：检查 point 是否已被任意用户绑定。
+// 返回已存在的绑定记录，不存在则返回 nil。
+func (r *Repository) FindActiveBindingByPoint(ctx context.Context, pointID uint64) (*domain.BindRelation, error) {
+	var b domain.BindRelation
+	var (
+		sUserID, sRealtimeID, sNodeID, sPointID, sCreatedBy sql.NullInt64
+		sUnboundAtMS                                           sql.NullTime
+		sExtra                                                 sql.NullString
+	)
+	err := r.db.QueryRowContext(ctx, `
+SELECT
+  bind_id, user_id, bind_user_name,
+  gateway_id, realtime_id, node_id, point_id,
+  shed_no, frequency, device_external_id, function_type,
+  bind_status, bound_at_ms, unbound_at_ms, created_by,
+  extra, created_at, updated_at
+FROM bind_relations
+WHERE point_id = ? AND bind_status = 1
+LIMIT 1`, pointID).Scan(
+		&b.BindID,
+		&sUserID,
+		&b.BindUserName,
+		&b.GatewayID,
+		&sRealtimeID,
+		&sNodeID,
+		&sPointID,
+		&b.ShedNo, &b.Frequency, &b.DeviceExternalID, &b.FunctionType,
+		&b.BindStatus, &b.BoundAtMS,
+		&sUnboundAtMS,
+		&sCreatedBy,
+		&sExtra,
+		&b.CreatedAt, &b.UpdatedAt,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if sUserID.Valid {
+		uid := uint64(sUserID.Int64)
+		b.UserID = &uid
+	}
+	if sRealtimeID.Valid {
+		rid := uint64(sRealtimeID.Int64)
+		b.RealtimeID = &rid
+	}
+	if sNodeID.Valid {
+		nid := uint64(sNodeID.Int64)
+		b.NodeID = &nid
+	}
+	if sPointID.Valid {
+		pid := uint64(sPointID.Int64)
+		b.PointID = &pid
+	}
+	if sCreatedBy.Valid {
+		cb := uint64(sCreatedBy.Int64)
+		b.CreatedBy = &cb
+	}
+	if sUnboundAtMS.Valid {
+		b.UnboundAtMS = &sUnboundAtMS.Time
+	}
+	if sExtra.Valid {
+		b.Extra = &sExtra.String
+	}
+	return &b, nil
+}
+
 // FindDevicePointByID 按 point_id 查询单个功能点。
 func (r *Repository) FindDevicePointByID(ctx context.Context, pointID uint64) (*domain.DevicePoint, error) {
 	var p domain.DevicePoint
@@ -1303,41 +1372,95 @@ func nullableFloat64(v *float64) interface{} {
 	return *v
 }
 
-// scanNullUint64 返回一个可被 Scan 写入的 *sql.NullInt64（MySQL BIGINT UNSIGNED 需用 NullInt64）。
+// scanNullUint64 返回一个可被 Scan 写入的值，Scan 后自动回填到 dest。
+// 使用自定义 scanner 类型确保 sql.NullInt64 的结果正确回填。
 func scanNullUint64(dest **uint64) interface{} {
-	return new(sql.NullInt64)
+	return &nullUint64Scanner{dest: dest}
 }
 
-// assignNullUint64 将 scanNullUint64 扫描的结果赋值给目标指针。
-func assignNullUint64(dest **uint64, v interface{}) {
-	n := v.(*sql.NullInt64)
+type nullUint64Scanner struct {
+	dest **uint64
+}
+
+func (s *nullUint64Scanner) Scan(value interface{}) error {
+	var n sql.NullInt64
+	if err := n.Scan(value); err != nil {
+		return err
+	}
 	if n.Valid {
 		val := uint64(n.Int64)
-		*dest = &val
+		*s.dest = &val
 	} else {
-		*dest = nil
+		*s.dest = nil
 	}
+	return nil
 }
 
-// scanNullInt 返回可被 Scan 写入的 *sql.NullInt64。
+// scanNullInt 返回一个可被 Scan 写入的值，Scan 后自动回填到 dest。
 func scanNullInt(dest **int) interface{} {
+	return &nullIntScanner{dest: dest}
+}
+
+type nullIntScanner struct {
+	dest **int
+}
+
+func (s *nullIntScanner) Scan(value interface{}) error {
 	var n sql.NullInt64
-	*dest = new(int)
-	return &n
+	if err := n.Scan(value); err != nil {
+		return err
+	}
+	if n.Valid {
+		val := int(n.Int64)
+		*s.dest = &val
+	} else {
+		*s.dest = nil
+	}
+	return nil
 }
 
-// scanNullString 返回可被 Scan 写入的 *sql.NullString。
+// scanNullString 返回一个可被 Scan 写入的值，Scan 后自动回填到 dest。
 func scanNullString(dest **string) interface{} {
-	var n sql.NullString
-	*dest = new(string)
-	return &n
+	return &nullStringScanner{dest: dest}
 }
 
-// scanNullTime 返回可被 Scan 写入的 *sql.NullTime。
+type nullStringScanner struct {
+	dest **string
+}
+
+func (s *nullStringScanner) Scan(value interface{}) error {
+	var n sql.NullString
+	if err := n.Scan(value); err != nil {
+		return err
+	}
+	if n.Valid {
+		*s.dest = &n.String
+	} else {
+		*s.dest = nil
+	}
+	return nil
+}
+
+// scanNullTime 返回一个可被 Scan 写入的值，Scan 后自动回填到 dest。
 func scanNullTime(dest **time.Time) interface{} {
+	return &nullTimeScanner{dest: dest}
+}
+
+type nullTimeScanner struct {
+	dest **time.Time
+}
+
+func (s *nullTimeScanner) Scan(value interface{}) error {
 	var n sql.NullTime
-	*dest = new(time.Time)
-	return &n
+	if err := n.Scan(value); err != nil {
+		return err
+	}
+	if n.Valid {
+		*s.dest = &n.Time
+	} else {
+		*s.dest = nil
+	}
+	return nil
 }
 
 func float64Value(v *float64) float64 {

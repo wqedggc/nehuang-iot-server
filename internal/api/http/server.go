@@ -264,3 +264,10 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(value)
 }
+
+// idStr converts a uint64 snowflake ID to its string representation.
+// All BIGINT UNSIGNED IDs must be serialised as JSON strings to avoid
+// JavaScript Number precision loss (JS safe integer limit is 2^53-1).
+func idStr(id uint64) string {
+	return strconv.FormatUint(id, 10)
+}
