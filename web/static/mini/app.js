@@ -80,7 +80,7 @@
     var container = $('#main-content');
 
     // 未登录则跳转登录
-    if (route.page !== 'login' && !localStorage.getItem('token')) {
+    if (route.page !== 'login' && !localStorage.getItem('nh_mini_token')) {
       navigate('login');
       return;
     }
@@ -135,7 +135,7 @@
     try {
       var res = await MockAPI.login('mini', credentials);
       if (res.data && res.data.token) {
-        localStorage.setItem('token', res.data.token);
+        localStorage.setItem('nh_mini_token', res.data.token);
         localStorage.setItem('user_id', res.data.user_id);
         MockAPI.setUserId(res.data.user_id);
         showToast('登录成功', 'success');
@@ -156,11 +156,24 @@
     container.innerHTML = '<div class="loading-state"><div class="loading-spinner"></div><p>加载设备列表...</p></div>';
 
     try {
+      // 确认 JWT 存在
+      var token = localStorage.getItem('nh_mini_token');
+      if (!token) {
+        container.innerHTML = '<div class="empty-state">' +
+          '<svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 15v2m0-8v4m0 0a9 9 0 1 0 0-18 9 9 0 0 0 0 18z"/></svg>' +
+          '<p>请先登录</p><button class="btn btn-outline btn-sm" onclick="navigate(\'login\')" style="margin-top:12px">去登录</button></div>';
+        return;
+      }
+
       var res = await MockAPI.getDevices();
+
+      // 处理空绑定状态
       if (!res.data || res.data.length === 0) {
         container.innerHTML = '<div class="empty-state">' +
           '<svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="9" x2="15" y2="15"/><line x1="15" y1="9" x2="9" y2="15"/></svg>' +
-          '<p>暂无绑定设备</p></div>';
+          '<p>暂无绑定设备</p>' +
+          '<p style="font-size:12px;color:var(--color-text-muted);margin-top:4px">请联系管理员为您绑定设备</p>' +
+        '</div>';
         return;
       }
 
@@ -189,9 +202,14 @@
         '</div>';
       });
       html += '</div>';
+
+      // 添加底部提示
+      html += '<p style="text-align:center;margin-top:16px;font-size:11px;color:var(--color-text-muted)">下拉刷新可获取最新数据</p>';
+
       container.innerHTML = html;
     } catch (e) {
-      container.innerHTML = '<div class="error-state"><p>加载失败</p><button class="btn btn-outline btn-sm" onclick="renderPage()">重试</button></div>';
+      console.error('[C端] 设备列表加载失败:', e);
+      container.innerHTML = '<div class="error-state"><p>加载失败：' + escHtml(e.message || '网络异常') + '</p><button class="btn btn-outline btn-sm" onclick="renderPage()">重试</button></div>';
     }
   }
 
@@ -469,22 +487,138 @@
       var u = res.data;
       currentUser = u;
 
-      var html = '<div class="settings-section">' +
-        '<div class="settings-item"><span class="settings-item-label">用户名</span><span class="settings-item-value">' + escHtml(u.display_name) + '</span></div>' +
+      var html = '';
+
+      // ── 我的资料卡片 ──
+      html += '<div class="settings-section">' +
+        '<h3 style="margin:0 0 12px 0;font-size:16px;font-weight:600">我的资料</h3>' +
+        '<div class="settings-item"><span class="settings-item-label">名称</span><span class="settings-item-value" id="profile-display-name">' + escHtml(u.display_name) + '</span></div>' +
+        '<div class="settings-item"><span class="settings-item-label">手机号</span><span class="settings-item-value" id="profile-mobile">' + escHtml(u.mobile) + '</span></div>' +
+        '<div class="settings-item"><span class="settings-item-label">地址</span><span class="settings-item-value" id="profile-address">' + escHtml(u.address) + '</span></div>' +
+        '<div class="settings-item"><span class="settings-item-label">备注</span><span class="settings-item-value" id="profile-remark">' + escHtml(u.remark) + '</span></div>' +
+        '<div class="settings-item"><span class="settings-item-label">角色</span><span class="settings-item-value">' + (u.role === 3 ? '农户' : '其他') + '</span></div>' +
         '<div class="settings-item"><span class="settings-item-label">已绑定设备</span><span class="settings-item-value">' + u.binding_count + ' 台</span></div>' +
-      '</div>' +
-      '<div class="settings-section">' +
+        '<button class="btn btn-outline btn-block" id="btn-edit-profile" style="margin-top:12px">编辑资料</button>' +
+      '</div>';
+
+      // ── 编辑表单（默认隐藏）──
+      html += '<div class="settings-section" id="profile-edit-form" style="display:none">' +
+        '<h3 style="margin:0 0 12px 0;font-size:16px;font-weight:600">编辑资料</h3>' +
+        '<div class="form-group">' +
+          '<label class="form-label">名称</label>' +
+          '<input class="form-input" id="edit-display-name" type="text" placeholder="请输入名称" maxlength="64" value="' + escHtml(u.display_name) + '">' +
+          '<p class="form-hint">1-64 个字符</p>' +
+        '</div>' +
+        '<div class="form-group">' +
+          '<label class="form-label">手机号</label>' +
+          '<input class="form-input" id="edit-mobile" type="text" placeholder="请输入手机号" maxlength="512" value="' + escHtml(u.mobile) + '">' +
+        '</div>' +
+        '<div class="form-group">' +
+          '<label class="form-label">地址</label>' +
+          '<input class="form-input" id="edit-address" type="text" placeholder="请输入地址" maxlength="512" value="' + escHtml(u.address) + '">' +
+        '</div>' +
+        '<div class="form-group">' +
+          '<label class="form-label">备注</label>' +
+          '<input class="form-input" id="edit-remark" type="text" placeholder="请输入备注" maxlength="512" value="' + escHtml(u.remark) + '">' +
+        '</div>' +
+        '<div style="display:flex;gap:8px;margin-top:12px">' +
+          '<button class="btn btn-primary" id="btn-save-profile" style="flex:1">保存</button>' +
+          '<button class="btn btn-outline" id="btn-cancel-edit" style="flex:1">取消</button>' +
+        '</div>' +
+        '<p class="form-hint" id="profile-edit-error" style="color:var(--color-danger);display:none"></p>' +
+      '</div>';
+
+      // ── 退出登录 ──
+      html += '<div class="settings-section">' +
         '<div class="settings-item"><span class="settings-item-danger" onclick="doLogout()">退出登录</span></div>' +
       '</div>';
 
       container.innerHTML = html;
+
+      // 绑定编辑/保存/取消事件
+      $('#btn-edit-profile').onclick = function () {
+        $('#profile-edit-form').style.display = '';
+        this.style.display = 'none';
+      };
+
+      $('#btn-cancel-edit').onclick = function () {
+        $('#profile-edit-form').style.display = 'none';
+        $('#btn-edit-profile').style.display = '';
+        var errEl = $('#profile-edit-error');
+        errEl.style.display = 'none';
+        errEl.textContent = '';
+        // 恢复原始值
+        $('#edit-display-name').value = u.display_name || '';
+        $('#edit-mobile').value = u.mobile || '';
+        $('#edit-address').value = u.address || '';
+        $('#edit-remark').value = u.remark || '';
+      };
+
+      $('#btn-save-profile').onclick = async function () {
+        var displayName = $('#edit-display-name').value.trim();
+        var mobile = $('#edit-mobile').value.trim();
+        var address = $('#edit-address').value.trim();
+        var remark = $('#edit-remark').value.trim();
+
+        // 前端校验
+        if (!displayName || displayName.length < 1 || displayName.length > 64) {
+          showToast('名称需要 1-64 个字符', 'error');
+          return;
+        }
+        if (mobile.length > 512) { showToast('手机号最多 512 个字符', 'error'); return; }
+        if (address.length > 512) { showToast('地址最多 512 个字符', 'error'); return; }
+        if (remark.length > 512) { showToast('备注最多 512 个字符', 'error'); return; }
+
+        var btn = $('#btn-save-profile');
+        btn.disabled = true;
+        btn.textContent = '保存中...';
+
+        try {
+          var saveRes = await MockAPI.updateMyProfile({
+            display_name: displayName,
+            mobile: mobile,
+            address: address,
+            remark: remark,
+          });
+
+          if (saveRes.data) {
+            // 更新本地缓存
+            u.display_name = saveRes.data.display_name;
+            u.mobile = saveRes.data.mobile;
+            u.address = saveRes.data.address;
+            u.remark = saveRes.data.remark;
+
+            // 更新卡片展示
+            $('#profile-display-name').textContent = saveRes.data.display_name || '';
+            $('#profile-mobile').textContent = saveRes.data.mobile || '';
+            $('#profile-address').textContent = saveRes.data.address || '';
+            $('#profile-remark').textContent = saveRes.data.remark || '';
+
+            // 隐藏编辑表单
+            $('#profile-edit-form').style.display = 'none';
+            $('#btn-edit-profile').style.display = '';
+
+            showToast('资料已更新', 'success');
+          } else {
+            var errEl = $('#profile-edit-error');
+            errEl.textContent = saveRes.message || '保存失败';
+            errEl.style.display = '';
+            showToast(saveRes.message || '保存失败', 'error');
+          }
+        } catch (e) {
+          showToast('网络异常，请重试', 'error');
+        } finally {
+          btn.disabled = false;
+          btn.textContent = '保存';
+        }
+      };
     } catch (e) {
       container.innerHTML = '<div class="error-state"><p>加载失败</p><button class="btn btn-outline btn-sm" onclick="renderPage()">重试</button></div>';
     }
   }
 
   function doLogout() {
-    localStorage.removeItem('token');
+    localStorage.removeItem('nh_mini_token');
     localStorage.removeItem('user_id');
     currentUser = null;
     showToast('已退出登录', 'info');
@@ -520,7 +654,7 @@
     console.info('%c涅凰智农 IoT (C端) v' + (window.APP_VERSION_STRING || '?'), 'color:#2ecc71;font-weight:bold');
 
     // 恢复 token
-    var token = localStorage.getItem('token');
+    var token = localStorage.getItem('nh_mini_token');
     var uid = localStorage.getItem('user_id');
     if (token && uid) {
       MockAPI.setUserId(parseInt(uid));
