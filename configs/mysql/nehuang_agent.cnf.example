@@ -1,0 +1,8 @@
+[client]
+user=nehuang_agent
+password=replace_with_local_password
+host=127.0.0.1
+port=3306
+database=nehuang_db
+default-character-set=utf8mb4
+

@@ -1,0 +1,389 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>涅凰智农 IoT 平台视角图</title>
+  <style>
+    :root {
+      --ink: #17201b;
+      --muted: #5a6a60;
+      --line: #9bb3a3;
+      --panel: #f7faf8;
+      --green: #2f7d4f;
+      --green-soft: #dceee3;
+      --blue: #2f6795;
+      --blue-soft: #dcebf6;
+      --amber: #9b6a22;
+      --amber-soft: #f3e6cf;
+      --red: #a13d33;
+      --red-soft: #f2d9d6;
+      --gray: #e8eee9;
+    }
+
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      color: var(--ink);
+      background: #ffffff;
+    }
+
+    .page {
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 32px 36px 48px;
+    }
+
+    h1 {
+      margin: 0 0 6px;
+      font-size: 28px;
+      font-weight: 700;
+    }
+
+    .subtitle {
+      margin: 0 0 26px;
+      color: var(--muted);
+      font-size: 15px;
+      line-height: 1.7;
+    }
+
+    .grid {
+      display: grid;
+      gap: 24px;
+    }
+
+    .section {
+      border: 1px solid #d7e0da;
+      background: var(--panel);
+      border-radius: 8px;
+      padding: 20px 22px 24px;
+    }
+
+    .section h2 {
+      margin: 0 0 6px;
+      font-size: 20px;
+    }
+
+    .section p {
+      margin: 0 0 14px;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.65;
+    }
+
+    svg {
+      width: 100%;
+      height: auto;
+      display: block;
+      background: #ffffff;
+      border: 1px solid #dfe7e1;
+      border-radius: 6px;
+    }
+
+    .box {
+      fill: #fff;
+      stroke: var(--line);
+      stroke-width: 1.4;
+      rx: 6;
+    }
+
+    .box-green { fill: var(--green-soft); stroke: var(--green); }
+    .box-blue { fill: var(--blue-soft); stroke: var(--blue); }
+    .box-amber { fill: var(--amber-soft); stroke: var(--amber); }
+    .box-red { fill: var(--red-soft); stroke: var(--red); }
+    .box-gray { fill: var(--gray); stroke: #7b8a82; }
+
+    .label {
+      fill: var(--ink);
+      font-size: 15px;
+      font-weight: 650;
+      text-anchor: middle;
+    }
+
+    .small {
+      fill: var(--muted);
+      font-size: 12px;
+      text-anchor: middle;
+    }
+
+    .left-label {
+      fill: var(--ink);
+      font-size: 14px;
+      font-weight: 650;
+      text-anchor: start;
+    }
+
+    .left-small {
+      fill: var(--muted);
+      font-size: 12px;
+      text-anchor: start;
+    }
+
+    .arrow {
+      stroke: #617268;
+      stroke-width: 1.8;
+      fill: none;
+      marker-end: url(#arrow);
+    }
+
+    .dashed {
+      stroke-dasharray: 6 5;
+    }
+
+    .group-title {
+      fill: #31453a;
+      font-size: 14px;
+      font-weight: 700;
+    }
+
+    .note {
+      margin-top: 14px;
+      padding: 12px 14px;
+      border-left: 4px solid var(--green);
+      background: #fff;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.7;
+    }
+
+    .note strong {
+      color: var(--ink);
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <h1>涅凰智农 IoT 平台视角图</h1>
+    <p class="subtitle">
+      这张图把同一套系统拆成三个视角：硬件数据链路、农户看到的内容、管理员看到的内容。当前资料里“棚号”更像业务位置标签；系统底层更适合按“采集执行器功能点”存储，再由 API 按农户或棚号聚合展示。
+    </p>
+
+    <div class="grid">
+      <section class="section">
+        <h2>1. 硬件与数据链路</h2>
+        <p>服务端不直接理解硬件接线，服务端要能识别的是：云边网关、采集执行器、频点、功能通道和值。</p>
+        <svg viewBox="0 0 1320 600" role="img" aria-label="硬件与数据链路图">
+          <defs>
+            <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+              <path d="M0,0 L0,6 L9,3 z" fill="#617268"></path>
+            </marker>
+          </defs>
+
+          <text x="40" y="38" class="group-title">现场业务层</text>
+          <text x="310" y="38" class="group-title">现场采集控制层</text>
+          <text x="710" y="38" class="group-title">通信接入层</text>
+          <text x="1010" y="38" class="group-title">云端业务层</text>
+
+          <rect x="34" y="58" width="210" height="84" class="box box-green"></rect>
+          <text x="139" y="94" class="label">农户 / 用户</text>
+          <text x="139" y="118" class="small">一个用户可绑定多个功能点</text>
+
+          <rect x="34" y="188" width="210" height="96" class="box box-green"></rect>
+          <text x="139" y="224" class="label">棚号 / 场景</text>
+          <text x="139" y="248" class="small">1号棚、2号棚、地块等</text>
+          <text x="139" y="268" class="small">更像位置标签</text>
+
+          <rect x="306" y="80" width="230" height="112" class="box box-amber"></rect>
+          <text x="421" y="118" class="label">采集执行器节点</text>
+          <text x="421" y="142" class="small">devid / 设备ID</text>
+          <text x="421" y="164" class="small">当前最像一行数据主身份</text>
+
+          <rect x="306" y="250" width="230" height="238" class="box box-gray"></rect>
+          <text x="421" y="285" class="label">功能通道</text>
+          <text x="421" y="318" class="small">温度</text>
+          <text x="421" y="348" class="small">墒情</text>
+          <text x="421" y="378" class="small">限位 / DI</text>
+          <text x="421" y="408" class="small">水泵</text>
+          <text x="421" y="438" class="small">风机</text>
+          <text x="421" y="468" class="small">继电器</text>
+
+          <rect x="620" y="85" width="220" height="98" class="box box-blue"></rect>
+          <text x="730" y="122" class="label">LoRa / 频点</text>
+          <text x="730" y="146" class="small">frequency 0-127</text>
+          <text x="730" y="166" class="small">通信分组，不是用户身份</text>
+
+          <rect x="620" y="250" width="220" height="110" class="box box-blue"></rect>
+          <text x="730" y="290" class="label">云边网关</text>
+          <text x="730" y="314" class="small">FP_xxx</text>
+          <text x="730" y="336" class="small">TCP 接入设备身份</text>
+
+          <rect x="620" y="425" width="220" height="84" class="box box-blue"></rect>
+          <text x="730" y="458" class="label">TCP Gateway</text>
+          <text x="730" y="482" class="small">接收注册/心跳/工作包</text>
+
+          <rect x="980" y="82" width="250" height="92" class="box box-red"></rect>
+          <text x="1105" y="118" class="label">Device Adapter</text>
+          <text x="1105" y="142" class="small">解析包、识别节点与通道</text>
+
+          <rect x="980" y="225" width="250" height="102" class="box box-red"></rect>
+          <text x="1105" y="262" class="label">MySQL</text>
+          <text x="1105" y="286" class="small">原始事件、实时状态、历史曲线</text>
+          <text x="1105" y="306" class="small">唯一事实来源</text>
+
+          <rect x="980" y="390" width="250" height="96" class="box box-red"></rect>
+          <text x="1105" y="428" class="label">REST API</text>
+          <text x="1105" y="452" class="small">后台 / 小程序统一访问</text>
+
+          <path d="M139 142 L139 188" class="arrow"></path>
+          <path d="M244 236 C270 236 276 136 306 136" class="arrow"></path>
+          <path d="M421 192 L421 250" class="arrow"></path>
+          <path d="M536 136 L620 136" class="arrow"></path>
+          <path d="M730 183 L730 250" class="arrow"></path>
+          <path d="M730 360 L730 425" class="arrow"></path>
+          <path d="M840 467 C900 467 910 128 980 128" class="arrow"></path>
+          <path d="M1105 174 L1105 225" class="arrow"></path>
+          <path d="M1105 327 L1105 390" class="arrow"></path>
+
+          <path d="M840 306 C910 306 910 276 980 276" class="arrow dashed"></path>
+          <text x="905" y="291" class="small">原始包也要留存</text>
+        </svg>
+        <div class="note">
+          <strong>服务端识别主线：</strong>FP_xxx 先按云边网关处理；devid / 设备ID 先按采集执行器处理；一行实时数据建议定位到“网关 + 频点 + 采集执行器ID + 功能通道”。
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>2. 农户视角看到的内容</h2>
+        <p>农户不需要看硬件链路，农户需要看“我有哪些棚/场景，每个场景下有哪些可读数值和可控制设备”。</p>
+        <svg viewBox="0 0 1320 520" role="img" aria-label="农户视角图">
+          <defs>
+            <marker id="arrow-farmer" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+              <path d="M0,0 L0,6 L9,3 z" fill="#617268"></path>
+            </marker>
+          </defs>
+
+          <rect x="40" y="65" width="210" height="94" class="box box-green"></rect>
+          <text x="145" y="103" class="label">农户登录</text>
+          <text x="145" y="127" class="small">微信用户 / 普通用户</text>
+
+          <rect x="330" y="35" width="230" height="118" class="box box-green"></rect>
+          <text x="445" y="74" class="label">我的设备列表</text>
+          <text x="445" y="100" class="small">按绑定关系过滤</text>
+          <text x="445" y="122" class="small">只看自己名下数据</text>
+
+          <rect x="330" y="210" width="230" height="118" class="box box-amber"></rect>
+          <text x="445" y="250" class="label">棚号 / 场景分组</text>
+          <text x="445" y="276" class="small">1号棚、2号棚、地块</text>
+          <text x="445" y="298" class="small">API 层可聚合展示</text>
+
+          <rect x="655" y="45" width="250" height="126" class="box box-blue"></rect>
+          <text x="780" y="84" class="label">实时数据卡片</text>
+          <text x="780" y="112" class="small">温度、墒情、限位</text>
+          <text x="780" y="134" class="small">实际值、单位、状态</text>
+          <text x="780" y="156" class="small">更新时间</text>
+
+          <rect x="655" y="225" width="250" height="126" class="box box-blue"></rect>
+          <text x="780" y="264" class="label">控制卡片</text>
+          <text x="780" y="292" class="small">水泵、风机、继电器</text>
+          <text x="780" y="314" class="small">自动 / 手动模式</text>
+          <text x="780" y="336" class="small">开、停、关</text>
+
+          <rect x="990" y="45" width="250" height="126" class="box box-red"></rect>
+          <text x="1115" y="84" class="label">历史曲线</text>
+          <text x="1115" y="112" class="small">按功能点查询</text>
+          <text x="1115" y="134" class="small">温度 / 墒情曲线</text>
+          <text x="1115" y="156" class="small">时间范围筛选</text>
+
+          <rect x="990" y="225" width="250" height="126" class="box box-red"></rect>
+          <text x="1115" y="264" class="label">操作记录</text>
+          <text x="1115" y="292" class="small">谁操作、操作什么</text>
+          <text x="1115" y="314" class="small">命令状态、执行结果</text>
+          <text x="1115" y="336" class="small">失败原因</text>
+
+          <rect x="330" y="395" width="910" height="64" class="box box-gray"></rect>
+          <text x="785" y="421" class="label">底层一行数据建议仍是“采集执行器功能点”</text>
+          <text x="785" y="445" class="small">农户 + 棚号 + 网关 + 频点 + 设备ID + 功能 + 实时值 + 控制状态</text>
+
+          <path d="M250 112 L330 94" class="arrow" marker-end="url(#arrow-farmer)"></path>
+          <path d="M445 153 L445 210" class="arrow" marker-end="url(#arrow-farmer)"></path>
+          <path d="M560 94 L655 108" class="arrow" marker-end="url(#arrow-farmer)"></path>
+          <path d="M560 269 L655 288" class="arrow" marker-end="url(#arrow-farmer)"></path>
+          <path d="M905 108 L990 108" class="arrow" marker-end="url(#arrow-farmer)"></path>
+          <path d="M905 288 L990 288" class="arrow" marker-end="url(#arrow-farmer)"></path>
+          <path d="M445 328 L445 395" class="arrow dashed" marker-end="url(#arrow-farmer)"></path>
+          <path d="M780 351 L780 395" class="arrow dashed" marker-end="url(#arrow-farmer)"></path>
+        </svg>
+        <div class="note">
+          <strong>农户视角结论：</strong>可以按棚号做卡片，但数据库不建议把“棚”作为唯一主身份。更稳的是按功能点存储，接口返回时再按棚号聚合。
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>3. 管理员视角看到的内容</h2>
+        <p>管理员需要看全局设备、绑定关系、实时状态、控制与日志。管理员视角比农户视角多“配置”和“排查链路”。</p>
+        <svg viewBox="0 0 1320 560" role="img" aria-label="管理员视角图">
+          <defs>
+            <marker id="arrow-admin" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+              <path d="M0,0 L0,6 L9,3 z" fill="#617268"></path>
+            </marker>
+          </defs>
+
+          <rect x="40" y="60" width="220" height="92" class="box box-green"></rect>
+          <text x="150" y="96" class="label">管理员登录</text>
+          <text x="150" y="120" class="small">超管 / 后台管理员</text>
+
+          <rect x="340" y="35" width="250" height="110" class="box box-blue"></rect>
+          <text x="465" y="74" class="label">Dashboard</text>
+          <text x="465" y="100" class="small">在线网关数、采集器数</text>
+          <text x="465" y="122" class="small">最新上报时间</text>
+
+          <rect x="340" y="190" width="250" height="122" class="box box-blue"></rect>
+          <text x="465" y="230" class="label">云边网关管理</text>
+          <text x="465" y="258" class="small">FP_xxx、IP、端口</text>
+          <text x="465" y="280" class="small">在线/离线、心跳时间</text>
+
+          <rect x="340" y="360" width="250" height="122" class="box box-blue"></rect>
+          <text x="465" y="400" class="label">农户 / 用户管理</text>
+          <text x="465" y="428" class="small">微信用户、后台用户</text>
+          <text x="465" y="450" class="small">角色、状态、绑定列表</text>
+
+          <rect x="675" y="35" width="270" height="132" class="box box-amber"></rect>
+          <text x="810" y="74" class="label">采集执行器详情表</text>
+          <text x="810" y="102" class="small">棚号、归属网关、频点</text>
+          <text x="810" y="124" class="small">设备ID、功能、单位、实时值</text>
+          <text x="810" y="146" class="small">采集周期、轮询指令、模式</text>
+
+          <rect x="675" y="220" width="270" height="122" class="box box-amber"></rect>
+          <text x="810" y="260" class="label">绑定关系管理</text>
+          <text x="810" y="288" class="small">农户绑定哪些功能点</text>
+          <text x="810" y="310" class="small">支持绑定 / 解绑</text>
+
+          <rect x="675" y="390" width="270" height="122" class="box box-amber"></rect>
+          <text x="810" y="430" class="label">控制中心</text>
+          <text x="810" y="458" class="small">下发水泵、风机、继电器命令</text>
+          <text x="810" y="480" class="small">记录命令状态与回执</text>
+
+          <rect x="1030" y="70" width="240" height="102" class="box box-red"></rect>
+          <text x="1150" y="108" class="label">实时数据 / 历史曲线</text>
+          <text x="1150" y="134" class="small">sensor_data</text>
+          <text x="1150" y="154" class="small">按功能点查询</text>
+
+          <rect x="1030" y="245" width="240" height="102" class="box box-red"></rect>
+          <text x="1150" y="283" class="label">原始事件</text>
+          <text x="1150" y="309" class="small">raw_device_events</text>
+          <text x="1150" y="329" class="small">排查协议和现场问题</text>
+
+          <rect x="1030" y="420" width="240" height="102" class="box box-red"></rect>
+          <text x="1150" y="458" class="label">控制日志 / 操作日志</text>
+          <text x="1150" y="484" class="small">op_records</text>
+          <text x="1150" y="504" class="small">control_commands / results</text>
+
+          <path d="M260 106 L340 90" class="arrow" marker-end="url(#arrow-admin)"></path>
+          <path d="M260 106 C300 106 300 251 340 251" class="arrow" marker-end="url(#arrow-admin)"></path>
+          <path d="M260 106 C300 106 300 421 340 421" class="arrow" marker-end="url(#arrow-admin)"></path>
+          <path d="M590 90 L675 101" class="arrow" marker-end="url(#arrow-admin)"></path>
+          <path d="M590 251 L675 101" class="arrow dashed" marker-end="url(#arrow-admin)"></path>
+          <path d="M590 421 L675 281" class="arrow" marker-end="url(#arrow-admin)"></path>
+          <path d="M945 101 L1030 121" class="arrow" marker-end="url(#arrow-admin)"></path>
+          <path d="M945 101 C990 101 990 296 1030 296" class="arrow dashed" marker-end="url(#arrow-admin)"></path>
+          <path d="M945 451 L1030 471" class="arrow" marker-end="url(#arrow-admin)"></path>
+          <path d="M810 342 L810 390" class="arrow" marker-end="url(#arrow-admin)"></path>
+        </svg>
+        <div class="note">
+          <strong>管理员视角结论：</strong>后台应该先围绕“网关在线状态、采集执行器功能点、农户绑定关系、实时/历史数据、控制日志”建设；硬件内部接线不进入后台主模型。
+        </div>
+      </section>
+    </div>
+  </main>
+</body>
+</html>

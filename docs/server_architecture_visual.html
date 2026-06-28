@@ -1,0 +1,389 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>涅凰智农 IoT 云平台服务端架构图</title>
+  <style>
+    :root {
+      --ink: #17201b;
+      --muted: #5f6d64;
+      --line: #8ea899;
+      --bg: #ffffff;
+      --page: #f7faf8;
+      --green: #2f7d4f;
+      --green-soft: #dceee3;
+      --blue: #2f6795;
+      --blue-soft: #dcebf6;
+      --amber: #9b6a22;
+      --amber-soft: #f3e6cf;
+      --red: #a13d33;
+      --red-soft: #f2d9d6;
+      --gray: #eef2ef;
+      --gray-line: #7b8a82;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    }
+
+    .page {
+      max-width: 1480px;
+      margin: 0 auto;
+      padding: 32px 36px 44px;
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: 28px;
+      line-height: 1.3;
+    }
+
+    .subtitle {
+      margin: 0 0 24px;
+      color: var(--muted);
+      font-size: 15px;
+      line-height: 1.7;
+    }
+
+    .panel {
+      padding: 20px 22px 24px;
+      border: 1px solid #d7e0da;
+      border-radius: 8px;
+      background: var(--page);
+    }
+
+    .panel + .panel {
+      margin-top: 22px;
+    }
+
+    h2 {
+      margin: 0 0 6px;
+      font-size: 20px;
+    }
+
+    .desc {
+      margin: 0 0 16px;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.65;
+    }
+
+    svg {
+      display: block;
+      width: 100%;
+      height: auto;
+      border: 1px solid #dfe7e1;
+      border-radius: 6px;
+      background: #fff;
+    }
+
+    .lane {
+      fill: #fbfdfb;
+      stroke: #d8e2db;
+      stroke-width: 1;
+      rx: 8;
+    }
+
+    .lane-title {
+      fill: #31453a;
+      font-size: 14px;
+      font-weight: 700;
+    }
+
+    .box {
+      fill: #fff;
+      stroke: var(--line);
+      stroke-width: 1.5;
+      rx: 7;
+    }
+
+    .green { fill: var(--green-soft); stroke: var(--green); }
+    .blue { fill: var(--blue-soft); stroke: var(--blue); }
+    .amber { fill: var(--amber-soft); stroke: var(--amber); }
+    .red { fill: var(--red-soft); stroke: var(--red); }
+    .gray { fill: var(--gray); stroke: var(--gray-line); }
+
+    .label {
+      fill: var(--ink);
+      font-size: 15px;
+      font-weight: 700;
+      text-anchor: middle;
+    }
+
+    .small {
+      fill: var(--muted);
+      font-size: 12px;
+      text-anchor: middle;
+    }
+
+    .left-label {
+      fill: var(--ink);
+      font-size: 14px;
+      font-weight: 700;
+      text-anchor: start;
+    }
+
+    .left-small {
+      fill: var(--muted);
+      font-size: 12px;
+      text-anchor: start;
+    }
+
+    .arrow {
+      stroke: #617268;
+      stroke-width: 1.8;
+      fill: none;
+      marker-end: url(#arrow);
+    }
+
+    .arrow-back {
+      stroke: #8a5c22;
+      stroke-width: 1.8;
+      fill: none;
+      marker-end: url(#arrow-amber);
+    }
+
+    .dashed {
+      stroke-dasharray: 6 5;
+    }
+
+    .note {
+      margin-top: 14px;
+      padding: 12px 14px;
+      border-left: 4px solid var(--green);
+      background: #fff;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.7;
+    }
+
+    .note strong {
+      color: var(--ink);
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <h1>涅凰智农 IoT 云平台服务端架构图</h1>
+    <p class="subtitle">
+      这是服务端视角的全局架构。硬件侧只抽象成“云边/LoRa通信接入单元”，不展开内部汇聚逻辑；服务端关注两类入口：设备数据入口和客户端 HTTP 入口。MySQL 是业务唯一事实来源。
+    </p>
+
+    <section class="panel">
+      <h2>1. 全局服务端架构</h2>
+      <p class="desc">设备侧通过 TCP Gateway 上云；小程序和后台通过 HTTPS REST API 进入 Go 服务端。两条入口最终都进入业务层和数据库。</p>
+      <svg viewBox="0 0 1440 820" role="img" aria-label="涅凰智农 IoT 云平台服务端架构图">
+        <defs>
+          <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+            <path d="M0,0 L0,6 L9,3 z" fill="#617268"></path>
+          </marker>
+          <marker id="arrow-amber" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+            <path d="M0,0 L0,6 L9,3 z" fill="#8a5c22"></path>
+          </marker>
+        </defs>
+
+        <rect x="24" y="58" width="250" height="632" class="lane"></rect>
+        <text x="42" y="86" class="lane-title">外部输入</text>
+
+        <rect x="304" y="58" width="300" height="632" class="lane"></rect>
+        <text x="322" y="86" class="lane-title">接入层</text>
+
+        <rect x="634" y="58" width="342" height="632" class="lane"></rect>
+        <text x="652" y="86" class="lane-title">Go 服务端业务层</text>
+
+        <rect x="1006" y="58" width="220" height="632" class="lane"></rect>
+        <text x="1024" y="86" class="lane-title">数据层</text>
+
+        <rect x="1256" y="58" width="160" height="632" class="lane"></rect>
+        <text x="1274" y="86" class="lane-title">输出视角</text>
+
+        <rect x="54" y="124" width="190" height="106" class="box green"></rect>
+        <text x="149" y="160" class="label">采集执行器节点</text>
+        <text x="149" y="186" class="small">devid / 设备ID</text>
+        <text x="149" y="208" class="small">温度、墒情、控制通道</text>
+
+        <rect x="54" y="275" width="190" height="112" class="box green"></rect>
+        <text x="149" y="312" class="label">云边/LoRa</text>
+        <text x="149" y="338" class="label">通信接入单元</text>
+        <text x="149" y="362" class="small">FP_xxx 所在链路</text>
+
+        <rect x="54" y="480" width="190" height="88" class="box blue"></rect>
+        <text x="149" y="516" class="label">微信小程序</text>
+        <text x="149" y="542" class="small">农户用户入口</text>
+
+        <rect x="54" y="600" width="190" height="88" class="box blue"></rect>
+        <text x="149" y="636" class="label">管理后台</text>
+        <text x="149" y="662" class="small">管理员入口</text>
+
+        <rect x="342" y="220" width="224" height="112" class="box amber"></rect>
+        <text x="454" y="258" class="label">TCP Gateway</text>
+        <text x="454" y="284" class="small">保留现有 Python 网关</text>
+        <text x="454" y="306" class="small">注册、心跳、工作包、下发</text>
+
+        <rect x="342" y="392" width="224" height="112" class="box amber"></rect>
+        <text x="454" y="430" class="label">Device Adapter</text>
+        <text x="454" y="456" class="small">读取 devices.json 或回调</text>
+        <text x="454" y="478" class="small">协议解析、数据校验</text>
+
+        <rect x="342" y="560" width="224" height="100" class="box blue"></rect>
+        <text x="454" y="598" class="label">HTTPS REST API</text>
+        <text x="454" y="624" class="small">小程序 / 后台统一入口</text>
+        <text x="454" y="646" class="small">认证、查询、控制</text>
+
+        <rect x="672" y="110" width="266" height="88" class="box red"></rect>
+        <text x="805" y="146" class="label">Device Service</text>
+        <text x="805" y="172" class="small">设备注册、在线、实时状态</text>
+
+        <rect x="672" y="232" width="266" height="88" class="box red"></rect>
+        <text x="805" y="268" class="label">Data Service</text>
+        <text x="805" y="294" class="small">原始事件、历史曲线、实时值</text>
+
+        <rect x="672" y="354" width="266" height="88" class="box red"></rect>
+        <text x="805" y="390" class="label">Control Service</text>
+        <text x="805" y="416" class="small">控制命令、回执、控制日志</text>
+
+        <rect x="672" y="486" width="266" height="88" class="box red"></rect>
+        <text x="805" y="522" class="label">User Service</text>
+        <text x="805" y="548" class="small">微信登录、用户信息、权限</text>
+
+        <rect x="672" y="608" width="266" height="88" class="box red"></rect>
+        <text x="805" y="644" class="label">Admin Service</text>
+        <text x="805" y="670" class="small">后台管理、绑定、配置</text>
+
+        <rect x="1038" y="118" width="156" height="104" class="box gray"></rect>
+        <text x="1116" y="154" class="label">MySQL</text>
+        <text x="1116" y="180" class="small">业务唯一事实来源</text>
+        <text x="1116" y="202" class="small">SSOT</text>
+
+        <rect x="1038" y="260" width="156" height="238" class="box gray"></rect>
+        <text x="1116" y="296" class="label">核心表</text>
+        <text x="1116" y="324" class="small">cloud_gateways</text>
+        <text x="1116" y="350" class="small">device_realtime_maps</text>
+        <text x="1116" y="376" class="small">bind_relations</text>
+        <text x="1116" y="402" class="small">sensor_data</text>
+        <text x="1116" y="428" class="small">raw_device_events</text>
+        <text x="1116" y="454" class="small">control_commands/results</text>
+        <text x="1116" y="480" class="small">users / op_records</text>
+
+        <rect x="1276" y="170" width="120" height="92" class="box blue"></rect>
+        <text x="1336" y="206" class="label">农户视角</text>
+        <text x="1336" y="232" class="small">我的设备</text>
+        <text x="1336" y="250" class="small">实时/控制</text>
+
+        <rect x="1276" y="330" width="120" height="92" class="box blue"></rect>
+        <text x="1336" y="366" class="label">后台视角</text>
+        <text x="1336" y="392" class="small">全局设备</text>
+        <text x="1336" y="410" class="small">绑定/日志</text>
+
+        <path d="M149 230 L149 275" class="arrow"></path>
+        <path d="M244 331 C290 331 294 276 342 276" class="arrow"></path>
+        <path d="M454 332 L454 392" class="arrow"></path>
+        <path d="M566 448 C615 448 618 154 672 154" class="arrow"></path>
+        <path d="M566 448 C615 448 618 276 672 276" class="arrow"></path>
+
+        <path d="M244 524 C290 524 294 610 342 610" class="arrow"></path>
+        <path d="M244 644 L342 622" class="arrow"></path>
+        <path d="M566 610 C616 610 620 530 672 530" class="arrow"></path>
+        <path d="M566 610 C616 610 620 652 672 652" class="arrow"></path>
+        <path d="M566 610 C616 610 620 398 672 398" class="arrow"></path>
+
+        <path d="M938 154 L1038 170" class="arrow"></path>
+        <path d="M938 276 L1038 350" class="arrow"></path>
+        <path d="M938 398 L1038 438" class="arrow"></path>
+        <path d="M938 530 L1038 170" class="arrow dashed"></path>
+        <path d="M938 652 L1038 376" class="arrow dashed"></path>
+
+        <path d="M1194 170 C1230 170 1232 216 1276 216" class="arrow"></path>
+        <path d="M1194 376 L1276 376" class="arrow"></path>
+
+        <path d="M672 398 C610 398 610 276 566 276" class="arrow-back dashed"></path>
+        <path d="M342 276 C294 276 290 331 244 331" class="arrow-back dashed"></path>
+        <text x="542" y="362" class="small">控制下行</text>
+        <text x="292" y="246" class="small">命令透传</text>
+      </svg>
+      <div class="note">
+        <strong>边界结论：</strong>硬件侧只需要交付“服务端可识别的数据格式”和“控制命令回路”；小程序和后台怎么进入服务端，是 Go HTTP API 的内部设计，不需要硬件侧参与。
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>2. 服务端模块职责</h2>
+      <p class="desc">这张图更偏代码结构，后续 Go 工程按这个方向拆包，不让页面直接读 JSON，也不让业务层直接依赖 TCP。</p>
+      <svg viewBox="0 0 1440 520" role="img" aria-label="服务端模块职责图">
+        <defs>
+          <marker id="arrow2" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+            <path d="M0,0 L0,6 L9,3 z" fill="#617268"></path>
+          </marker>
+        </defs>
+
+        <rect x="48" y="82" width="210" height="112" class="box amber"></rect>
+        <text x="153" y="120" class="label">cmd/server</text>
+        <text x="153" y="146" class="small">启动 HTTP Server</text>
+        <text x="153" y="168" class="small">加载配置、连接 MySQL</text>
+
+        <rect x="330" y="48" width="230" height="110" class="box blue"></rect>
+        <text x="445" y="86" class="label">internal/api/http</text>
+        <text x="445" y="112" class="small">REST 路由、鉴权、中间件</text>
+        <text x="445" y="134" class="small">统一 JSON 响应</text>
+
+        <rect x="330" y="216" width="230" height="110" class="box amber"></rect>
+        <text x="445" y="254" class="label">internal/adapter</text>
+        <text x="445" y="280" class="small">设备快照/协议输入</text>
+        <text x="445" y="302" class="small">注册、心跳、工作包适配</text>
+
+        <rect x="640" y="40" width="250" height="90" class="box red"></rect>
+        <text x="765" y="76" class="label">service/user</text>
+        <text x="765" y="102" class="small">微信登录、用户、权限</text>
+
+        <rect x="640" y="155" width="250" height="90" class="box red"></rect>
+        <text x="765" y="191" class="label">service/device</text>
+        <text x="765" y="217" class="small">网关、采集器、实时状态</text>
+
+        <rect x="640" y="270" width="250" height="90" class="box red"></rect>
+        <text x="765" y="306" class="label">service/control</text>
+        <text x="765" y="332" class="small">控制命令、结果、日志</text>
+
+        <rect x="640" y="385" width="250" height="90" class="box red"></rect>
+        <text x="765" y="421" class="label">service/admin</text>
+        <text x="765" y="447" class="small">后台查询、配置、绑定</text>
+
+        <rect x="970" y="120" width="230" height="120" class="box gray"></rect>
+        <text x="1085" y="160" class="label">repository/mysql</text>
+        <text x="1085" y="188" class="small">SQL 查询、事务</text>
+        <text x="1085" y="210" class="small">不写业务规则</text>
+
+        <rect x="970" y="305" width="230" height="120" class="box gray"></rect>
+        <text x="1085" y="345" class="label">domain</text>
+        <text x="1085" y="373" class="small">核心实体和值对象</text>
+        <text x="1085" y="395" class="small">网关、采集器、命令</text>
+
+        <rect x="1270" y="192" width="122" height="116" class="box gray"></rect>
+        <text x="1331" y="235" class="label">MySQL</text>
+        <text x="1331" y="263" class="small">统一存储</text>
+
+        <path d="M258 138 L330 103" class="arrow" marker-end="url(#arrow2)"></path>
+        <path d="M258 138 C292 138 294 271 330 271" class="arrow" marker-end="url(#arrow2)"></path>
+        <path d="M560 103 C606 103 600 85 640 85" class="arrow" marker-end="url(#arrow2)"></path>
+        <path d="M560 103 C606 103 600 200 640 200" class="arrow" marker-end="url(#arrow2)"></path>
+        <path d="M560 103 C606 103 600 315 640 315" class="arrow" marker-end="url(#arrow2)"></path>
+        <path d="M560 103 C606 103 600 430 640 430" class="arrow" marker-end="url(#arrow2)"></path>
+        <path d="M560 271 L640 200" class="arrow" marker-end="url(#arrow2)"></path>
+        <path d="M560 271 C606 271 600 315 640 315" class="arrow" marker-end="url(#arrow2)"></path>
+        <path d="M890 85 C930 85 928 180 970 180" class="arrow" marker-end="url(#arrow2)"></path>
+        <path d="M890 200 L970 180" class="arrow" marker-end="url(#arrow2)"></path>
+        <path d="M890 315 L970 180" class="arrow" marker-end="url(#arrow2)"></path>
+        <path d="M890 430 C930 430 928 180 970 180" class="arrow" marker-end="url(#arrow2)"></path>
+        <path d="M890 200 C930 200 928 365 970 365" class="arrow dashed" marker-end="url(#arrow2)"></path>
+        <path d="M1200 180 L1270 250" class="arrow" marker-end="url(#arrow2)"></path>
+      </svg>
+      <div class="note">
+        <strong>代码拆分建议：</strong>HTTP 层只处理请求和响应；Adapter 只处理设备输入转换；Service 写业务规则；Repository 只访问 MySQL；Domain 放跨模块共用的核心结构。
+      </div>
+    </section>
+  </main>
+</body>
+</html>
