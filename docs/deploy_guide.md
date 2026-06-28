@@ -9,7 +9,7 @@
 | 云厂商 | 腾讯云 |
 | IP | 43.143.208.153 |
 | 系统 | CentOS 7 |
-| Go 版本 | 1.20.12 |
+| Go 版本 | 1.24.0（2026-06-29 升级） |
 | MySQL | 5.7（systemd 管理） |
 | SSH 连接 | `ssh -i ~/shore.pem root@43.143.208.153` |
 | 项目路径 | `/home/work/nehuang-iot-server/` |
@@ -191,6 +191,8 @@ curl http://localhost:8080/healthz
 
 ### 7.1 标准部署：推送代码 + 服务器编译
 
+**⚠️ 铁律：所有代码（后端 Go + 前端原型）必须走 git 流程。严禁直接 scp 覆盖服务器文件。**
+
 ```bash
 # === 本地操作 ===
 cd ~/Library/Mobile\ Documents/com~apple~CloudDocs/Knowledge/nehuang-iot-server/
@@ -198,7 +200,7 @@ cd ~/Library/Mobile\ Documents/com~apple~CloudDocs/Knowledge/nehuang-iot-server/
 # 修改代码后提交推送
 git add -A
 git commit -m "描述你的改动"
-git push cnb main
+git push cnb master
 
 # === 服务器操作 ===
 ssh -i ~/shore.pem root@43.143.208.153
@@ -206,28 +208,22 @@ ssh -i ~/shore.pem root@43.143.208.153
 cd /home/work/nehuang-iot-server
 
 # 从 CNB 拉取最新代码
-git pull cnb main
+git pull origin master
 
-# Go 1.20 兼容性处理（本地 go.mod 是 1.24）
-sed -i 's/go 1.24.0/go 1.20/' go.mod
-sed -i '/toolchain/d' go.mod
-
-# 编译
-go build -o nehuang-server ./cmd/server/
+# 编译（Go 1.24，无需 sed）
+go build -o server ./cmd/server/
 
 # 重启服务
-pkill -f nehuang-server || true
-sleep 1
-source .env
-nohup ./nehuang-server > server.log 2>&1 &
+pkill server; nohup ./server > server.log 2>&1 &
 
 # 验证
 sleep 2
 curl http://localhost:8080/healthz
-curl http://localhost:8080/readyz
 ```
 
 ### 7.2 更新前端代码
+
+**⚠️ 铁律：前端代码必须走 git 流程。本地改 → commit → push → 服务器 pull。严禁直接 scp 覆盖。**
 
 ```bash
 # === 本地操作 ===
@@ -235,53 +231,21 @@ cd ~/Library/Mobile\ Documents/com~apple~CloudDocs/Knowledge/prototype/
 
 # 修改代码后提交推送
 git add -A
-git commit -m "描述你的改动"
-git push cnb master
+git commit -m "feat: 描述改动"
+git push origin master
 
-# 或直接 scp 单个/多个文件（更快，无需 git）
-scp -i ~/shore.pem \
-  prototype/mini/index.html \
-  prototype/mock/mock-api.js \
-  root@43.143.208.153:/home/work/nehuang-iot-server/prototype/mini/
-
-scp -i ~/shore.pem \
-  prototype/mock/mock-api.js \
-  root@43.143.208.153:/home/work/nehuang-iot-server/prototype/mock/
-
-# === 服务器操作（git clone 方式）===
+# === 服务器操作 ===
 ssh -i ~/shore.pem root@43.143.208.153
 
-cd /home/work/nehuang-iot-server
+# 服务器上有两个仓库：
+# 1. 后端：/home/work/nehuang-iot-server/（含静态文件托管）
+# 2. 前端：/home/work/nehuang-iot-prototype/（独立前端仓库）
 
-# 从 CNB 拉取最新前端
-rm -rf prototype
-git clone https://cnb.cool/wqedggc/nehuang-iot-prototype.git prototype
+cd /home/work/nehuang-iot-prototype
+git pull origin master
 
-# 静态文件即时生效，无需重启服务
-curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/admin/
-# → 200
-```
-
-### 7.3 快速更新（不走 git，直接传文件）
-
-```bash
-# === 本地：打包上传 prototype ===
-cd ~/Library/Mobile\ Documents/com~apple~CloudDocs/Knowledge/prototype/
-tar czf /tmp/prototype.tar.gz --exclude='.git' .
-scp -i ~/shore.pem /tmp/prototype.tar.gz root@43.143.208.153:/tmp/
-
-# === 服务器：解压覆盖 ===
-ssh -i ~/shore.pem root@43.143.208.153 \
-  'cd /home/work/nehuang-iot-server/prototype && tar xzf /tmp/prototype.tar.gz'
-
-# === 本地：直接 scp 单个 Go 文件 ===
-scp -i ~/shore.pem \
-  internal/api/http/server.go \
-  root@43.143.208.153:/home/work/nehuang-iot-server/internal/api/http/
-
-# === 服务器：重新编译重启 ===
-ssh -i ~/shore.pem root@43.143.208.153 \
-  'cd /home/work/nehuang-iot-server && sed -i "s/go 1.24.0/go 1.20/" go.mod && sed -i "/toolchain/d" go.mod && go build -o nehuang-server ./cmd/server/ && kill -9 $(pgrep -f nehuang-server); nohup ./nehuang-server > server.log 2>&1 &'
+# 前端是静态文件，无需编译，直接生效
+# 如果后端通过静态文件托管提供前端，需要确认静态文件路径配置
 ```
 
 ## 八、运维命令速查
@@ -334,7 +298,7 @@ curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/mock/mock-api.js
 
 ## 九、注意事项
 
-1. **Go 版本兼容**：本地开发用 Go 1.24，服务器是 Go 1.20。部署时必须在服务器上 `sed` 修改 go.mod 后编译。**不要本地交叉编译后 scp 二进制文件**。
+1. **Go 版本**：服务器和本地统一为 Go 1.24.0（2026-06-29 升级），编译无需 sed。
 2. **CORS 中间件**：已在 `server.go` 的 `Routes()` 最外层应用，允许所有来源跨域访问。
 3. **静态文件路由**：Go 1.20 的 FileServer 对 `/admin/index.html` 会 301 到 `/admin/`，所以首页重定向到 `/admin/` 而非 `/admin/index.html`。
 4. **安全组**：需要在腾讯云控制台放行 8080 端口（TCP 入站），否则外网无法访问。
