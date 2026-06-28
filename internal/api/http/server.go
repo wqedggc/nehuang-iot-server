@@ -66,7 +66,7 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("/api/v1/gateways",
 		authMiddleware(secret, adminRoles(http.HandlerFunc(s.listGateways))))
 
-	return loggingMiddleware(mux)
+	return corsMiddleware(loggingMiddleware(mux))
 }
 
 func (s *Server) healthz(w http.ResponseWriter, r *http.Request) {
