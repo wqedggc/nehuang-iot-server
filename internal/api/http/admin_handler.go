@@ -460,6 +460,20 @@ func (h *adminHandler) handleDevicePointSearch(w http.ResponseWriter, r *http.Re
 		return
 	}
 
+	// keyword 不为空时，在应用层做 function_name 的二次过滤
+	// （因为 function_name 是通过 function_type 映射的中文名，SQL LIKE 无法直接匹配）
+	if keyword != "" {
+		kw := strings.ToLower(keyword)
+		filtered := make([]domain.DevicePointSearchResult, 0, len(results))
+		for _, r := range results {
+			searchStr := strings.ToLower(r.PointName + r.GatewayName + r.DeviceExternalID + r.ShedNo + r.FunctionName)
+			if strings.Contains(searchStr, kw) {
+				filtered = append(filtered, r)
+			}
+		}
+		results = filtered
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{"data": results})
 }
 
