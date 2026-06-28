@@ -41,8 +41,8 @@ func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
 
 	// Health probes — no auth required.
-	mux.HandleFunc("GET /healthz", s.healthz)
-	mux.HandleFunc("GET /readyz", s.readyz)
+	mux.HandleFunc("/healthz", s.healthz)
+	mux.HandleFunc("/readyz", s.readyz)
 
 	secret := []byte(s.jwtCfg.Secret)
 	adminRoles := roleMiddleware(domain.RoleSuperAdmin, domain.RoleAdmin)
@@ -51,19 +51,19 @@ func (s *Server) Routes() http.Handler {
 	mh := &miniHandler{repo: s.repo, jwtCfg: s.jwtCfg}
 
 	// Admin auth — public.
-	mux.HandleFunc("POST /api/v1/admin/login", ah.login)
+	mux.HandleFunc("/api/v1/admin/login", ah.login)
 
 	// Admin protected.
-	mux.Handle("GET /api/v1/admin/me",
+	mux.Handle("/api/v1/admin/me",
 		authMiddleware(secret, adminRoles(http.HandlerFunc(ah.me))))
-	mux.Handle("GET /api/v1/admin/dashboard",
+	mux.Handle("/api/v1/admin/dashboard",
 		authMiddleware(secret, adminRoles(http.HandlerFunc(s.dashboard))))
 
 	// Mini-program auth — public (dev/test only).
-	mux.HandleFunc("POST /api/v1/mini/mock-login", mh.mockLogin)
+	mux.HandleFunc("/api/v1/mini/mock-login", mh.mockLogin)
 
 	// Gateway list — protected.
-	mux.Handle("GET /api/v1/gateways",
+	mux.Handle("/api/v1/gateways",
 		authMiddleware(secret, adminRoles(http.HandlerFunc(s.listGateways))))
 
 	return loggingMiddleware(mux)
