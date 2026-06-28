@@ -32,33 +32,33 @@ func NewDashboardService(repo DashboardRepository) *DashboardService {
 
 // validRanges 定义合法的 range 参数集合。
 var validRanges = map[string]bool{
-	"1d":  true,
-	"3d":  true,
+	"1h":  true,
+	"6h":  true,
+	"24h": true,
 	"7d":  true,
-	"30d": true,
 }
 
-// RangeDuration 将 range 参数解析为时间间隔（使用 24h 而非自然日）。
+// RangeDuration 将 range 参数解析为时间间隔。
 // 非法 range 返回 error。
 func RangeDuration(rangeStr string) (time.Duration, error) {
 	switch rangeStr {
-	case "1d":
+	case "1h":
+		return 1 * time.Hour, nil
+	case "6h":
+		return 6 * time.Hour, nil
+	case "24h":
 		return 24 * time.Hour, nil
-	case "3d":
-		return 3 * 24 * time.Hour, nil
 	case "7d":
 		return 7 * 24 * time.Hour, nil
-	case "30d":
-		return 30 * 24 * time.Hour, nil
 	default:
-		return 0, fmt.Errorf("invalid range: %s (allowed: 1d, 3d, 7d, 30d)", rangeStr)
+		return 0, fmt.Errorf("invalid range: %s (allowed: 1h, 6h, 24h, 7d)", rangeStr)
 	}
 }
 
 // ValidateRange 校验 range 参数是否合法。
 func ValidateRange(rangeStr string) error {
 	if !validRanges[rangeStr] {
-		return fmt.Errorf("invalid range: %s (allowed: 1d, 3d, 7d, 30d)", rangeStr)
+		return fmt.Errorf("invalid range: %s (allowed: 1h, 6h, 24h, 7d)", rangeStr)
 	}
 	return nil
 }
