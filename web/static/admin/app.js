@@ -207,24 +207,67 @@
   }
 
   // ---------- Dashboard ----------
+  var currentDashboardRange = '1d';
+  var currentDashboardData = null;
+
   async function renderDashboard(container) {
     container.innerHTML = '<div class="loading-state"><div class="loading-spinner"></div><p>加载仪表盘...</p></div>';
     try {
-      var res = await MockAPI.getDashboard();
+      var res = await MockAPI.getDashboard(currentDashboardRange);
       if (!res.data) { container.innerHTML = '<div class="error-state"><p>加载失败</p><button class="btn btn-outline btn-sm" onclick="renderPage()">重试</button></div>'; return; }
       var d = res.data;
+      currentDashboardData = d;
 
-      var html = '<div class="stat-grid">' +
-        '<div class="stat-card"><div class="stat-card-label">在线云边设备</div><div class="stat-card-value">' + d.online_gateways + '<span style="font-size:16px;font-weight:400;color:var(--color-text-muted)"> / ' + d.total_gateways + '</span></div></div>' +
-        '<div class="stat-card"><div class="stat-card-label">采集执行器</div><div class="stat-card-value">' + d.total_collectors + '</div><div class="stat-card-sub">功能点数</div></div>' +
-        '<div class="stat-card"><div class="stat-card-label">农户数量</div><div class="stat-card-value">' + d.farmer_count + '</div></div>' +
-        '<div class="stat-card"><div class="stat-card-label">今日上报数据</div><div class="stat-card-value">' + d.today_reports.toLocaleString() + '</div><div class="stat-card-sub">最近上报：' + formatTime(d.last_report_time) + '</div></div>' +
+      // 后端返回结构：data.users / data.devices / data.ingest / data.control
+      var users = d.users || {};
+      var devices = d.devices || {};
+      var ingest = d.ingest || {};
+      var control = d.control || {};
+
+      var rangeLabels = {
+        '1h': '1 小时',
+        '6h': '6 小时',
+        '24h': '24 小时',
+        '7d': '一周',
+      };
+      var ranges = ['1h', '6h', '24h', '7d'];
+      var rangeBtns = ranges.map(function (r) {
+        var active = r === (d.range || '1d') ? ' btn-primary' : ' btn-outline';
+        return '<button class="btn btn-sm' + active + '" onclick="switchDashboardRange(\'' + r + '\')">' + (rangeLabels[r] || r) + '</button>';
+      }).join('');
+
+      var html = '<div class="page-header" style="display:flex;align-items:center;justify-content:space-between">' +
+        '<h2>Dashboard</h2>' +
+        '<div style="display:flex;gap:6px">' + rangeBtns + '</div>' +
+      '</div>' +
+      '<div class="stat-grid">' +
+        '<div class="stat-card"><div class="stat-card-label">在线云边设备</div><div class="stat-card-value">' + (devices.gateway_online || 0) + '<span style="font-size:16px;font-weight:400;color:var(--color-text-muted)"> / ' + (devices.gateway_total || 0) + '</span></div></div>' +
+        '<div class="stat-card"><div class="stat-card-label">采集执行器</div><div class="stat-card-value">' + (devices.collector_node_total || 0) + '</div><div class="stat-card-sub">功能点数 ' + (devices.device_point_total || 0) + '</div></div>' +
+        '<div class="stat-card"><div class="stat-card-label">农户数量</div><div class="stat-card-value">' + (users.active_farmer_count || 0) + '</div><div class="stat-card-sub">管理员 ' + (users.admin_count || 0) + '</div></div>' +
+        '<div class="stat-card"><div class="stat-card-label">数据上报</div><div class="stat-card-value">' + ((ingest.raw_event_count || 0) + (ingest.telemetry_count || 0)).toLocaleString() + '</div><div class="stat-card-sub">最近上报：' + formatTime(devices.latest_report_time) + '</div></div>' +
+      '</div>';
+
+      // 第二行：设备状态 + 控制统计
+      html += '<div class="stat-grid" style="margin-top:16px">' +
+        '<div class="stat-card"><div class="stat-card-label">设备状态</div><div class="stat-card-value">' +
+          '<span style="color:var(--color-success)">正常 ' + (devices.normal_point_count || 0) + '</span>' +
+          ' / <span style="color:var(--color-danger)">异常 ' + (devices.abnormal_point_count || 0) + '</span>' +
+          ' / <span style="color:var(--color-text-muted)">离线 ' + (devices.offline_point_count || 0) + '</span>' +
+        '</div><div class="stat-card-sub">已绑定 ' + (devices.bound_point_count || 0) + ' / 未绑定 ' + (devices.unbound_point_count || 0) + '</div></div>' +
+        '<div class="stat-card"><div class="stat-card-label">心跳成功率</div><div class="stat-card-value">' + (ingest.heartbeat_success_rate != null ? ingest.heartbeat_success_rate + '%' : '--') + '</div><div class="stat-card-sub">成功 ' + (ingest.heartbeat_success || 0) + ' / 失败 ' + (ingest.heartbeat_failed || 0) + '</div></div>' +
+        '<div class="stat-card"><div class="stat-card-label">控制命令</div><div class="stat-card-value">' + (control.control_command_count || 0) + '</div><div class="stat-card-sub">成功 ' + (control.control_success_count || 0) + ' / 失败 ' + (control.control_failed_count || 0) + '</div></div>' +
+        '<div class="stat-card"><div class="stat-card-label">注册 / 遥测</div><div class="stat-card-value">' + (ingest.register_count || 0) + ' / ' + (ingest.telemetry_count || 0) + '</div><div class="stat-card-sub">原始事件 ' + (ingest.raw_event_count || 0) + '</div></div>' +
       '</div>';
 
       container.innerHTML = html;
     } catch (e) {
       container.innerHTML = '<div class="error-state"><p>加载失败</p><button class="btn btn-outline btn-sm" onclick="renderPage()">重试</button></div>';
     }
+  }
+
+  async function switchDashboardRange(range) {
+    currentDashboardRange = range;
+    renderPage();
   }
 
   // ---------- 用户管理（农户列表） ----------
@@ -1048,5 +1091,6 @@
   window.doBindDevice = doBindDevice;
   window.openBindingAddModal = openBindingAddModal;
   window.doBindFromAddModal = doBindFromAddModal;
+  window.switchDashboardRange = switchDashboardRange;
 
 })();

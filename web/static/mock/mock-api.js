@@ -257,15 +257,51 @@
     return points;
   }
 
-  function getDashboard() {
+  function getDashboard(range) {
     const onlineGateways = MOCK_GATEWAYS.filter(g => g.online_status === 1).length;
+    var farmerCount = MOCK_USERS.filter(u => u.user_type === 2 && u.status === 1).length;
+    var adminCount = MOCK_USERS.filter(u => u.user_type === 1).length;
     return {
-      online_gateways: onlineGateways,
-      total_gateways: MOCK_GATEWAYS.length,
-      total_collectors: MOCK_COLLECTORS.length,
-      farmer_count: MOCK_USERS.filter(u => u.user_type === 2 && u.status === 1).length,
-      today_reports: 12847,
-      last_report_time: '2026-06-28T21:53:45.000Z',
+      range: range || '24h',
+      generated_at: new Date().toISOString(),
+      users: {
+        admin_count: adminCount,
+        active_farmer_count: farmerCount,
+        disabled_farmer_count: 0,
+        total_user_count: MOCK_USERS.length,
+      },
+      devices: {
+        gateway_online: onlineGateways,
+        gateway_offline: MOCK_GATEWAYS.length - onlineGateways,
+        gateway_total: MOCK_GATEWAYS.length,
+        collector_node_total: MOCK_COLLECTORS.length,
+        device_point_total: 6,
+        bound_point_count: 2,
+        unbound_point_count: 4,
+        normal_point_count: 6,
+        abnormal_point_count: 0,
+        offline_point_count: 0,
+        latest_report_time: '2026-06-29T03:05:57.735+08:00',
+      },
+      ingest: {
+        raw_event_count: 26,
+        register_count: 0,
+        heartbeat_count: 0,
+        heartbeat_total: 0,
+        heartbeat_success: 0,
+        heartbeat_failed: 0,
+        heartbeat_success_rate: 0,
+        telemetry_count: 156,
+        control_result_count: 0,
+        work_count: 26,
+      },
+      control: {
+        control_command_count: 0,
+        control_success_count: 0,
+        control_failed_count: 0,
+        control_timeout_count: 0,
+        control_success_rate: 0,
+      },
     };
   }
 
@@ -360,8 +396,8 @@
       const user = MOCK_USERS.find(u => u.user_id === uid) || MOCK_USERS[0];
       return { data: { user_id: user.user_id, username: user.username || '', role: user.role, display_name: user.display_name } };
     },
-    'GET /api/v1/admin/dashboard': function () {
-      return { data: getDashboard() };
+    'GET /api/v1/admin/dashboard': function (params) {
+      return { data: getDashboard(params.query.range) };
     },
     'GET /api/v1/admin/users': function () {
       const users = MOCK_USERS.map(u => {
@@ -751,8 +787,10 @@
       return request('POST', '/api/v1/mini/devices/' + id + '/control', { action });
     },
 
-    getDashboard: async function () {
-      return request('GET', '/api/v1/admin/dashboard');
+    getDashboard: async function (range) {
+      var path = '/api/v1/admin/dashboard';
+      if (range) path += '?range=' + range;
+      return request('GET', path);
     },
 
     getUsers: async function () {
