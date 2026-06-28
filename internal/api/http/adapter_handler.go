@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log"
 	"net/http"
 
 	"nehuang-iot-server/internal/domain"
@@ -36,6 +37,8 @@ type adapterRepository interface {
 	UpsertDeviceRealtimeMap(ctx context.Context, point *domain.DevicePoint) error
 	// UpdateRawEventParseStatus 更新原始事件的解析状态。
 	UpdateRawEventParseStatus(ctx context.Context, rawEventID uint64, status domain.ParseStatus, errMsg *string) error
+	// UpdateRawEventParseMeta 回填解析元数据（event_type / event_count / parsed_count / message_id）。
+	UpdateRawEventParseMeta(ctx context.Context, rawEventID uint64, eventType domain.RawEventType, eventCount int, parsedCount int, messageID *string) error
 	// FindGatewayByExternalID 按 gateway_external_id 查找云边设备，不存在返回 nil。
 	FindGatewayByExternalID(ctx context.Context, externalID string) (*domain.Gateway, error)
 }
@@ -136,9 +139,30 @@ func (h *adapterHandler) handleDeviceEvents(w http.ResponseWriter, r *http.Reque
 		gatewayID = gateway.GatewayID
 	}
 
+	// 推断 event_type 用于回填。
+	inferredEventType := domain.RawEventWork // 默认 work
+	hasRegisterHeartbeat := false
+	hasTelemetry := false
+	for _, ev := range envelope.Events {
+		switch ev.EventType {
+		case "register", "heartbeat":
+			hasRegisterHeartbeat = true
+		case "telemetry":
+			hasTelemetry = true
+		}
+	}
+	if hasRegisterHeartbeat && !hasTelemetry {
+		inferredEventType = domain.RawEventHeartbeat
+	} else if hasTelemetry {
+		inferredEventType = domain.RawEventWork
+	}
+
 	// 6. 逐条处理 events[]。
 	parseFailed := false
+	partialFailed := false
 	var parseError string
+	parsedCount := 0
+	totalCount := len(envelope.Events)
 	for _, ev := range envelope.Events {
 		switch ev.EventType {
 		case "register", "heartbeat":
@@ -158,6 +182,7 @@ func (h *adapterHandler) handleDeviceEvents(w http.ResponseWriter, r *http.Reque
 				break
 			}
 			gatewayID = gid
+			parsedCount++
 
 		case "telemetry":
 			// telemetry：处理传感器数据上报。
@@ -239,6 +264,8 @@ func (h *adapterHandler) handleDeviceEvents(w http.ResponseWriter, r *http.Reque
 			// 3e. 同步 device_realtime_maps 兼容投影表。
 			_ = h.repo.UpsertDeviceRealtimeMap(r.Context(), point)
 
+			parsedCount++
+
 		case "control_result":
 			// control_result：预留，暂只记录原始事件。
 			// 后续控制链路实现后再扩展。
@@ -249,12 +276,30 @@ func (h *adapterHandler) handleDeviceEvents(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
-	// 7. 更新 raw_device_events 解析状态。
-	if parseFailed {
-		_ = h.repo.UpdateRawEventParseStatus(r.Context(), rawEventID, domain.ParseStatusFailed, strPtr(parseError))
-	} else {
-		_ = h.repo.UpdateRawEventParseStatus(r.Context(), rawEventID, domain.ParseStatusParsed, nil)
+	// 7. 回填解析元数据并更新状态。
+	msgID := strPtr(envelope.MessageID)
+	if err := h.repo.UpdateRawEventParseMeta(r.Context(), rawEventID, inferredEventType, totalCount, parsedCount, msgID); err != nil {
+		log.Printf("[adapter] UpdateRawEventParseMeta failed: raw_event_id=%d err=%v", rawEventID, err)
 	}
+
+	var finalStatus domain.ParseStatus
+	var finalError *string
+	if parseFailed {
+		// 有事件完全失败。
+		if parsedCount > 0 {
+			finalStatus = domain.ParseStatusPartial
+			finalError = strPtr(parseError)
+		} else {
+			finalStatus = domain.ParseStatusFailed
+			finalError = strPtr(parseError)
+		}
+	} else if partialFailed {
+		finalStatus = domain.ParseStatusPartial
+		finalError = strPtr(parseError)
+	} else {
+		finalStatus = domain.ParseStatusParsed
+	}
+	_ = h.repo.UpdateRawEventParseStatus(r.Context(), rawEventID, finalStatus, finalError)
 
 	if parseFailed {
 		writeCode(w, http.StatusUnprocessableEntity, 422, parseError)

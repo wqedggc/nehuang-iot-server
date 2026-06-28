@@ -51,6 +51,9 @@ type adminRepository interface {
 	FindActiveBindingByPoint(ctx context.Context, pointID uint64) (*domain.BindRelation, error)
 	// 管理端设备点位搜索。
 	SearchDevicePoints(ctx context.Context, keyword string, bindStatus string) ([]domain.DevicePointSearchResult, error)
+	// Payload 排查页面。
+	ListPayloadEvents(ctx context.Context, params domain.PayloadEventQuery) ([]domain.PayloadEventListItem, int, error)
+	GetPayloadEventDetail(ctx context.Context, rawEventID uint64) (*domain.PayloadEventDetail, error)
 }
 
 // adminHandler handles all /api/v1/admin/* endpoints.
@@ -672,4 +675,85 @@ func (h *adminHandler) handleFarmers(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"data": items})
+}
+
+// handlePayloadEvents 处理 GET /api/v1/admin/payload-events。
+// 分页查询 payload 事件列表，支持 event_type/parse_status/时间范围/keyword 筛选。
+func (h *adminHandler) handlePayloadEvents(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	params := domain.PayloadEventQuery{
+		Page: 1,
+		Size: 20,
+	}
+	if v := q.Get("page"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			params.Page = n
+		}
+	}
+	if v := q.Get("size"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 100 {
+			params.Size = n
+		}
+	}
+	if v := q.Get("event_type"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			n8 := uint8(n)
+			params.EventType = &n8
+		}
+	}
+	if v := q.Get("parse_status"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			n8 := uint8(n)
+			params.ParseStatus = &n8
+		}
+	}
+	if v := q.Get("start"); v != "" {
+		params.Start = &v
+	}
+	if v := q.Get("end"); v != "" {
+		params.End = &v
+	}
+	if v := q.Get("keyword"); v != "" {
+		params.Keyword = &v
+	}
+
+	items, total, err := h.repo.ListPayloadEvents(r.Context(), params)
+	if err != nil {
+		writeCode(w, http.StatusInternalServerError, 500, "internal error: "+err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"data": map[string]any{
+			"items": items,
+			"total": total,
+			"page":  params.Page,
+			"size":  params.Size,
+		},
+	})
+}
+
+// handlePayloadEventDetail 处理 GET /api/v1/admin/payload-events/{id}。
+// 返回单条 payload 事件的完整详情。
+func (h *adminHandler) handlePayloadEventDetail(w http.ResponseWriter, r *http.Request) {
+	// 从路径提取 raw_event_id：/api/v1/admin/payload-events/{id}
+	path := strings.TrimPrefix(r.URL.Path, "/api/v1/admin/payload-events/")
+	path = strings.TrimSpace(path)
+	rawEventID, err := strconv.ParseUint(path, 10, 64)
+	if err != nil {
+		writeCode(w, http.StatusBadRequest, 400, "invalid raw event id")
+		return
+	}
+
+	detail, err := h.repo.GetPayloadEventDetail(r.Context(), rawEventID)
+	if err != nil {
+		writeCode(w, http.StatusInternalServerError, 500, "internal error: "+err.Error())
+		return
+	}
+	if detail == nil {
+		writeCode(w, http.StatusNotFound, 404, "payload event not found")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"data": detail})
 }

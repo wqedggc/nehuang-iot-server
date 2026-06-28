@@ -36,14 +36,14 @@ INSERT INTO raw_device_events
   (raw_event_id, gateway_id, node_id, point_id,
    gateway_name, event_type, source_type,
    remote_ip, remote_port, payload_hex, payload_snapshot,
-   parse_status, parse_error, received_at_ms,
-   created_at, updated_at)
+   parse_status, parse_error, message_id, event_count, parsed_count,
+   received_at_ms, created_at, updated_at)
 VALUES
   (?, ?, ?, ?,
    ?, ?, ?,
    ?, ?, ?, ?,
-   ?, ?, ?,
-   ?, ?)`,
+   ?, ?, ?, ?, ?,
+   ?, ?, ?)`,
 		event.RawEventID,
 		nullableUint64(event.GatewayID),
 		nullableUint64(event.NodeID),
@@ -57,6 +57,9 @@ VALUES
 		nullableString(event.PayloadSnapshot),
 		uint8(event.ParseStatus),
 		nullableString(event.ParseError),
+		nullableString(event.MessageID),
+		event.EventCount,
+		event.ParsedCount,
 		event.ReceivedAtMS,
 		event.CreatedAt,
 		event.UpdatedAt,
@@ -76,6 +79,15 @@ func (r *Repository) UpdateRawEventParseStatus(ctx context.Context, rawEventID u
 	return err
 }
 
+// UpdateRawEventParseMeta 回填解析元数据（event_type / event_count / parsed_count / message_id）。
+func (r *Repository) UpdateRawEventParseMeta(ctx context.Context, rawEventID uint64, eventType domain.RawEventType, eventCount int, parsedCount int, messageID *string) error {
+	_, err := r.db.ExecContext(ctx,
+		`UPDATE raw_device_events SET event_type = ?, event_count = ?, parsed_count = ?, message_id = ? WHERE raw_event_id = ?`,
+		uint8(eventType), eventCount, parsedCount, nullableString(messageID), rawEventID,
+	)
+	return err
+}
+
 // ListRawEvents 返回最近的原始设备事件列表。
 func (r *Repository) ListRawEvents(ctx context.Context, limit int) ([]domain.RawDeviceEvent, error) {
 	rows, err := r.db.QueryContext(ctx, `
@@ -83,8 +95,8 @@ SELECT
   raw_event_id, gateway_id, node_id, point_id,
   gateway_name, event_type, source_type,
   remote_ip, remote_port, payload_hex, payload_snapshot,
-  parse_status, parse_error, received_at_ms,
-  created_at, updated_at
+  parse_status, parse_error, message_id, event_count, parsed_count,
+  received_at_ms, created_at, updated_at
 FROM raw_device_events
 ORDER BY received_at_ms DESC
 LIMIT ?`, limit)
@@ -110,6 +122,9 @@ LIMIT ?`, limit)
 			scanNullString(&e.PayloadSnapshot),
 			&e.ParseStatus,
 			scanNullString(&e.ParseError),
+			scanNullString(&e.MessageID),
+			&e.EventCount,
+			&e.ParsedCount,
 			&e.ReceivedAtMS,
 			&e.CreatedAt,
 			&e.UpdatedAt,
@@ -119,6 +134,131 @@ LIMIT ?`, limit)
 		events = append(events, e)
 	}
 	return events, rows.Err()
+}
+
+// ListPayloadEvents 分页查询 payload 事件列表，支持多条件筛选。
+func (r *Repository) ListPayloadEvents(ctx context.Context, params domain.PayloadEventQuery) ([]domain.PayloadEventListItem, int, error) {
+	// 构建 WHERE 条件
+	var conditions []string
+	var args []interface{}
+
+	if params.EventType != nil {
+		conditions = append(conditions, "event_type = ?")
+		args = append(args, *params.EventType)
+	}
+	if params.ParseStatus != nil {
+		conditions = append(conditions, "parse_status = ?")
+		args = append(args, *params.ParseStatus)
+	}
+	if params.Start != nil {
+		conditions = append(conditions, "received_at_ms >= ?")
+		args = append(args, *params.Start)
+	}
+	if params.End != nil {
+		conditions = append(conditions, "received_at_ms <= ?")
+		args = append(args, *params.End)
+	}
+	if params.Keyword != nil && *params.Keyword != "" {
+		conditions = append(conditions, "(gateway_name LIKE ? OR message_id LIKE ?)")
+		kw := "%" + *params.Keyword + "%"
+		args = append(args, kw, kw)
+	}
+
+	whereClause := ""
+	if len(conditions) > 0 {
+		whereClause = "WHERE " + conditions[0]
+		for i := 1; i < len(conditions); i++ {
+			whereClause += " AND " + conditions[i]
+		}
+	}
+
+	// 查询总数
+	var total int
+	countQuery := "SELECT COUNT(*) FROM raw_device_events " + whereClause
+	if err := r.db.QueryRowContext(ctx, countQuery, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	// 查询列表
+	offset := (params.Page - 1) * params.Size
+	listQuery := `SELECT raw_event_id, COALESCE(gateway_name,''), event_type, parse_status,
+		COALESCE(parse_error,''), COALESCE(message_id,''), event_count, parsed_count,
+		COALESCE(remote_ip,''), COALESCE(remote_port,0), received_at_ms,
+		COALESCE(payload_snapshot,'')
+	FROM raw_device_events ` + whereClause +
+		` ORDER BY received_at_ms DESC LIMIT ? OFFSET ?`
+	listArgs := append(args, params.Size, offset)
+
+	rows, err := r.db.QueryContext(ctx, listQuery, listArgs...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	items := make([]domain.PayloadEventListItem, 0, params.Size)
+	for rows.Next() {
+		var item domain.PayloadEventListItem
+		var payloadSnapshot string
+		var receivedAt time.Time
+		if err := rows.Scan(
+			&item.RawEventID, &item.GatewayName, &item.EventType, &item.ParseStatus,
+			&item.ParseError, &item.MessageID, &item.EventCount, &item.ParsedCount,
+			&item.RemoteIP, &item.RemotePort, &receivedAt, &payloadSnapshot,
+		); err != nil {
+			return nil, 0, err
+		}
+		item.EventTypeName = domain.RawEventType(item.EventType).RawEventTypeName()
+		item.ParseStatusName = domain.ParseStatus(item.ParseStatus).ParseStatusName()
+		item.ReceivedAtMS = receivedAt.Format("2006-01-02 15:04:05")
+		item.PayloadLen = len(payloadSnapshot)
+		items = append(items, item)
+	}
+	return items, total, rows.Err()
+}
+
+// GetPayloadEventDetail 返回单条 payload 事件的完整详情。
+func (r *Repository) GetPayloadEventDetail(ctx context.Context, rawEventID uint64) (*domain.PayloadEventDetail, error) {
+	var d domain.PayloadEventDetail
+	var gwID, nodeID, pointID sql.NullInt64
+	var payloadSnapshot sql.NullString
+	var receivedAt, createdAt time.Time
+
+	err := r.db.QueryRowContext(ctx, `
+SELECT raw_event_id, gateway_id, node_id, point_id,
+  COALESCE(gateway_name,''), event_type, parse_status,
+  COALESCE(parse_error,''), COALESCE(message_id,''), event_count, parsed_count,
+  COALESCE(remote_ip,''), COALESCE(remote_port,0), payload_snapshot,
+  received_at_ms, created_at
+FROM raw_device_events WHERE raw_event_id = ?`, rawEventID,
+	).Scan(&d.RawEventID, &gwID, &nodeID, &pointID,
+		&d.GatewayName, &d.EventType, &d.ParseStatus,
+		&d.ParseError, &d.MessageID, &d.EventCount, &d.ParsedCount,
+		&d.RemoteIP, &d.RemotePort, &payloadSnapshot,
+		&receivedAt, &createdAt)
+	if err != nil {
+		return nil, err
+	}
+
+	if gwID.Valid {
+		id := uint64(gwID.Int64)
+		d.GatewayID = &id
+	}
+	if nodeID.Valid {
+		id := uint64(nodeID.Int64)
+		d.NodeID = &id
+	}
+	if pointID.Valid {
+		id := uint64(pointID.Int64)
+		d.PointID = &id
+	}
+	if payloadSnapshot.Valid {
+		d.PayloadSnapshot = payloadSnapshot.String
+	}
+	d.EventTypeName = domain.RawEventType(d.EventType).RawEventTypeName()
+	d.ParseStatusName = domain.ParseStatus(d.ParseStatus).ParseStatusName()
+	d.ReceivedAtMS = receivedAt.Format("2006-01-02 15:04:05")
+	d.CreatedAt = createdAt.Format("2006-01-02 15:04:05")
+	return &d, nil
 }
 
 // ─── 云边设备 ───

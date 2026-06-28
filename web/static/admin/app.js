@@ -112,6 +112,7 @@
       case 'bindings': renderBindings(container); updatePageTitle('绑定管理'); break;
       case 'farmer-detail': renderFarmerDetail(container); updatePageTitle('农户详情'); break;
       case 'logs': renderLogs(container); updatePageTitle('控制日志'); break;
+      case 'payload-events': renderPayloadEvents(container); updatePageTitle('Payload 排查'); break;
       default: renderDashboard(container); updatePageTitle('Dashboard');
     }
   }
@@ -1036,6 +1037,228 @@
     }
   }
 
+  // ---------- Payload 排查 ----------
+  var payloadState = { page: 1, size: 20, event_type: null, parse_status: null, start: null, end: null, keyword: null };
+
+  async function renderPayloadEvents(container) {
+    container.innerHTML = '<div class="loading-state"><div class="loading-spinner"></div><p>加载 Payload 事件...</p></div>';
+
+    var params = { page: payloadState.page, size: payloadState.size };
+    if (payloadState.event_type != null) params.event_type = payloadState.event_type;
+    if (payloadState.parse_status != null) params.parse_status = payloadState.parse_status;
+    if (payloadState.start) params.start = payloadState.start;
+    if (payloadState.end) params.end = payloadState.end;
+    if (payloadState.keyword) params.keyword = payloadState.keyword;
+
+    try {
+      var res = await MockAPI.getPayloadEvents(params);
+      var data = res.data || {};
+      var items = data.items || [];
+      var total = data.total || 0;
+      var page = data.page || 1;
+      var size = data.size || 20;
+
+      var totalPages = Math.ceil(total / size);
+
+      var eventTypeOptions = [
+        { val: '', label: '全部类型' },
+        { val: '1', label: '注册' },
+        { val: '2', label: '心跳' },
+        { val: '3', label: '工作数据' },
+        { val: '4', label: '控制结果' },
+        { val: '5', label: 'JSON快照' }
+      ];
+      var parseStatusOptions = [
+        { val: '', label: '全部状态' },
+        { val: '1', label: '待解析' },
+        { val: '2', label: '已解析' },
+        { val: '3', label: '解析失败' },
+        { val: '4', label: '部分解析' },
+        { val: '5', label: '已忽略' }
+      ];
+
+      var selectedET = payloadState.event_type != null ? String(payloadState.event_type) : '';
+      var selectedPS = payloadState.parse_status != null ? String(payloadState.parse_status) : '';
+
+      var html = '<div class="table-section">' +
+        '<div class="table-header">' +
+          '<h3>Payload 事件</h3>' +
+          '<span class="table-count">共 ' + total + ' 条</span>' +
+        '</div>' +
+        '<div class="filter-bar" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">' +
+          '<select class="form-input" id="pe-filter-type" style="width:120px;height:32px;font-size:13px">' +
+            eventTypeOptions.map(function (o) { return '<option value="' + o.val + '"' + (selectedET === o.val ? ' selected' : '') + '>' + o.label + '</option>'; }).join('') +
+          '</select>' +
+          '<select class="form-input" id="pe-filter-status" style="width:120px;height:32px;font-size:13px">' +
+            parseStatusOptions.map(function (o) { return '<option value="' + o.val + '"' + (selectedPS === o.val ? ' selected' : '') + '>' + o.label + '</option>'; }).join('') +
+          '</select>' +
+          '<input type="datetime-local" class="form-input" id="pe-filter-start" style="width:180px;height:32px;font-size:13px" value="' + (payloadState.start || '') + '" placeholder="开始时间">' +
+          '<input type="datetime-local" class="form-input" id="pe-filter-end" style="width:180px;height:32px;font-size:13px" value="' + (payloadState.end || '') + '" placeholder="结束时间">' +
+          '<input type="text" class="table-search" id="pe-filter-keyword" style="width:180px;height:32px" value="' + escHtml(payloadState.keyword || '') + '" placeholder="搜索 gateway/message_id...">' +
+          '<button class="btn btn-outline btn-sm" onclick="payloadResetFilters()">重置</button>' +
+        '</div>' +
+        '<div class="table-wrap"><table>' +
+          '<thead><tr>' +
+            '<th>ID</th><th>时间</th><th>事件类型</th><th>Gateway</th><th>解析状态</th><th>Message ID</th><th>Events</th><th>来源IP</th><th>Payload</th><th>操作</th>' +
+          '</tr></thead>' +
+          '<tbody id="payload-tbody">' +
+            (items.length === 0 ? '<tr><td colspan="10" class="table-empty">暂无数据</td></tr>' :
+              items.map(function (item) {
+                var statusCSS = (item.parse_status === 1 ? 'badge-warning' : item.parse_status === 2 ? 'badge-success' : item.parse_status === 3 ? 'badge-danger' : item.parse_status === 4 ? 'badge-info' : 'badge-muted');
+                var eventCSS = (item.event_type === 1 ? 'badge-info' : item.event_type === 2 ? 'badge-muted' : item.event_type === 3 ? 'badge-success' : 'badge-warning');
+                return '<tr>' +
+                  '<td style="font-family:monospace;font-size:12px">' + escHtml(String(item.raw_event_id)) + '</td>' +
+                  '<td style="white-space:nowrap;font-size:12px">' + escHtml(item.received_at_ms) + '</td>' +
+                  '<td><span class="badge ' + eventCSS + '">' + escHtml(item.event_type_name) + '</span></td>' +
+                  '<td>' + escHtml(item.gateway_name || '--') + '</td>' +
+                  '<td><span class="badge ' + statusCSS + '">' + escHtml(item.parse_status_name) + '</span>' +
+                    (item.parse_error ? ' <span style="font-size:10px;color:var(--color-text-muted)" title="' + escHtml(item.parse_error) + '">⚠</span>' : '') +
+                  '</td>' +
+                  '<td style="font-family:monospace;font-size:11px;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escHtml(item.message_id || '--') + '</td>' +
+                  '<td><span style="font-size:12px">' + item.parsed_count + '/' + item.event_count + '</span></td>' +
+                  '<td style="font-size:12px">' + escHtml(item.remote_ip || '--') + ':' + item.remote_port + '</td>' +
+                  '<td style="font-size:11px;color:var(--color-text-muted)">' + (item.payload_len || 0) + 'B</td>' +
+                  '<td><div style="display:flex;gap:4px">' +
+                    '<button class="btn btn-outline btn-sm" onclick="payloadCopySnapshot(\'' + item.raw_event_id + '\')" title="拷贝 Payload">📋</button>' +
+                    '<button class="btn btn-outline btn-sm" onclick="payloadViewDetail(\'' + item.raw_event_id + '\')" title="查看详情">🔍</button>' +
+                  '</div></td>' +
+                '</tr>';
+              }).join('')) +
+          '</tbody>' +
+        '</table></div>' +
+        '<div style="display:flex;align-items:center;justify-content:center;gap:8px;padding:12px;border-top:1px solid var(--color-border)">' +
+          '<button class="btn btn-outline btn-sm" ' + (page <= 1 ? 'disabled' : '') + ' onclick="payloadGoPage(' + (page - 1) + ')">上一页</button>' +
+          '<span style="font-size:13px;color:var(--color-text-muted)">第 ' + page + '/' + totalPages + ' 页</span>' +
+          '<button class="btn btn-outline btn-sm" ' + (page >= totalPages ? 'disabled' : '') + ' onclick="payloadGoPage(' + (page + 1) + ')">下一页</button>' +
+          '<span style="font-size:12px;color:var(--color-text-muted);margin-left:8px">每页 ' + size + ' 条</span>' +
+        '</div>' +
+      '</div>';
+
+      container.innerHTML = html;
+
+      // 绑定筛选事件
+      $('#pe-filter-type').onchange = function () { var v = this.value; payloadState.event_type = v === '' ? null : parseInt(v); payloadState.page = 1; renderPage(); };
+      $('#pe-filter-status').onchange = function () { var v = this.value; payloadState.parse_status = v === '' ? null : parseInt(v); payloadState.page = 1; renderPage(); };
+      $('#pe-filter-start').onchange = function () { payloadState.start = this.value || null; payloadState.page = 1; renderPage(); };
+      $('#pe-filter-end').onchange = function () { payloadState.end = this.value || null; payloadState.page = 1; renderPage(); };
+
+      var searchTimer = null;
+      $('#pe-filter-keyword').oninput = function () {
+        clearTimeout(searchTimer);
+        var val = this.value;
+        searchTimer = setTimeout(function () {
+          payloadState.keyword = val || null;
+          payloadState.page = 1;
+          renderPage();
+        }, 400);
+      };
+
+    } catch (e) {
+      container.innerHTML = '<div class="error-state"><p>加载失败</p><button class="btn btn-outline btn-sm" onclick="renderPage()">重试</button></div>';
+    }
+  }
+
+  function payloadResetFilters() {
+    payloadState = { page: 1, size: 20, event_type: null, parse_status: null, start: null, end: null, keyword: null };
+    renderPage();
+  }
+
+  function payloadGoPage(p) {
+    payloadState.page = p;
+    renderPage();
+  }
+
+  async function payloadCopySnapshot(rawEventId) {
+    try {
+      var res = await MockAPI.getPayloadEventDetail(rawEventId);
+      if (!res.data) { showToast('获取详情失败', 'error'); return; }
+      var snapshot = res.data.payload_snapshot || '';
+      if (!snapshot) { showToast('该事件无 payload 数据', 'info'); return; }
+
+      var copyText = snapshot;
+      try {
+        var parsed = JSON.parse(snapshot);
+        copyText = JSON.stringify(parsed, null, 2);
+      } catch (e) {}
+
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(copyText);
+        showToast('已复制 Payload (' + copyText.length + ' 字符)', 'success');
+      } else {
+        var ta = document.createElement('textarea');
+        ta.value = copyText;
+        ta.style.position = 'fixed'; ta.style.left = '-9999px';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+        showToast('已复制 Payload (' + copyText.length + ' 字符)', 'success');
+      }
+    } catch (e) {
+      showToast('拷贝失败: ' + (e.message || '未知错误'), 'error');
+    }
+  }
+
+  async function payloadViewDetail(rawEventId) {
+    var overlay = $('#modal-overlay');
+    overlay.style.display = 'flex';
+    overlay.innerHTML = '<div class="modal" style="max-width:720px">' +
+      '<div class="modal-header">' +
+        '<h3>Payload 详情</h3>' +
+        '<button class="modal-close" onclick="closeModal()">×</button>' +
+      '</div>' +
+      '<div class="modal-body" style="max-height:70vh;overflow-y:auto">' +
+        '<div class="loading-state"><div class="loading-spinner"></div><p>加载中...</p></div>' +
+      '</div>' +
+      '<div class="modal-actions">' +
+        '<button class="btn btn-outline" onclick="closeModal()">关闭</button>' +
+        '<button class="btn btn-primary btn-sm" id="btn-payload-copy-detail" style="display:none" onclick="payloadCopySnapshot(\'' + rawEventId + '\')">📋 拷贝 Payload</button>' +
+      '</div>' +
+    '</div>';
+
+    try {
+      var res = await MockAPI.getPayloadEventDetail(rawEventId);
+      if (!res.data) {
+        overlay.querySelector('.modal-body').innerHTML = '<div class="error-state"><p>获取详情失败</p></div>';
+        return;
+      }
+      var d = res.data;
+
+      var bodyHtml = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px">' +
+        '<div class="info-item"><label>事件 ID</label><span style="font-family:monospace">' + escHtml(String(d.raw_event_id)) + '</span></div>' +
+        '<div class="info-item"><label>接收时间</label><span>' + escHtml(d.received_at_ms) + '</span></div>' +
+        '<div class="info-item"><label>事件类型</label><span class="badge">' + escHtml(d.event_type_name) + '</span></div>' +
+        '<div class="info-item"><label>解析状态</label><span>' + escHtml(d.parse_status_name) + (d.parse_error ? ' <span style="color:var(--color-danger);font-size:11px">' + escHtml(d.parse_error) + '</span>' : '') + '</span></div>' +
+        '<div class="info-item"><label>Gateway</label><span>' + escHtml(d.gateway_name || '--') + '</span></div>' +
+        '<div class="info-item"><label>Message ID</label><span style="font-family:monospace;font-size:11px">' + escHtml(d.message_id || '--') + '</span></div>' +
+        '<div class="info-item"><label>Events 数量</label><span>' + d.parsed_count + '/' + d.event_count + '</span></div>' +
+        '<div class="info-item"><label>来源</label><span>' + escHtml(d.remote_ip || '--') + ':' + d.remote_port + '</span></div>' +
+      '</div>';
+
+      var snapshot = d.payload_snapshot || '';
+      var formattedPayload = snapshot;
+      var isJSON = false;
+      if (snapshot) {
+        try {
+          var parsed = JSON.parse(snapshot);
+          formattedPayload = JSON.stringify(parsed, null, 2);
+          isJSON = true;
+        } catch (e) {}
+      }
+
+      bodyHtml += '<div style="margin-top:12px">' +
+        '<label style="font-size:11px;color:var(--color-text-muted);text-transform:uppercase;letter-spacing:0.3px;margin-bottom:6px;display:block">Payload 快照' + (isJSON ? ' (JSON)' : '') + ' — ' + snapshot.length + ' 字符</label>' +
+        '<pre style="background:var(--color-bg);border:1px solid var(--color-border);border-radius:var(--radius-sm);padding:12px;font-size:12px;font-family:monospace;max-height:400px;overflow:auto;white-space:pre-wrap;word-break:break-all">' + escHtml(formattedPayload || '(空)') + '</pre>' +
+      '</div>';
+
+      overlay.querySelector('.modal-body').innerHTML = bodyHtml;
+      var copyBtn = overlay.querySelector('#btn-payload-copy-detail');
+      if (copyBtn) copyBtn.style.display = '';
+    } catch (e) {
+      overlay.querySelector('.modal-body').innerHTML = '<div class="error-state"><p>加载失败: ' + escHtml(e.message || '未知错误') + '</p></div>';
+    }
+  }
+
   // ============================================================
   // 初始化
   // ============================================================
@@ -1092,5 +1315,9 @@
   window.openBindingAddModal = openBindingAddModal;
   window.doBindFromAddModal = doBindFromAddModal;
   window.switchDashboardRange = switchDashboardRange;
+  window.payloadResetFilters = payloadResetFilters;
+  window.payloadGoPage = payloadGoPage;
+  window.payloadCopySnapshot = payloadCopySnapshot;
+  window.payloadViewDetail = payloadViewDetail;
 
 })();

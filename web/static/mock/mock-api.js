@@ -575,6 +575,121 @@
     'GET /api/v1/admin/device-tree': function () {
       return { data: MOCK_DEVICE_TREE };
     },
+    // ---- Payload 排查 ----
+    'GET /api/v1/admin/payload-events': function (params, query) {
+      var page = parseInt(query.page) || 1;
+      var size = parseInt(query.size) || 20;
+      var eventType = query.event_type ? parseInt(query.event_type) : null;
+      var parseStatus = query.parse_status ? parseInt(query.parse_status) : null;
+      var keyword = (query.keyword || '').toLowerCase();
+
+      // 生成 mock payload 事件列表
+      var eventTypes = [1, 2, 3, 3, 3, 4, 5]; // 注册/心跳/工作数据/控制结果/JSON快照
+      var eventTypeNames = { 1: '注册', 2: '心跳', 3: '工作数据', 4: '控制结果', 5: 'JSON快照' };
+      var parseStatuses = [1, 2, 2, 2, 3, 4]; // pending/parsed/failed/partial
+      var parseStatusNames = { 1: '待解析', 2: '已解析', 3: '解析失败', 4: '部分解析', 5: '已忽略' };
+      var gatewayNames = ['FP_TEST_ADMIN_001', 'FP_TEST_ADMIN_002', 'FP_TEST_ADMIN_003'];
+      var ips = ['123.190.0.47', '123.190.0.48', '123.190.0.49'];
+      var messageIds = ['MSG-20260628-00001', 'MSG-20260628-00002', 'MSG-20260628-00003', '', 'MSG-20260629-00001', ''];
+
+      var allItems = [];
+      for (var i = 0; i < 50; i++) {
+        var et = eventTypes[i % eventTypes.length];
+        var ps = parseStatuses[i % parseStatuses.length];
+        var gwIdx = i % 3;
+        var d = new Date('2026-06-29T03:00:00+08:00');
+        d.setMinutes(d.getMinutes() - i * 5);
+        var timeStr = d.getFullYear() + '-' +
+          String(d.getMonth() + 1).padStart(2, '0') + '-' +
+          String(d.getDate()).padStart(2, '0') + ' ' +
+          String(d.getHours()).padStart(2, '0') + ':' +
+          String(d.getMinutes()).padStart(2, '0') + ':' +
+          String(d.getSeconds()).padStart(2, '0');
+
+        var rawEventId = 1000 + i;
+        var msgId = messageIds[i % messageIds.length];
+        var ec = Math.floor(Math.random() * 5) + 1;
+        var pc = ps === 2 ? ec : ps === 4 ? Math.floor(ec / 2) + 1 : 0;
+        var payloadLen = Math.floor(Math.random() * 2000) + 200;
+
+        allItems.push({
+          raw_event_id: String(rawEventId),
+          gateway_name: gatewayNames[gwIdx],
+          event_type: et,
+          event_type_name: eventTypeNames[et] || '未知',
+          parse_status: ps,
+          parse_status_name: parseStatusNames[ps] || '未知',
+          parse_error: ps === 3 ? 'parse error: missing required field' : '',
+          message_id: msgId,
+          event_count: ec,
+          parsed_count: pc,
+          remote_ip: ips[gwIdx],
+          remote_port: 40000 + gwIdx,
+          received_at_ms: timeStr,
+          payload_len: payloadLen
+        });
+      }
+
+      // 筛选
+      var filtered = allItems.filter(function (item) {
+        if (eventType !== null && item.event_type !== eventType) return false;
+        if (parseStatus !== null && item.parse_status !== parseStatus) return false;
+        if (keyword && item.gateway_name.toLowerCase().indexOf(keyword) === -1 && item.message_id.toLowerCase().indexOf(keyword) === -1) return false;
+        return true;
+      });
+
+      var total = filtered.length;
+      var start = (page - 1) * size;
+      var items = filtered.slice(start, start + size);
+
+      return { data: { items: items, total: total, page: page, size: size } };
+    },
+    'GET /api/v1/admin/payload-events/:id': function (params) {
+      var id = parseInt(params.id);
+      var gatewayNames = ['FP_TEST_ADMIN_001', 'FP_TEST_ADMIN_002', 'FP_TEST_ADMIN_003'];
+      var ips = ['123.190.0.47', '123.190.0.48', '123.190.0.49'];
+      var idx = id - 1000;
+      if (idx < 0 || idx >= 50) return { code: 404, message: 'payload event not found' };
+
+      var gwIdx = idx % 3;
+      var samplePayload = JSON.stringify({
+        protocol_version: '1.0',
+        source_type: 'adapter',
+        message_id: 'MSG-20260629-' + String(idx).padStart(5, '0'),
+        gateway_name: gatewayNames[gwIdx],
+        gateway_external_id: 'TEST_ADMIN_00' + (gwIdx + 1),
+        remote_ip: ips[gwIdx],
+        remote_port: 40000 + gwIdx,
+        reported_at_ms: new Date().toISOString(),
+        events: [
+          { event_type: 'telemetry', frequency: 1, device_external_id: 'DEV-0001', function_type: 1, channel_no: 1, value: 25.6, unit: '℃' },
+          { event_type: 'telemetry', frequency: 2, device_external_id: 'DEV-0002', function_type: 2, channel_no: 1, value: 55.2, unit: '%' }
+        ]
+      }, null, 2);
+
+      return {
+        data: {
+          raw_event_id: String(id),
+          gateway_id: String(gwIdx + 1),
+          node_id: String(100 + idx),
+          point_id: String(200 + idx),
+          gateway_name: gatewayNames[gwIdx],
+          event_type: 3,
+          event_type_name: '工作数据',
+          parse_status: 2,
+          parse_status_name: '已解析',
+          parse_error: '',
+          message_id: 'MSG-20260629-' + String(idx).padStart(5, '0'),
+          event_count: 2,
+          parsed_count: 2,
+          remote_ip: ips[gwIdx],
+          remote_port: 40000 + gwIdx,
+          payload_snapshot: samplePayload,
+          received_at_ms: '2026-06-29 03:00:00',
+          created_at: '2026-06-29 03:00:01'
+        }
+      };
+    },
   };
 
   // ============================================================
@@ -853,6 +968,23 @@
       if (bindStatus) params.push('bind_status=' + encodeURIComponent(bindStatus));
       if (params.length) path += '?' + params.join('&');
       return request('GET', path);
+    },
+
+    // ---- Payload 排查 ----
+    getPayloadEvents: async function (params) {
+      var path = '/api/v1/admin/payload-events';
+      var qs = [];
+      if (params) {
+        Object.keys(params).forEach(function (k) {
+          if (params[k] != null && params[k] !== '') qs.push(k + '=' + encodeURIComponent(params[k]));
+        });
+      }
+      if (qs.length) path += '?' + qs.join('&');
+      return request('GET', path);
+    },
+
+    getPayloadEventDetail: async function (rawEventId) {
+      return request('GET', '/api/v1/admin/payload-events/' + rawEventId);
     },
   };
 

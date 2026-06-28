@@ -20,9 +20,48 @@ type RawDeviceEvent struct {
 	PayloadSnapshot *string // 原始快照文本，禁止JSON类型
 	ParseStatus     ParseStatus
 	ParseError      *string
+	MessageID       *string // 消息唯一ID（从 payload 解析）
+	EventCount      int     // events[] 数组长度
+	ParsedCount     int     // 成功解析的 events 数量
 	ReceivedAtMS    time.Time
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
+}
+
+// RawEventTypeName returns the Chinese label for a RawEventType.
+func (t RawEventType) RawEventTypeName() string {
+	switch t {
+	case RawEventRegister:
+		return "注册"
+	case RawEventHeartbeat:
+		return "心跳"
+	case RawEventWork:
+		return "工作数据"
+	case RawEventControlResult:
+		return "控制结果"
+	case RawEventJSONSnapshot:
+		return "JSON快照"
+	default:
+		return "未知"
+	}
+}
+
+// RawEventTypeCSS returns a CSS class suffix for event type badges.
+func (t RawEventType) RawEventTypeCSS() string {
+	switch t {
+	case RawEventRegister:
+		return "info"
+	case RawEventHeartbeat:
+		return "muted"
+	case RawEventWork:
+		return "success"
+	case RawEventControlResult:
+		return "warning"
+	case RawEventJSONSnapshot:
+		return "primary"
+	default:
+		return ""
+	}
 }
 
 // RawEventType 原始事件类型。
@@ -49,11 +88,48 @@ const (
 type ParseStatus uint8
 
 const (
-	ParseStatusPending ParseStatus = 1 // pending：待解析
-	ParseStatusParsed  ParseStatus = 2 // parsed：已解析
-	ParseStatusFailed  ParseStatus = 3 // failed：解析失败
-	ParseStatusIgnored ParseStatus = 4 // ignored：已忽略
+	ParseStatusPending   ParseStatus = 1 // pending：待解析
+	ParseStatusParsed    ParseStatus = 2 // parsed：全部解析成功
+	ParseStatusFailed    ParseStatus = 3 // failed：解析失败
+	ParseStatusPartial   ParseStatus = 4 // partial：部分解析（新增）
+	ParseStatusIgnored   ParseStatus = 5 // ignored：手动忽略
 )
+
+// ParseStatusName returns the Chinese label for a ParseStatus.
+func (s ParseStatus) ParseStatusName() string {
+	switch s {
+	case ParseStatusPending:
+		return "待解析"
+	case ParseStatusParsed:
+		return "已解析"
+	case ParseStatusFailed:
+		return "解析失败"
+	case ParseStatusPartial:
+		return "部分解析"
+	case ParseStatusIgnored:
+		return "已忽略"
+	default:
+		return "未知"
+	}
+}
+
+// ParseStatusCSS returns a CSS class suffix for status badges.
+func (s ParseStatus) ParseStatusCSS() string {
+	switch s {
+	case ParseStatusPending:
+		return "pending"
+	case ParseStatusParsed:
+		return "success"
+	case ParseStatusFailed:
+		return "danger"
+	case ParseStatusPartial:
+		return "warning"
+	case ParseStatusIgnored:
+		return "muted"
+	default:
+		return ""
+	}
+}
 
 // ─── 采集执行器节点 ───
 
@@ -360,4 +436,57 @@ type DevicePointSearchResult struct {
 	IsBound          bool         `json:"is_bound"`
 	BindUserID       *uint64      `json:"bind_user_id,string,omitempty"`
 	BindUserName     string       `json:"bind_user_name,omitempty"`
+}
+
+// ─── Payload 排查页面 ───
+
+// PayloadEventQuery 是 payload 事件列表查询参数。
+type PayloadEventQuery struct {
+	Page        int        `json:"page"`
+	Size        int        `json:"size"`
+	EventType   *uint8     `json:"event_type"`
+	ParseStatus *uint8     `json:"parse_status"`
+	Start       *string    `json:"start"`
+	End         *string    `json:"end"`
+	Keyword     *string    `json:"keyword"`
+}
+
+// PayloadEventListItem 是 payload 事件列表项。
+type PayloadEventListItem struct {
+	RawEventID     uint64 `json:"raw_event_id,string"`
+	GatewayName    string `json:"gateway_name"`
+	EventType      uint8  `json:"event_type"`
+	EventTypeName  string `json:"event_type_name"`
+	ParseStatus    uint8  `json:"parse_status"`
+	ParseStatusName string `json:"parse_status_name"`
+	ParseError     string `json:"parse_error"`
+	MessageID      string `json:"message_id"`
+	EventCount     int    `json:"event_count"`
+	ParsedCount    int    `json:"parsed_count"`
+	RemoteIP       string `json:"remote_ip"`
+	RemotePort     int    `json:"remote_port"`
+	ReceivedAtMS   string `json:"received_at_ms"`
+	PayloadLen     int    `json:"payload_len"`
+}
+
+// PayloadEventDetail 是 payload 事件详情。
+type PayloadEventDetail struct {
+	RawEventID      uint64  `json:"raw_event_id,string"`
+	GatewayID       *uint64 `json:"gateway_id,string,omitempty"`
+	NodeID          *uint64 `json:"node_id,string,omitempty"`
+	PointID         *uint64 `json:"point_id,string,omitempty"`
+	GatewayName     string  `json:"gateway_name"`
+	EventType       uint8   `json:"event_type"`
+	EventTypeName   string  `json:"event_type_name"`
+	ParseStatus     uint8   `json:"parse_status"`
+	ParseStatusName string  `json:"parse_status_name"`
+	ParseError      string  `json:"parse_error"`
+	MessageID       string  `json:"message_id"`
+	EventCount      int     `json:"event_count"`
+	ParsedCount     int     `json:"parsed_count"`
+	RemoteIP        string  `json:"remote_ip"`
+	RemotePort      int     `json:"remote_port"`
+	PayloadSnapshot string  `json:"payload_snapshot"`
+	ReceivedAtMS    string  `json:"received_at_ms"`
+	CreatedAt       string  `json:"created_at"`
 }
