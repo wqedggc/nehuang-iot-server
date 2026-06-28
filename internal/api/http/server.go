@@ -67,17 +67,18 @@ func (s *Server) Routes() http.Handler {
 		authMiddleware(secret, adminRoles(http.HandlerFunc(s.listGateways))))
 
 	// Static frontend files (prototype HTML/CSS/JS).
-	// Use a single file server at / to serve all static assets under ./prototype,
-	// then register API routes above so they take precedence.
-	fs := http.FileServer(http.Dir("./prototype"))
+	// Go 1.20 FileServer: accessing /admin/index.html directly causes a 301
+	// redirect to /admin/.  Use /admin/ instead — FileServer auto-serves
+	// index.html when the directory path is requested.
+	mux.Handle("/admin/", http.StripPrefix("/admin/", http.FileServer(http.Dir("./prototype/admin"))))
+	mux.Handle("/mini/", http.StripPrefix("/mini/", http.FileServer(http.Dir("./prototype/mini"))))
+	mux.Handle("/mock/", http.StripPrefix("/mock/", http.FileServer(http.Dir("./prototype/mock"))))
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		// Only serve static files — API routes are already handled by explicit
-		// registrations above (ServeMux picks the most specific match first).
-		if r.URL.Path == "/" {
-			http.Redirect(w, r, "/admin/index.html", http.StatusFound)
+		if r.URL.Path != "/" {
+			http.NotFound(w, r)
 			return
 		}
-		fs.ServeHTTP(w, r)
+		http.Redirect(w, r, "/admin/", http.StatusFound)
 	})
 
 	return corsMiddleware(loggingMiddleware(mux))
