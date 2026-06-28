@@ -59,12 +59,20 @@ FUNCTION_TYPES=(
 )
 
 # ─── 生成 telemetry 值（带小幅随机波动） ───
+# 使用纯整数运算避免 bc 兼容性问题，输出格式为 xx.x
 generate_value() {
   local func_type="$1"
   local base="$2"
-  # 随机波动 ±5%
-  local delta=$(echo "scale=2; ($RANDOM % 100 - 50) / 1000" | bc 2>/dev/null || echo "0")
-  echo "$base + $delta" | bc 2>/dev/null || echo "$base"
+  # 将 base 转为整数（乘以 10），加上随机偏移 ±5（即 ±0.5），再转回小数
+  local base_int=$(echo "$base" | awk -F. '{print $1 * 10 + $2}')
+  local offset=$(( (RANDOM % 10) - 5 ))  # -5 ~ +4，即 ±0.5
+  local val_int=$(( base_int + offset ))
+  local int_part=$(( val_int / 10 ))
+  local frac_part=$(( val_int % 10 ))
+  if [ $frac_part -lt 0 ]; then
+    frac_part=$(( -frac_part ))
+  fi
+  echo "${int_part}.${frac_part}"
 }
 
 # 基础值

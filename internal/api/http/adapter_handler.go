@@ -189,6 +189,7 @@ func (h *adapterHandler) handleDeviceEvents(w http.ResponseWriter, r *http.Reque
 				parseError = "upsert device point failed: " + err.Error()
 				break
 			}
+			point.PointID = pointID // 回填 pointID，供后续 UpsertDeviceRealtimeMap 使用
 
 			// 3c. 插入传感器时序数据。
 			sd := &domain.SensorData{

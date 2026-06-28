@@ -566,20 +566,20 @@ func (r *Repository) UpsertDeviceRealtimeMap(ctx context.Context, point *domain.
 	}
 
 	// 不存在：创建。
+	// 只填充核心字段，其余用默认值。device_realtime_maps 是兼容投影表。
 	rtID := idgen.NextID()
 	_, err = r.db.ExecContext(ctx, `
 INSERT INTO device_realtime_maps
   (realtime_id, gateway_id, node_id, point_id,
    frequency, device_external_id, function_type,
-   best_min, best_max, unit,
-   real_value, real_temp, value_status,
+   unit, real_value, real_temp, value_status,
    run_mode, poll_interval, last_report_at_ms,
    created_at, updated_at)
 VALUES
-  (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		rtID, point.GatewayID, point.NodeID, 0,
+  (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		rtID, point.GatewayID, point.NodeID, point.PointID,
 		point.Frequency, point.DeviceExternalID, uint8(point.FunctionType),
-		nullableFloat64(point.BestMin), nullableFloat64(point.BestMax), point.Unit,
+		point.Unit,
 		nullableFloat64(point.RealValue), point.RealTemp, uint8(point.ValueStatus),
 		uint8(RunModeAuto), 300, now,
 		now, now,
