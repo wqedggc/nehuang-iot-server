@@ -66,6 +66,19 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("/api/v1/gateways",
 		authMiddleware(secret, adminRoles(http.HandlerFunc(s.listGateways))))
 
+	// Static frontend files (prototype HTML/CSS/JS).
+	mux.Handle("/admin/", http.StripPrefix("/admin/", http.FileServer(http.Dir("./prototype/admin"))))
+	mux.Handle("/mini/", http.StripPrefix("/mini/", http.FileServer(http.Dir("./prototype/mini"))))
+	mux.Handle("/mock/", http.StripPrefix("/mock/", http.FileServer(http.Dir("./prototype/mock"))))
+	// Root redirect to admin/index.html
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/" {
+			http.NotFound(w, r)
+			return
+		}
+		http.Redirect(w, r, "/admin/index.html", http.StatusFound)
+	})
+
 	return corsMiddleware(loggingMiddleware(mux))
 }
 
