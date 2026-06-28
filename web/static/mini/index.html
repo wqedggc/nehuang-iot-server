@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>涅凰智农 · 我的设备</title>
+<link rel="stylesheet" href="app.css">
+<script src="../version.js"></script>
+</head>
+<body>
+
+<!-- ===== 顶部导航 ===== -->
+<header class="topbar" id="topbar">
+  <div class="topbar-left" id="topbar-back" style="display:none">
+    <button class="btn-icon" onclick="goBack()" aria-label="返回">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
+    </button>
+  </div>
+  <h1 class="topbar-title" id="topbar-title">涅凰智农</h1>
+  <div class="topbar-right">
+    <button class="btn-icon" id="btn-settings" onclick="navigate('settings')" aria-label="设置">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+    </button>
+  </div>
+</header>
+
+<!-- ===== 主内容区 ===== -->
+<main id="main-content">
+  <!-- 页面内容由 JS 动态渲染 -->
+</main>
+
+<!-- ===== Toast ===== -->
+<div class="toast" id="toast" aria-live="polite"></div>
+
+<div id="version-badge" style="position:fixed;right:12px;bottom:12px;font-size:10px;color:#aaa;z-index:9999;pointer-events:none;font-family:monospace">v?</div>
+
+<script src="../mock/mock-api.js"></script>
+<script src="app.js"></script>
+<script>
+  (function () {
+    var el = document.getElementById('version-badge');
+    if (el && window.APP_VERSION) el.textContent = 'v' + window.APP_VERSION;
+  })();
+</script>
+</body>
+</html>

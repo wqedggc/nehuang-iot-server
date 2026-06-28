@@ -8,6 +8,7 @@ import (
 
 	"nehuang-iot-server/internal/config"
 	"nehuang-iot-server/internal/domain"
+	"nehuang-iot-server/web"
 )
 
 // gatewayRepository defines the data access methods required by gateway handlers.
@@ -121,10 +122,19 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("/api/v1/gateways",
 		authMiddleware(secret, adminRoles(http.HandlerFunc(s.listGateways))))
 
-	// ─── Static frontend files (prototype HTML/CSS/JS) ───
-	mux.Handle("/admin/", http.StripPrefix("/admin/", http.FileServer(http.Dir("./prototype/admin"))))
-	mux.Handle("/mini/", http.StripPrefix("/mini/", http.FileServer(http.Dir("./prototype/mini"))))
-	mux.Handle("/mock/", http.StripPrefix("/mock/", http.FileServer(http.Dir("./prototype/mock"))))
+	// ─── Static frontend files (embedded in binary via //go:embed) ───
+	// web.Static embeds static/admin, static/mini, static/mock.
+	// Prefix-rewriting handler maps /admin/... → static/admin/... etc.
+	fileServer := http.FileServer(http.FS(web.Static))
+	servePrefixed := func(prefix string) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			r.URL.Path = prefix + r.URL.Path
+			fileServer.ServeHTTP(w, r)
+		})
+	}
+	mux.Handle("/admin/", servePrefixed("static"))
+	mux.Handle("/mini/", servePrefixed("static"))
+	mux.Handle("/mock/", servePrefixed("static"))
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
 			http.NotFound(w, r)
