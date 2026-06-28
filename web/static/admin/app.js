@@ -68,7 +68,21 @@
 
   function parseHash() {
     var hash = window.location.hash.replace('#', '') || 'dashboard';
-    return { page: hash };
+    var idx = hash.indexOf('?');
+    var page = idx >= 0 ? hash.substring(0, idx) : hash;
+    return { page: page, raw: hash };
+  }
+
+  function getHashParam(name) {
+    var hash = location.hash;
+    var idx = hash.indexOf('?');
+    if (idx < 0) return null;
+    var params = new URLSearchParams(hash.substring(idx + 1));
+    return params.get(name);
+  }
+
+  function goFarmerDetail(userId) {
+    location.hash = 'farmer-detail?user_id=' + userId;
   }
 
   // ============================================================
@@ -79,7 +93,11 @@
     currentPage = route.page;
     var container = $('#main-content');
 
-    if (route.page !== 'login' && !localStorage.getItem('admin_token')) {
+    if (route.page !== 'login' && !localStorage.getItem('nh_admin_token')) {
+      // 检测是否有 mini token 但没有 admin token → 提示权限不足
+      if (localStorage.getItem('nh_mini_token')) {
+        showToast('无管理员权限，请使用管理员账号登录', 'error');
+      }
       navigate('login');
       return;
     }
@@ -92,6 +110,7 @@
       case 'users': renderUsers(container); updatePageTitle('用户管理'); break;
       case 'gateways': renderGateways(container); updatePageTitle('设备管理'); break;
       case 'bindings': renderBindings(container); updatePageTitle('绑定管理'); break;
+      case 'farmer-detail': renderFarmerDetail(container); updatePageTitle('农户详情'); break;
       case 'logs': renderLogs(container); updatePageTitle('控制日志'); break;
       default: renderDashboard(container); updatePageTitle('Dashboard');
     }
@@ -151,7 +170,7 @@
     try {
       var res = await MockAPI.login('admin', { username: username, password: password });
       if (res.data && res.data.token) {
-        localStorage.setItem('admin_token', res.data.token);
+        localStorage.setItem('nh_admin_token', res.data.token);
         localStorage.setItem('admin_user', JSON.stringify(res.data));
         MockAPI.setUserId(res.data.user_id);
         updateSidebarUser(res.data);
@@ -181,250 +200,70 @@
   }
 
   function doLogout() {
-    localStorage.removeItem('admin_token');
+    localStorage.removeItem('nh_admin_token');
     localStorage.removeItem('admin_user');
     showToast('已退出登录', 'info');
     navigate('login');
   }
 
   // ---------- Dashboard ----------
-
-  var dashboardRange = '1d'; // 当前选中的时间范围
-
-  function buildDashboardRangeBar() {
-    var ranges = [
-      { value: '1d', label: '近1天' },
-      { value: '3d', label: '近3天' },
-      { value: '7d', label: '近7天' },
-      { value: '30d', label: '近30天' }
-    ];
-    var html = '<div class="dashboard-range-bar" style="display:flex;gap:8px;margin-bottom:16px">';
-    for (var i = 0; i < ranges.length; i++) {
-      var r = ranges[i];
-      var activeClass = r.value === dashboardRange ? ' btn-primary' : ' btn-outline';
-      html += '<button class="btn btn-sm' + activeClass + '" onclick="dashboardSetRange(\'' + r.value + '\')">' + r.label + '</button>';
-    }
-    html += '</div>';
-    return html;
-  }
-
-  function dashboardSetRange(rangeStr) {
-    dashboardRange = rangeStr;
-    renderPage();
-  }
-
-  function formatPercent(val) {
-    if (val == null || isNaN(val)) return '--';
-    return val.toFixed(2) + '%';
-  }
-
-  function formatLatestTime(iso) {
-    if (!iso) return '--';
-    try {
-      var d = new Date(iso);
-      var pad = function (n) { return n.toString().padStart(2, '0'); };
-      return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
-    } catch (e) { return iso; }
-  }
-
   async function renderDashboard(container) {
     container.innerHTML = '<div class="loading-state"><div class="loading-spinner"></div><p>加载仪表盘...</p></div>';
-
     try {
-      var res = await MockAPI.getDashboardRange(dashboardRange);
-
-      // 处理 HTTP 错误状态
-      if (res.code && res.code !== 200) {
-        // 401: 跳登录
-        if (res.code === 401 || res.code === 4011 || res.code === 4012 || res.code === 4013) {
-          localStorage.removeItem('admin_token');
-          localStorage.removeItem('admin_user');
-          navigate('login');
-          return;
-        }
-        // 403: 无管理员权限
-        if (res.code === 403 || res.code === 4031 || res.code === 4033) {
-          container.innerHTML = '<div class="error-state"><p>无管理员权限，请使用管理员账号登录</p><button class="btn btn-outline btn-sm" onclick="doLogout()">重新登录</button></div>';
-          return;
-        }
-        // 400: 参数错误
-        if (res.code === 400) {
-          container.innerHTML = '<div class="error-state"><p>请求参数错误：' + escHtml(res.message || '') + '</p><button class="btn btn-outline btn-sm" onclick="renderPage()">重试</button></div>';
-          return;
-        }
-        // 其他错误
-        container.innerHTML = '<div class="error-state"><p>' + escHtml(res.message || '服务器错误') + '</p><button class="btn btn-outline btn-sm" onclick="renderPage()">重试</button></div>';
-        return;
-      }
-
-      // 不允许 fallback mock：data 为空视为错误
-      if (!res.data) {
-        container.innerHTML = '<div class="error-state"><p>获取仪表盘数据失败</p><button class="btn btn-outline btn-sm" onclick="renderPage()">重试</button></div>';
-        return;
-      }
-
-      var d = res.data;
-      var u = d.users || {};
-      var dev = d.devices || {};
-      var ing = d.ingest || {};
-      var ctl = d.control || {};
-
-      var html = buildDashboardRangeBar();
-
-      // ── 第一行：用户统计 ──
-      html += '<div class="stat-grid">' +
-        '<div class="stat-card"><div class="stat-card-label">总用户数</div><div class="stat-card-value">' + (u.total_users || 0).toLocaleString() + '</div><div class="stat-card-sub">管理员 ' + (u.admin_count || 0) + ' / 农户 ' + (u.farmer_count || 0) + '</div></div>' +
-        '<div class="stat-card"><div class="stat-card-label">活跃农户</div><div class="stat-card-value">' + (u.active_farmer_count || 0).toLocaleString() + '</div></div>' +
-        '<div class="stat-card"><div class="stat-card-label">禁用农户</div><div class="stat-card-value">' + (u.disabled_farmer_count || 0).toLocaleString() + '</div></div>' +
-      '</div>';
-
-      // ── 第二行：设备统计 ──
-      html += '<div class="stat-grid">' +
-        '<div class="stat-card"><div class="stat-card-label">云边设备</div><div class="stat-card-value">' + (dev.gateway_online || 0) + '<span style="font-size:16px;font-weight:400;color:var(--color-text-muted)"> / ' + (dev.gateway_total || 0) + '</span></div><div class="stat-card-sub">在线 / 总数</div></div>' +
-        '<div class="stat-card"><div class="stat-card-label">采集执行器</div><div class="stat-card-value">' + (dev.collector_node_total || 0).toLocaleString() + '</div></div>' +
-        '<div class="stat-card"><div class="stat-card-label">功能点</div><div class="stat-card-value">' + (dev.device_point_total || 0).toLocaleString() + '</div><div class="stat-card-sub">已绑定 ' + (dev.bound_point_count || 0) + ' / 未绑定 ' + (dev.unbound_point_count || 0) + '</div></div>' +
-      '</div>';
-
-      // ── 第三行：设备状态 ──
-      html += '<div class="stat-grid">' +
-        '<div class="stat-card"><div class="stat-card-label">正常功能点</div><div class="stat-card-value" style="color:var(--color-success)">' + (dev.normal_point_count || 0).toLocaleString() + '</div></div>' +
-        '<div class="stat-card"><div class="stat-card-label">异常功能点</div><div class="stat-card-value" style="color:var(--color-warning)">' + (dev.abnormal_point_count || 0).toLocaleString() + '</div></div>' +
-        '<div class="stat-card"><div class="stat-card-label">离线功能点</div><div class="stat-card-value" style="color:var(--color-danger)">' + (dev.offline_point_count || 0).toLocaleString() + '</div></div>' +
-        '<div class="stat-card"><div class="stat-card-label">最近上报时间</div><div class="stat-card-value" style="font-size:16px">' + formatLatestTime(dev.latest_report_time) + '</div></div>' +
-      '</div>';
-
-      // ── 第四行：数据上报统计 ──
-      html += '<div class="stat-grid">' +
-        '<div class="stat-card"><div class="stat-card-label">原始事件数</div><div class="stat-card-value">' + (ing.raw_event_count || 0).toLocaleString() + '</div></div>' +
-        '<div class="stat-card"><div class="stat-card-label">遥测数据</div><div class="stat-card-value">' + (ing.telemetry_count || 0).toLocaleString() + '</div></div>' +
-        '<div class="stat-card"><div class="stat-card-label">注册事件</div><div class="stat-card-value">' + (ing.register_count || 0).toLocaleString() + '</div></div>' +
-        '<div class="stat-card"><div class="stat-card-label">工作上报</div><div class="stat-card-value">' + (ing.work_count || 0).toLocaleString() + '</div></div>' +
-        '<div class="stat-card"><div class="stat-card-label">控制结果</div><div class="stat-card-value">' + (ing.control_result_count || 0).toLocaleString() + '</div></div>' +
-      '</div>';
-
-      // ── 第五行：心跳 + 控制成功率 ──
-      html += '<div class="stat-grid">' +
-        '<div class="stat-card"><div class="stat-card-label">心跳总数</div><div class="stat-card-value">' + (ing.heartbeat_total || 0).toLocaleString() + '</div><div class="stat-card-sub">成功 ' + (ing.heartbeat_success || 0) + ' / 失败 ' + (ing.heartbeat_failed || 0) + '</div></div>' +
-        '<div class="stat-card"><div class="stat-card-label">心跳成功率</div><div class="stat-card-value">' + formatPercent(ing.heartbeat_success_rate) + '</div></div>' +
-        '<div class="stat-card"><div class="stat-card-label">控制命令</div><div class="stat-card-value">' + (ctl.control_command_count || 0).toLocaleString() + '</div><div class="stat-card-sub">成功 ' + (ctl.control_success_count || 0) + ' / 失败 ' + (ctl.control_failed_count || 0) + ' / 超时 ' + (ctl.control_timeout_count || 0) + '</div></div>' +
-        '<div class="stat-card"><div class="stat-card-label">控制成功率</div><div class="stat-card-value">' + formatPercent(ctl.control_success_rate) + '</div></div>' +
-      '</div>';
-
-      container.innerHTML = html;
-    } catch (e) {
-      // 网络错误不显示 mock 数据
-      container.innerHTML = '<div class="error-state"><p>网络请求失败，请检查服务是否可用</p><button class="btn btn-outline btn-sm" onclick="renderPage()">重试</button></div>';
-    }
-  }
-
-  // ---------- 用户管理 ----------
-  async function renderUsers(container) {
-    container.innerHTML = '<div class="loading-state"><div class="loading-spinner"></div><p>加载用户列表...</p></div>';
-    try {
-      var res = await MockAPI.getUsers();
+      var res = await MockAPI.getDashboard();
       if (!res.data) { container.innerHTML = '<div class="error-state"><p>加载失败</p><button class="btn btn-outline btn-sm" onclick="renderPage()">重试</button></div>'; return; }
-      var users = res.data;
+      var d = res.data;
 
-      var html = '<div class="table-section">' +
-        '<div class="table-header">' +
-          '<h3>用户列表</h3>' +
-          '<div class="table-header-right">' +
-            '<input class="table-search" id="user-search" type="text" placeholder="搜索用户名...">' +
-            '<span class="table-count">共 ' + users.length + ' 人</span>' +
-          '</div>' +
-        '</div>' +
-        '<div class="table-wrap"><table>' +
-          '<thead><tr><th>ID</th><th>用户名</th><th>显示名称</th><th>角色</th><th>绑定设备</th><th>状态</th></tr></thead>' +
-          '<tbody id="user-tbody">' +
-            users.map(function (u) {
-              var roleBadge = u.role === 1 ? 'badge-danger' : u.role === 2 ? 'badge-info' : 'badge-success';
-              var statusBadge = u.status === 1 ? 'badge-success' : u.status === 2 ? 'badge-warning' : 'badge-muted';
-              return '<tr>' +
-                '<td>' + u.user_id + '</td>' +
-                '<td>' + escHtml(u.username) + '</td>' +
-                '<td>' + escHtml(u.display_name) + '</td>' +
-                '<td><span class="badge ' + roleBadge + '">' + escHtml(u.role_label) + '</span></td>' +
-                '<td>' + u.binding_count + ' 台</td>' +
-                '<td><span class="badge ' + statusBadge + '">' + escHtml(u.status_label) + '</span></td>' +
-              '</tr>';
-            }).join('') +
-          '</tbody>' +
-        '</table></div>' +
+      var html = '<div class="stat-grid">' +
+        '<div class="stat-card"><div class="stat-card-label">在线云边设备</div><div class="stat-card-value">' + d.online_gateways + '<span style="font-size:16px;font-weight:400;color:var(--color-text-muted)"> / ' + d.total_gateways + '</span></div></div>' +
+        '<div class="stat-card"><div class="stat-card-label">采集执行器</div><div class="stat-card-value">' + d.total_collectors + '</div><div class="stat-card-sub">功能点数</div></div>' +
+        '<div class="stat-card"><div class="stat-card-label">农户数量</div><div class="stat-card-value">' + d.farmer_count + '</div></div>' +
+        '<div class="stat-card"><div class="stat-card-label">今日上报数据</div><div class="stat-card-value">' + d.today_reports.toLocaleString() + '</div><div class="stat-card-sub">最近上报：' + formatTime(d.last_report_time) + '</div></div>' +
       '</div>';
 
       container.innerHTML = html;
-
-      // 搜索
-      $('#user-search').oninput = function () {
-        var q = this.value.toLowerCase();
-        $$('#user-tbody tr').forEach(function (tr) {
-          tr.style.display = tr.textContent.toLowerCase().includes(q) ? '' : 'none';
-        });
-      };
     } catch (e) {
       container.innerHTML = '<div class="error-state"><p>加载失败</p><button class="btn btn-outline btn-sm" onclick="renderPage()">重试</button></div>';
     }
   }
 
-  // ---------- 设备管理 ----------
-  async function renderGateways(container) {
-    container.innerHTML = '<div class="loading-state"><div class="loading-spinner"></div><p>加载设备数据...</p></div>';
+  // ---------- 用户管理（农户列表） ----------
+  async function renderUsers(container) {
+    container.innerHTML = '<div class="loading-state"><div class="loading-spinner"></div><p>加载农户列表...</p></div>';
     try {
-      var gwRes = await MockAPI.getGateways();
-      var clRes = await MockAPI.getCollectors();
-      if (!gwRes.data || !clRes.data) { container.innerHTML = '<div class="error-state"><p>加载失败</p><button class="btn btn-outline btn-sm" onclick="renderPage()">重试</button></div>'; return; }
-      var gateways = gwRes.data;
-      var collectors = clRes.data;
+      var res = await MockAPI.getFarmers();
+      if (!res.data) {
+        // fallback：使用 getUsers 接口，前端过滤 user_type=2
+        var usersRes = await MockAPI.getUsers();
+        if (!usersRes.data) { container.innerHTML = '<div class="error-state"><p>加载失败</p><button class="btn btn-outline btn-sm" onclick="renderPage()">重试</button></div>'; return; }
+        var farmers = usersRes.data.filter(function (u) { return u.user_type === 2; });
+      } else {
+        var farmers = res.data;
+      }
 
-      // 云边设备表
-      var html = '<div class="table-section" style="margin-bottom:18px">' +
-        '<div class="table-header"><h3>云边设备</h3><span class="table-count">共 ' + gateways.length + ' 台</span></div>' +
-        '<div class="table-wrap"><table>' +
-          '<thead><tr><th>ID</th><th>设备名称</th><th>IP</th><th>端口</th><th>SN</th><th>状态</th><th>最近心跳</th></tr></thead>' +
-          '<tbody>' +
-            gateways.map(function (g) {
-              var statusHtml = g.online_status === 1
-                ? '<span class="status-dot status-dot-online"></span>在线'
-                : '<span class="status-dot status-dot-offline"></span>离线';
-              return '<tr>' +
-                '<td>' + g.gateway_id + '</td>' +
-                '<td>' + escHtml(g.gateway_name) + '</td>' +
-                '<td>' + escHtml(g.ip) + '</td>' +
-                '<td>' + g.port + '</td>' +
-                '<td>' + escHtml(g.gateway_sn || '--') + '</td>' +
-                '<td>' + statusHtml + '</td>' +
-                '<td>' + formatTime(g.last_heartbeat_at_ms) + '</td>' +
-              '</tr>';
-            }).join('') +
-          '</tbody>' +
-        '</table></div>' +
-      '</div>';
-
-      // 采集执行器表
-      html += '<div class="table-section">' +
+      var html = '<div class="table-section">' +
         '<div class="table-header">' +
-          '<h3>采集执行器 / 功能点</h3>' +
+          '<h3>农户列表</h3>' +
           '<div class="table-header-right">' +
-            '<input class="table-search" id="collector-search" type="text" placeholder="搜索棚号/设备...">' +
-            '<span class="table-count">共 ' + collectors.length + ' 个</span>' +
+            '<input class="table-search" id="user-search" type="text" placeholder="搜索姓名/手机号/微信OpenID...">' +
+            '<span class="table-count">共 ' + farmers.length + ' 户</span>' +
           '</div>' +
         '</div>' +
         '<div class="table-wrap"><table>' +
-          '<thead><tr><th>ID</th><th>云边设备</th><th>棚号</th><th>频点</th><th>设备ID</th><th>功能</th><th>实时值</th><th>单位</th><th>状态</th><th>更新时间</th></tr></thead>' +
-          '<tbody id="collector-tbody">' +
-            collectors.map(function (c) {
-              var statusClass = 'status-dot-' + (c.status === 'normal' || c.status === 'on' ? 'normal' : c.status === 'offline' ? 'offline' : 'warning');
+          '<thead><tr><th>ID</th><th>姓名</th><th>手机号</th><th>地址</th><th>微信OpenID</th><th>绑定设备</th><th>状态</th><th>创建时间</th><th>操作</th></tr></thead>' +
+          '<tbody id="user-tbody">' +
+            farmers.map(function (u) {
+              var statusBadge = u.status === 1 ? 'badge-success' : u.status === 2 ? 'badge-warning' : 'badge-muted';
               return '<tr>' +
-                '<td>' + c.de_re_id + '</td>' +
-                '<td>' + escHtml(c.gateway_name) + '</td>' +
-                '<td>' + escHtml(c.shed_no) + '</td>' +
-                '<td>' + c.freq + '</td>' +
-                '<td>' + c.devid + '</td>' +
-                '<td>' + escHtml(c.func_name) + '</td>' +
-                '<td>' + (c.real_value != null ? c.real_value : '--') + '</td>' +
-                '<td>' + escHtml(c.unit) + '</td>' +
-                '<td><span class="status-dot ' + statusClass + '"></span>' + escHtml(c.status_label) + '</td>' +
-                '<td>' + formatTime(c.updated_at) + '</td>' +
+                '<td>' + u.user_id + '</td>' +
+                '<td>' + escHtml(u.display_name) + '</td>' +
+                '<td>' + escHtml(u.mobile || '--') + '</td>' +
+                '<td>' + escHtml(u.address || '--') + '</td>' +
+                '<td><span style="font-size:11px;word-break:break-all">' + escHtml(u.wechat_openid || '--') + '</span></td>' +
+                '<td>' + (u.binding_count || 0) + ' 台</td>' +
+                '<td><span class="badge ' + statusBadge + '">' + escHtml(u.status_label || '正常') + '</span></td>' +
+                '<td>' + formatTime(u.created_at) + '</td>' +
+                '<td><button class="btn btn-outline btn-sm" onclick="goFarmerDetail(\'' + u.user_id + '\')">详情</button></td>' +
               '</tr>';
             }).join('') +
           '</tbody>' +
@@ -433,11 +272,429 @@
 
       container.innerHTML = html;
 
-      $('#collector-search').oninput = function () {
-        var q = this.value.toLowerCase();
-        $$('#collector-tbody tr').forEach(function (tr) {
-          tr.style.display = tr.textContent.toLowerCase().includes(q) ? '' : 'none';
+      // 搜索：优先通过后端 keyword 参数搜索，降级为前端过滤
+      var searchTimer = null;
+      $('#user-search').oninput = function () {
+        var q = this.value.trim();
+        clearTimeout(searchTimer);
+        searchTimer = setTimeout(function () {
+          if (q) {
+            // 优先使用后端搜索
+            searchFarmers(q);
+          } else {
+            // 空关键词：重新加载全部
+            renderPage();
+          }
+        }, 400);
+      };
+
+      // 存储当前 farmer 列表以便搜索降级
+      container._farmers = farmers;
+    } catch (e) {
+      container.innerHTML = '<div class="error-state"><p>加载失败</p><button class="btn btn-outline btn-sm" onclick="renderPage()">重试</button></div>';
+    }
+  }
+
+  async function searchFarmers(keyword) {
+    var tbody = $('#user-tbody');
+    if (!tbody) return;
+    tbody.innerHTML = '<tr><td colspan="9" class="table-empty">搜索中...</td></tr>';
+    try {
+      var res = await MockAPI.getFarmers(keyword);
+      if (res.data && res.data.length > 0) {
+        renderFarmerTableBody(res.data);
+      } else if (res.data && res.data.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="9" class="table-empty">未找到匹配的农户</td></tr>';
+      } else {
+        // fallback：前端过滤
+        var container = $('#main-content');
+        var farmers = container._farmers || [];
+        var kw = keyword.toLowerCase();
+        var filtered = farmers.filter(function (u) {
+          return (u.display_name && u.display_name.toLowerCase().includes(kw)) ||
+                 (u.mobile && u.mobile.toLowerCase().includes(kw)) ||
+                 (u.wechat_openid && u.wechat_openid.toLowerCase().includes(kw));
         });
+        renderFarmerTableBody(filtered);
+      }
+    } catch (e) {
+      // 降级前端过滤
+      var container = $('#main-content');
+      var farmers = container._farmers || [];
+      var kw = keyword.toLowerCase();
+      var filtered = farmers.filter(function (u) {
+        return (u.display_name && u.display_name.toLowerCase().includes(kw)) ||
+               (u.mobile && u.mobile.toLowerCase().includes(kw)) ||
+               (u.wechat_openid && u.wechat_openid.toLowerCase().includes(kw));
+      });
+      renderFarmerTableBody(filtered);
+    }
+  }
+
+  function renderFarmerTableBody(farmers) {
+    var tbody = $('#user-tbody');
+    if (!tbody) return;
+    if (farmers.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="9" class="table-empty">未找到匹配的农户</td></tr>';
+      return;
+    }
+    tbody.innerHTML = farmers.map(function (u) {
+      var statusBadge = u.status === 1 ? 'badge-success' : u.status === 2 ? 'badge-warning' : 'badge-muted';
+      return '<tr>' +
+        '<td>' + u.user_id + '</td>' +
+        '<td>' + escHtml(u.display_name) + '</td>' +
+        '<td>' + escHtml(u.mobile || '--') + '</td>' +
+        '<td>' + escHtml(u.address || '--') + '</td>' +
+        '<td><span style="font-size:11px;word-break:break-all">' + escHtml(u.wechat_openid || '--') + '</span></td>' +
+        '<td>' + (u.binding_count || 0) + ' 台</td>' +
+        '<td><span class="badge ' + statusBadge + '">' + escHtml(u.status_label || '正常') + '</span></td>' +
+        '<td>' + formatTime(u.created_at) + '</td>' +
+        '<td><button class="btn btn-outline btn-sm" onclick="goFarmerDetail(\'' + u.user_id + '\')">详情</button></td>' +
+      '</tr>';
+    }).join('');
+  }
+
+  // ---------- 农户详情页 ----------
+  async function renderFarmerDetail(container) {
+    var userId = getHashParam('user_id');
+    if (!userId) { container.innerHTML = '<div class="error-state"><p>参数错误</p></div>'; return; }
+
+    container.innerHTML = '<div class="loading-state"><div class="loading-spinner"></div><p>加载中...</p></div>';
+
+    try {
+      var farmerRes, bindingsRes;
+      await Promise.all([
+        MockAPI.getFarmerDetail(userId),
+        MockAPI.getFarmerBindings(userId)
+      ]).then(function (results) {
+        farmerRes = results[0];
+        bindingsRes = results[1];
+      });
+
+      var farmer = farmerRes.data;
+      var bindings = bindingsRes.data || [];
+
+      if (!farmer) {
+        container.innerHTML = '<div class="error-state"><p>农户不存在</p></div>';
+        return;
+      }
+
+      var html = '<div class="page-header">' +
+        '<button class="btn btn-outline btn-sm" onclick="navigate(\'users\')">← 返回用户列表</button>' +
+        '<h2>农户详情</h2>' +
+      '</div>' +
+      '<div class="info-card">' +
+        '<h3>基本信息</h3>' +
+        '<div class="info-grid">' +
+          '<div class="info-item"><label>姓名</label><span>' + escHtml(farmer.display_name) + '</span></div>' +
+          '<div class="info-item"><label>手机号</label><span>' + escHtml(farmer.mobile || '--') + '</span></div>' +
+          '<div class="info-item"><label>地址</label><span>' + escHtml(farmer.address || '--') + '</span></div>' +
+          '<div class="info-item"><label>微信OpenID</label><span>' + escHtml(farmer.wechat_openid || '--') + '</span></div>' +
+          '<div class="info-item"><label>备注</label><span>' + escHtml(farmer.remark || '--') + '</span></div>' +
+          '<div class="info-item"><label>状态</label><span class="badge badge-success">' + escHtml(farmer.status_label || '正常') + '</span></div>' +
+          '<div class="info-item"><label>创建时间</label><span>' + formatTime(farmer.created_at) + '</span></div>' +
+        '</div>' +
+      '</div>';
+
+      // 已绑定设备列表
+      html += '<div class="table-section">' +
+        '<div class="table-header">' +
+          '<h3>已绑定设备 (' + bindings.length + ')</h3>' +
+          '<button class="btn btn-primary btn-sm" id="btn-bind-device" onclick="openBindDeviceModal(\'' + userId + '\')">+ 绑定设备</button>' +
+        '</div>' +
+        '<div class="table-wrap"><table><thead><tr>' +
+          '<th>设备名称</th><th>棚号</th><th>云边设备</th><th>频点</th><th>功能</th><th>实时值</th><th>状态</th><th>绑定时间</th>' +
+        '</tr></thead><tbody>';
+
+      bindings.forEach(function (b) {
+        var col = b.collector || {};
+        html += '<tr>' +
+          '<td>' + escHtml(col.func_name || b.point_name || '--') + '</td>' +
+          '<td>' + escHtml(b.shed_no || '--') + '</td>' +
+          '<td>' + escHtml(col.gateway_name || b.gateway_name || '--') + '</td>' +
+          '<td>' + (b.freq || '--') + '</td>' +
+          '<td>' + escHtml(col.func_name || b.function_name || '--') + '</td>' +
+          '<td>' + (col.real_value != null ? col.real_value + ' ' + (col.unit || '') : '--') + '</td>' +
+          '<td>' + escHtml(col.status_label || b.status_label || '--') + '</td>' +
+          '<td>' + formatTime(b.created_at) + '</td>' +
+        '</tr>';
+      });
+
+      html += '</tbody></table></div></div>';
+
+      if (bindings.length === 0) {
+        html += '<div class="empty-state"><p>暂无绑定设备</p><p style="font-size:12px;color:var(--color-text-muted)">点击"绑定设备"为该农户添加设备</p></div>';
+      }
+
+      container.innerHTML = html;
+    } catch (e) {
+      container.innerHTML = '<div class="error-state"><p>加载失败</p><button class="btn btn-outline btn-sm" onclick="renderPage()">重试</button></div>';
+    }
+  }
+
+  // ---------- 绑定设备弹窗（农户详情页） ----------
+  async function openBindDeviceModal(userId) {
+    var overlay = $('#modal-overlay');
+    overlay.style.display = 'flex';
+    overlay.innerHTML = '<div class="modal" style="max-width:640px">' +
+      '<div class="modal-header">' +
+        '<h3>绑定设备</h3>' +
+        '<button class="modal-close" onclick="closeModal()">×</button>' +
+      '</div>' +
+      '<div class="modal-body">' +
+        '<div class="form-group">' +
+          '<label class="form-label">搜索设备</label>' +
+          '<input type="text" class="form-input" id="bind-device-search" placeholder="输入设备名称/棚号/云边设备名/功能类型...">' +
+        '</div>' +
+        '<div id="bind-device-list" style="max-height:360px;overflow-y:auto;margin-top:12px">' +
+          '<div class="loading-state"><div class="loading-spinner"></div><p>搜索设备中...</p></div>' +
+        '</div>' +
+        '<div id="bind-device-selected" style="display:none;margin-top:12px;padding:10px;background:var(--color-bg);border-radius:6px">' +
+          '<span style="font-size:13px;color:var(--color-text-muted)">已选择：</span>' +
+          '<span id="bind-selected-name" style="font-weight:600"></span>' +
+        '</div>' +
+      '</div>' +
+      '<div class="modal-actions">' +
+        '<button class="btn btn-outline" onclick="closeModal()">取消</button>' +
+        '<button class="btn btn-primary" id="btn-confirm-bind" disabled onclick="doBindDevice(\'' + userId + '\')">确认绑定</button>' +
+      '</div>' +
+    '</div>';
+
+    var selectedPointId = null;
+
+    // 初始加载：搜索全部未绑定设备
+    loadDevicePoints('');
+
+    // 防抖搜索
+    var searchTimer = null;
+    $('#bind-device-search').oninput = function () {
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(function () {
+        loadDevicePoints($('#bind-device-search').value);
+      }, 300);
+    };
+
+    async function loadDevicePoints(keyword) {
+      try {
+        var res = await MockAPI.searchDevicePoints(keyword, 'unbound');
+        var points = res.data || [];
+        var listEl = $('#bind-device-list');
+
+        if (points.length === 0) {
+          listEl.innerHTML = '<div class="empty-state"><p>没有可绑定的设备</p></div>';
+          return;
+        }
+
+        var html = '';
+        points.forEach(function (p) {
+          var isSelected = selectedPointId === p.point_id;
+          html += '<div class="bind-point-item' + (isSelected ? ' selected' : '') + '" data-point-id="' + p.point_id + '" data-freq="' + (p.frequency || '') + '" data-gateway-name="' + escHtml(p.gateway_name || '') + '" style="padding:10px 12px;border:1px solid ' + (isSelected ? 'var(--color-primary)' : 'var(--color-border)') + ';border-radius:6px;margin-bottom:8px;cursor:pointer;transition:all 0.2s">' +
+            '<div style="display:flex;justify-content:space-between;align-items:center">' +
+              '<div>' +
+                '<span style="font-weight:600">' + escHtml(p.function_name) + '</span>' +
+                '<span style="color:var(--color-text-muted);margin-left:8px;font-size:13px">频点' + p.frequency + ' · DevID:' + escHtml(p.device_external_id) + '</span>' +
+              '</div>' +
+              '<span style="font-size:12px;color:var(--color-text-muted)">' + escHtml(p.gateway_name) + '</span>' +
+            '</div>' +
+            '<div style="font-size:12px;color:var(--color-text-muted);margin-top:4px">' +
+              escHtml(p.shed_no || '--') + ' · ' + escHtml(p.point_name || '--') +
+              (p.is_bound ? '<span class="badge" style="margin-left:8px">已绑定: ' + escHtml(p.bind_user_name) + '</span>' : '<span class="badge badge-success" style="margin-left:8px">未绑定</span>') +
+            '</div>' +
+          '</div>';
+        });
+
+        listEl.innerHTML = html;
+
+        // 点击选中
+        listEl.querySelectorAll('.bind-point-item').forEach(function (el) {
+          el.onclick = function () {
+            selectedPointId = this.dataset.pointId;
+            // 高亮选中项
+            listEl.querySelectorAll('.bind-point-item').forEach(function (e) {
+              e.classList.remove('selected');
+              e.style.borderColor = 'var(--color-border)';
+            });
+            this.classList.add('selected');
+            this.style.borderColor = 'var(--color-primary)';
+
+            // 显示已选择
+            var selDiv = $('#bind-device-selected');
+            selDiv.style.display = 'block';
+            var selName = this.querySelector('span').textContent;
+            $('#bind-selected-name').textContent = selName + ' · 频点' + (this.dataset.freq || '') + ' · ' + (this.dataset.gatewayName || '');
+
+            $('#btn-confirm-bind').disabled = false;
+          };
+        });
+      } catch (e) {
+        $('#bind-device-list').innerHTML = '<div class="error-state"><p>加载失败</p></div>';
+      }
+    }
+  }
+
+  // ---------- 编辑农户 Modal ----------
+  function openEditFarmerModal(userId) {
+    var overlay = $('#modal-overlay');
+    overlay.style.display = 'flex';
+    overlay.innerHTML =
+      '<div class="modal">' +
+        '<h3>编辑农户信息</h3>' +
+        '<div class="form-group" style="display:none"><label class="form-label">用户 ID</label><input class="form-input" id="edit-farmer-id" type="number" readonly></div>' +
+        '<div class="form-group"><label class="form-label">姓名</label><input class="form-input" id="edit-farmer-name" placeholder="请输入姓名"></div>' +
+        '<div class="form-group"><label class="form-label">手机号</label><input class="form-input" id="edit-farmer-mobile" placeholder="请输入手机号"></div>' +
+        '<div class="form-group"><label class="form-label">地址</label><input class="form-input" id="edit-farmer-address" placeholder="请输入地址"></div>' +
+        '<div class="form-group"><label class="form-label">备注</label><input class="form-input" id="edit-farmer-remark" placeholder="请输入备注"></div>' +
+        '<div class="form-group"><label class="form-label">状态</label><select class="form-select" id="edit-farmer-status"><option value="1">正常</option><option value="2">已禁用</option></select></div>' +
+        '<div class="modal-actions">' +
+          '<button class="btn btn-outline btn-sm" onclick="closeModal()">取消</button>' +
+          '<button class="btn btn-primary btn-sm" onclick="doUpdateFarmer()">保存</button>' +
+        '</div>' +
+      '</div>';
+
+    // 加载农户详情
+    (async function () {
+      try {
+        var res = await MockAPI.getFarmerDetail(userId);
+        if (res.data) {
+          $('#edit-farmer-id').value = res.data.user_id;
+          $('#edit-farmer-name').value = res.data.display_name || '';
+          $('#edit-farmer-mobile').value = res.data.mobile || '';
+          $('#edit-farmer-address').value = res.data.address || '';
+          $('#edit-farmer-remark').value = res.data.remark || '';
+          $('#edit-farmer-status').value = res.data.status || 1;
+        } else {
+          showToast('加载农户详情失败', 'error');
+        }
+      } catch (e) {
+        showToast('加载农户详情失败', 'error');
+      }
+    })();
+  }
+
+  async function doUpdateFarmer() {
+    var userId = parseInt($('#edit-farmer-id').value);
+    if (!userId) { showToast('用户 ID 无效', 'error'); return; }
+
+    var data = {
+      display_name: $('#edit-farmer-name').value.trim(),
+      mobile: $('#edit-farmer-mobile').value.trim(),
+      address: $('#edit-farmer-address').value.trim(),
+      remark: $('#edit-farmer-remark').value.trim(),
+      status: parseInt($('#edit-farmer-status').value),
+    };
+
+    if (!data.display_name) { showToast('请输入姓名', 'error'); return; }
+
+    try {
+      var res = await MockAPI.updateFarmer(userId, data);
+      if (res.data) {
+        showToast('保存成功', 'success');
+        closeModal();
+        renderPage();
+      } else {
+        showToast(res.message || '保存失败', 'error');
+      }
+    } catch (e) {
+      showToast('操作异常', 'error');
+    }
+  }
+
+  // ---------- 设备管理 ----------
+  async function renderGateways(container) {
+    container.innerHTML = '<div class="loading-state"><div class="loading-spinner"></div><p>加载设备信息...</p></div>';
+    try {
+      var gwRes, treeRes;
+      await Promise.all([
+        MockAPI.getGateways(),
+        MockAPI.getDeviceTree()
+      ]).then(function (results) {
+        gwRes = results[0];
+        treeRes = results[1];
+      });
+
+      var gateways = (gwRes.data && gwRes.data.items) ? gwRes.data.items : [];
+      var tree = treeRes.data || [];
+
+      var html = '<div class="table-section">' +
+        '<div class="table-header"><h3>云边设备 (' + gateways.length + ')</h3></div>' +
+        '<div class="table-wrap"><table><thead><tr>' +
+          '<th>ID</th><th>名称</th><th>IP</th><th>端口</th><th>在线状态</th>' +
+        '</tr></thead><tbody>';
+
+      gateways.forEach(function (g) {
+        html += '<tr>' +
+          '<td>' + g.id + '</td>' +
+          '<td>' + escHtml(g.dev_name || g.gateway_name) + '</td>' +
+          '<td>' + escHtml(g.ip) + '</td>' +
+          '<td>' + g.port + '</td>' +
+          '<td><span class="badge ' + (g.online ? 'badge-success' : '') + '">' + (g.online ? '在线' : '离线') + '</span></td>' +
+        '</tr>';
+      });
+
+      html += '</tbody></table></div></div>';
+
+      // 功能点列表
+      html += '<div class="table-section" style="margin-top:24px">' +
+        '<div class="table-header">' +
+          '<h3>功能点列表</h3>' +
+          '<input class="table-search" id="device-point-search" type="text" placeholder="搜索功能点..." style="width:240px">' +
+        '</div>' +
+        '<div class="table-wrap"><table><thead><tr>' +
+          '<th>Point ID</th><th>设备名称</th><th>云边设备</th><th>棚号</th><th>频点</th><th>DevID</th><th>功能</th><th>备注</th>' +
+        '</tr></thead><tbody id="device-points-tbody"></tbody></table></div></div>';
+
+      container.innerHTML = html;
+
+      // 从 tree 展开所有 point
+      var allPoints = [];
+      tree.forEach(function (gw) {
+        (gw.collectors || []).forEach(function (cl) {
+          (cl.points || []).forEach(function (pt) {
+            allPoints.push({
+              point_id: pt.point_id,
+              display_name: pt.display_name || pt.point_name || '--',
+              gateway_name: gw.gateway_name,
+              shed_no: pt.shed_no || cl.shed_no || '--',
+              frequency: cl.frequency,
+              device_external_id: cl.device_external_id,
+              function_type: pt.function_type,
+              function_name: pt.function_name || '--',
+              remark: pt.remark || '--'
+            });
+          });
+        });
+      });
+
+      function renderPointsTable(filter) {
+        var tbody = $('#device-points-tbody');
+        if (!tbody) return;
+
+        var filtered = allPoints;
+        if (filter) {
+          var kw = filter.toLowerCase();
+          filtered = allPoints.filter(function (p) {
+            return (p.display_name + ' ' + p.gateway_name + ' ' + p.shed_no + ' ' + p.frequency + ' ' + p.device_external_id + ' ' + p.function_name).toLowerCase().indexOf(kw) !== -1;
+          });
+        }
+
+        tbody.innerHTML = filtered.map(function (p) {
+          return '<tr>' +
+            '<td style="font-family:monospace;font-size:12px">' + escHtml(String(p.point_id)) + '</td>' +
+            '<td>' + escHtml(p.display_name) + '</td>' +
+            '<td>' + escHtml(p.gateway_name) + '</td>' +
+            '<td>' + escHtml(p.shed_no) + '</td>' +
+            '<td>' + p.frequency + '</td>' +
+            '<td>' + escHtml(p.device_external_id) + '</td>' +
+            '<td>' + escHtml(p.function_name) + '</td>' +
+            '<td>' + escHtml(p.remark) + '</td>' +
+          '</tr>';
+        }).join('');
+      }
+
+      renderPointsTable('');
+
+      $('#device-point-search').oninput = function () {
+        renderPointsTable(this.value);
       };
     } catch (e) {
       container.innerHTML = '<div class="error-state"><p>加载失败</p><button class="btn btn-outline btn-sm" onclick="renderPage()">重试</button></div>';
@@ -445,6 +702,7 @@
   }
 
   // ---------- 绑定管理 ----------
+
   async function renderBindings(container) {
     container.innerHTML = '<div class="loading-state"><div class="loading-spinner"></div><p>加载绑定关系...</p></div>';
     try {
@@ -452,84 +710,213 @@
       if (!res.data) { container.innerHTML = '<div class="error-state"><p>加载失败</p><button class="btn btn-outline btn-sm" onclick="renderPage()">重试</button></div>'; return; }
       var bindings = res.data;
 
+      // 筛选器
       var html = '<div class="table-section">' +
         '<div class="table-header">' +
-          '<h3>绑定关系</h3>' +
+          '<h3>绑定管理</h3>' +
           '<div class="table-header-right">' +
-            '<button class="btn btn-primary btn-sm" onclick="openAddBindingModal()">+ 新增绑定</button>' +
+            '<button class="btn btn-primary btn-sm" onclick="openBindingAddModal()">+ 新增绑定</button>' +
             '<span class="table-count">共 ' + bindings.length + ' 条</span>' +
           '</div>' +
         '</div>' +
-        '<div class="table-wrap"><table>' +
-          '<thead><tr><th>ID</th><th>农户</th><th>云边设备ID</th><th>棚号</th><th>频点</th><th>设备ID</th><th>功能</th><th>操作</th></tr></thead>' +
-          '<tbody>' +
-            bindings.map(function (b) {
-              var funcName = b.collector ? b.collector.func_name : ('功能' + b.func);
-              return '<tr>' +
-                '<td>' + b.bind_id + '</td>' +
-                '<td>' + escHtml(b.bind_usr_name) + '</td>' +
-                '<td>' + b.gateway_id + '</td>' +
-                '<td>' + escHtml(b.shed_no) + '</td>' +
-                '<td>' + b.freq + '</td>' +
-                '<td>' + b.devid + '</td>' +
-                '<td>' + escHtml(funcName) + '</td>' +
-                '<td><button class="btn btn-danger btn-sm" onclick="doRemoveBinding(' + b.bind_id + ')">解绑</button></td>' +
-              '</tr>';
-            }).join('') +
-          '</tbody>' +
-        '</table></div>' +
-      '</div>';
+        '<div class="filter-bar" style="display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap">' +
+          '<input type="text" class="table-search" id="bind-filter-farmer" placeholder="按农户筛选..." style="width:200px">' +
+          '<input type="text" class="table-search" id="bind-filter-device" placeholder="按设备筛选..." style="width:200px">' +
+          '<select class="form-input" id="bind-filter-status" style="width:140px">' +
+            '<option value="">全部状态</option>' +
+            '<option value="active">有效</option>' +
+            '<option value="unbound">已解绑</option>' +
+          '</select>' +
+        '</div>' +
+        '<div class="table-wrap"><table><thead><tr>' +
+          '<th>绑定ID</th><th>农户</th><th>设备点</th><th>功能</th><th>状态</th><th>绑定时间</th><th>操作</th>' +
+        '</tr></thead><tbody id="bindings-tbody">' +
+        '</tbody></table></div></div>';
 
       container.innerHTML = html;
+
+      // 渲染表格 + 筛选逻辑
+      function renderBindingsTable(filterFarmer, filterDevice, filterStatus) {
+        var tbody = $('#bindings-tbody');
+        if (!tbody) return;
+
+        var filtered = bindings.filter(function (b) {
+          if (filterFarmer && (b.bind_user_name || b.bind_usr_name || '').toLowerCase().indexOf(filterFarmer.toLowerCase()) === -1) return false;
+          var col = b.collector || {};
+          var deviceStr = (col.func_name || ('功能' + b.func)) + ' ' + (b.shed_no || '') + ' ' + b.freq + ' ' + b.devid;
+          if (filterDevice && deviceStr.toLowerCase().indexOf(filterDevice.toLowerCase()) === -1) return false;
+          if (filterStatus === 'active' && b.bind_status !== undefined && b.bind_status !== 1) return false;
+          if (filterStatus === 'unbound' && b.bind_status !== undefined && b.bind_status !== 0 && b.bind_status !== 2) return false;
+          return true;
+        });
+
+        tbody.innerHTML = filtered.map(function (b) {
+          var col = b.collector || {};
+          var funcName = col.func_name || ('功能' + b.func);
+          var statusLabel = b.bind_status === 1 ? '<span class="badge badge-success">有效</span>' : '<span class="badge">已解绑</span>';
+          return '<tr>' +
+            '<td>' + b.bind_id + '</td>' +
+            '<td>' + escHtml(b.bind_user_name || b.bind_usr_name || '--') + '</td>' +
+            '<td>' + escHtml(funcName) + ' · ' + escHtml(b.shed_no || '--') + ' · 频点' + b.freq + '</td>' +
+            '<td>' + escHtml(funcName) + '</td>' +
+            '<td>' + statusLabel + '</td>' +
+            '<td>' + formatTime(b.created_at) + '</td>' +
+            '<td><button class="btn btn-danger btn-sm" onclick="doRemoveBinding(' + b.bind_id + ')">解绑</button></td>' +
+          '</tr>';
+        }).join('');
+      }
+
+      renderBindingsTable('', '', '');
+
+      // 筛选事件
+      $('#bind-filter-farmer').oninput = function () {
+        renderBindingsTable(this.value, $('#bind-filter-device').value, $('#bind-filter-status').value);
+      };
+      $('#bind-filter-device').oninput = function () {
+        renderBindingsTable($('#bind-filter-farmer').value, this.value, $('#bind-filter-status').value);
+      };
+      $('#bind-filter-status').onchange = function () {
+        renderBindingsTable($('#bind-filter-farmer').value, $('#bind-filter-device').value, this.value);
+      };
     } catch (e) {
       container.innerHTML = '<div class="error-state"><p>加载失败</p><button class="btn btn-outline btn-sm" onclick="renderPage()">重试</button></div>';
     }
-  }
-
-  function openAddBindingModal() {
-    var overlay = $('#modal-overlay');
-    overlay.style.display = 'flex';
-    overlay.innerHTML =
-      '<div class="modal">' +
-        '<h3>新增绑定</h3>' +
-        '<div class="form-group"><label class="form-label">农户名称</label><input class="form-input" id="bind-usr-name" placeholder="请输入农户名称" value="新农户"></div>' +
-        '<div class="form-row">' +
-          '<div class="form-group"><label class="form-label">云边设备 ID</label><input class="form-input" id="bind-gateway-id" type="number" placeholder="1" value="1"></div>' +
-          '<div class="form-group"><label class="form-label">用户 ID</label><input class="form-input" id="bind-user-id" type="number" placeholder="3" value="3"></div>' +
-        '</div>' +
-        '<div class="form-row">' +
-          '<div class="form-group"><label class="form-label">频点</label><input class="form-input" id="bind-freq" type="number" placeholder="1" value="1"></div>' +
-          '<div class="form-group"><label class="form-label">设备 ID</label><input class="form-input" id="bind-devid" type="number" placeholder="1001" value="1001"></div>' +
-        '</div>' +
-        '<div class="form-row">' +
-          '<div class="form-group"><label class="form-label">功能类型</label><select class="form-select" id="bind-func"><option value="1">温度</option><option value="2">墒情</option><option value="3">限位</option><option value="4">水泵</option><option value="5">风机</option><option value="6">继电器</option></select></div>' +
-          '<div class="form-group"><label class="form-label">棚号</label><input class="form-input" id="bind-shed" placeholder="棚号" value="新棚-01"></div>' +
-        '</div>' +
-        '<div class="modal-actions">' +
-          '<button class="btn btn-outline btn-sm" onclick="closeModal()">取消</button>' +
-          '<button class="btn btn-primary btn-sm" onclick="doAddBinding()">确认绑定</button>' +
-        '</div>' +
-      '</div>';
   }
 
   function closeModal() {
     $('#modal-overlay').style.display = 'none';
   }
 
-  async function doAddBinding() {
-    var data = {
-      bind_usr_name: $('#bind-usr-name').value.trim(),
-      gateway_id: parseInt($('#bind-gateway-id').value) || 1,
-      user_id: parseInt($('#bind-user-id').value) || 3,
-      freq: parseInt($('#bind-freq').value) || 1,
-      devid: parseInt($('#bind-devid').value) || 1001,
-      func: parseInt($('#bind-func').value) || 1,
-      shed_no: $('#bind-shed').value.trim(),
-    };
-    if (!data.bind_usr_name) { showToast('请输入农户名称', 'error'); return; }
+  async function doBindDevice(userId) {
+    // 从 DOM 获取选中的 point_id
+    var selectedEl = document.querySelector('.bind-point-item.selected');
+    if (!selectedEl) { showToast('请选择一个设备', 'error'); return; }
+    var pointId = selectedEl.dataset.pointId;
 
     try {
-      var res = await MockAPI.addBinding(data);
+      var res = await MockAPI.addBinding({ user_id: userId, point_id: pointId });
+      if (res.code === 409) {
+        // 冲突提示
+        var existingName = (res.data && res.data.existing_user_name) || '其他农户';
+        showToast('该设备已绑定给「' + existingName + '」', 'error');
+        return;
+      }
+      if (res.data) {
+        showToast('绑定成功', 'success');
+        closeModal();
+        // 刷新详情页
+        renderPage();
+      } else {
+        showToast(res.message || '绑定失败', 'error');
+      }
+    } catch (e) {
+      showToast('操作异常', 'error');
+    }
+  }
+
+  // ---------- 绑定管理页 - 新增绑定弹窗 ----------
+  async function openBindingAddModal() {
+    var overlay = $('#modal-overlay');
+    overlay.style.display = 'flex';
+
+    overlay.innerHTML = '<div class="modal" style="max-width:640px">' +
+      '<div class="modal-header">' +
+        '<h3>新增绑定</h3>' +
+        '<button class="modal-close" onclick="closeModal()">×</button>' +
+      '</div>' +
+      '<div class="modal-body">' +
+        '<div class="form-group">' +
+          '<label class="form-label">选择农户</label>' +
+          '<select class="form-input" id="bind-add-farmer"><option value="">-- 请选择农户 --</option></select>' +
+        '</div>' +
+        '<div class="form-group">' +
+          '<label class="form-label">搜索设备</label>' +
+          '<input type="text" class="form-input" id="bind-add-device-search" placeholder="输入关键词搜索设备点...">' +
+        '</div>' +
+        '<div id="bind-add-device-list" style="max-height:300px;overflow-y:auto;margin-top:12px">' +
+          '<p style="color:var(--color-text-muted);font-size:13px;text-align:center;padding:20px">输入关键词搜索设备</p>' +
+        '</div>' +
+      '</div>' +
+      '<div class="modal-actions">' +
+        '<button class="btn btn-outline" onclick="closeModal()">取消</button>' +
+        '<button class="btn btn-primary" id="btn-confirm-binding-add" disabled onclick="doBindFromAddModal()">确认绑定</button>' +
+      '</div>' +
+    '</div>';
+
+    // 加载农户列表
+    try {
+      var farmersRes = await MockAPI.getFarmers();
+      var farmers = farmersRes.data || [];
+      var select = $('#bind-add-farmer');
+      farmers.forEach(function (f) {
+        var opt = document.createElement('option');
+        opt.value = f.user_id;
+        opt.textContent = f.display_name + ' (' + (f.mobile || '--') + ')';
+        select.appendChild(opt);
+      });
+    } catch (e) {}
+
+    var addSelectedPointId = null;
+
+    // 搜索防抖
+    var searchTimer = null;
+    $('#bind-add-device-search').oninput = function () {
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(function () {
+        searchPointsForAdd($('#bind-add-device-search').value);
+      }, 300);
+    };
+
+    async function searchPointsForAdd(keyword) {
+      try {
+        var res = await MockAPI.searchDevicePoints(keyword, 'unbound');
+        var points = res.data || [];
+        var listEl = $('#bind-add-device-list');
+
+        if (points.length === 0) {
+          listEl.innerHTML = '<div class="empty-state"><p>没有匹配的设备</p></div>';
+          return;
+        }
+
+        listEl.innerHTML = points.map(function (p) {
+          var isSelected = addSelectedPointId === p.point_id;
+          return '<div class="bind-point-item' + (isSelected ? ' selected' : '') + '" data-point-id="' + p.point_id + '" style="padding:10px 12px;border:1px solid ' + (isSelected ? 'var(--color-primary)' : 'var(--color-border)') + ';border-radius:6px;margin-bottom:8px;cursor:pointer">' +
+            '<div style="font-weight:600">' + escHtml(p.function_name) + ' · 频点' + p.frequency + ' · DevID:' + escHtml(p.device_external_id) + '</div>' +
+            '<div style="font-size:12px;color:var(--color-text-muted)">' + escHtml(p.shed_no || '--') + ' · ' + escHtml(p.gateway_name) + ' · 未绑定</div>' +
+          '</div>';
+        }).join('');
+
+        listEl.querySelectorAll('.bind-point-item').forEach(function (el) {
+          el.onclick = function () {
+            addSelectedPointId = this.dataset.pointId;
+            listEl.querySelectorAll('.bind-point-item').forEach(function (e) {
+              e.classList.remove('selected');
+              e.style.borderColor = 'var(--color-border)';
+            });
+            this.classList.add('selected');
+            this.style.borderColor = 'var(--color-primary)';
+            $('#btn-confirm-binding-add').disabled = false;
+          };
+        });
+      } catch (e) {
+        $('#bind-add-device-list').innerHTML = '<div class="error-state"><p>搜索失败</p></div>';
+      }
+    }
+  }
+
+  async function doBindFromAddModal() {
+    var userId = $('#bind-add-farmer').value;
+    var selectedEl = document.querySelector('#bind-add-device-list .bind-point-item.selected');
+    if (!userId) { showToast('请选择农户', 'error'); return; }
+    if (!selectedEl) { showToast('请选择一个设备', 'error'); return; }
+    var pointId = selectedEl.dataset.pointId;
+
+    try {
+      var res = await MockAPI.addBinding({ user_id: userId, point_id: pointId });
+      if (res.code === 409) {
+        showToast('该设备已绑定给「' + ((res.data && res.data.existing_user_name) || '其他农户') + '」', 'error');
+        return;
+      }
       if (res.data) {
         showToast('绑定成功', 'success');
         closeModal();
@@ -630,7 +1017,7 @@
 
   window.addEventListener('hashchange', renderPage);
   window.addEventListener('load', function () {
-    var token = localStorage.getItem('admin_token');
+    var token = localStorage.getItem('nh_admin_token');
     var userJson = localStorage.getItem('admin_user');
     if (token && userJson) {
       try {
@@ -649,13 +1036,17 @@
   });
 
   // 暴露
-  window.dashboardSetRange = dashboardSetRange;
   window.navigate = navigate;
   window.renderPage = renderPage;
   window.doLogout = doLogout;
   window.doRemoveBinding = doRemoveBinding;
-  window.openAddBindingModal = openAddBindingModal;
   window.closeModal = closeModal;
-  window.doAddBinding = doAddBinding;
+  window.openEditFarmerModal = openEditFarmerModal;
+  window.doUpdateFarmer = doUpdateFarmer;
+  window.goFarmerDetail = goFarmerDetail;
+  window.openBindDeviceModal = openBindDeviceModal;
+  window.doBindDevice = doBindDevice;
+  window.openBindingAddModal = openBindingAddModal;
+  window.doBindFromAddModal = doBindFromAddModal;
 
 })();
