@@ -110,6 +110,12 @@ NEHUANG_ADAPTER_TOKEN=nehuang-adapter-dev-token
 # 管理员初始密码
 NEHUANG_ADMIN_PASSWORD=admin123
 
+# 微信小程序登录配置
+# 注意：AppSecret 只能写入服务器 .env，禁止提交到代码库或文档。
+NEHUANG_WECHAT_APPID=wx_your_mini_program_appid
+NEHUANG_WECHAT_SECRET=your_wechat_app_secret
+NEHUANG_ENABLE_MOCK_LOGIN=false
+
 # MySQL
 NEHUANG_MYSQL_USER=root
 NEHUANG_MYSQL_PASSWORD=Nehuang@2026!
@@ -218,6 +224,9 @@ go build -o nehuang-server ./cmd/server/
 
 # 重启服务
 pkill -f nehuang-server; sleep 1
+set -a
+source .env
+set +a
 nohup ./nehuang-server > server.log 2>&1 &
 
 # 验证
@@ -242,6 +251,9 @@ cd /home/work/nehuang-iot-server
 git pull origin master
 go build -o nehuang-server ./cmd/server/
 pkill -f nehuang-server; sleep 1
+set -a
+source .env
+set +a
 nohup ./nehuang-server > server.log 2>&1 &
 ```
 
@@ -263,6 +275,9 @@ tail -f /home/work/nehuang-iot-server/server.log
 pkill -f nehuang-server || true
 sleep 1
 cd /home/work/nehuang-iot-server
+set -a
+source .env
+set +a
 nohup ./nehuang-server > server.log 2>&1 &
 
 # 健康检查
