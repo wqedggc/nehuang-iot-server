@@ -19,12 +19,20 @@ import (
 type mockMiniRepo struct {
 	userByOpenID    *domain.User
 	userByOpenIDErr error
+	createdUser     *domain.User
 }
 
 func (m *mockMiniRepo) GetUserByOpenID(ctx context.Context, openid string) (*domain.User, error) {
 	return m.userByOpenID, m.userByOpenIDErr
 }
-func (m *mockMiniRepo) CreateUser(ctx context.Context, u *domain.User) error { return nil }
+func (m *mockMiniRepo) CreateUser(ctx context.Context, u *domain.User) error {
+	if u.UserID == 0 {
+		u.UserID = 99
+	}
+	m.createdUser = u
+	m.userByOpenID = u
+	return nil
+}
 func (m *mockMiniRepo) UpdateLastLogin(ctx context.Context, userID uint64, t time.Time) error {
 	return nil
 }
@@ -69,7 +77,11 @@ func TestMiniLogin_JWTContainsAudMini(t *testing.T) {
 		FarmerTokenTTL: 72 * time.Hour,
 	}
 
-	handler := &miniHandler{repo: repo, jwtCfg: jwtCfg}
+	handler := &miniHandler{
+		repo:      repo,
+		jwtCfg:    jwtCfg,
+		wechatCfg: config.WechatConfig{EnableMockLogin: true},
+	}
 
 	body := `{"mock_openid":"mock_user_001","mock_nickname":"张三农场"}`
 	req := httptest.NewRequest("POST", "/api/v1/mini/mock-login", strings.NewReader(body))
@@ -120,7 +132,11 @@ func TestMiniLogin_NewUser_JWTContainsAudMini(t *testing.T) {
 		FarmerTokenTTL: 72 * time.Hour,
 	}
 
-	handler := &miniHandler{repo: repo, jwtCfg: jwtCfg}
+	handler := &miniHandler{
+		repo:      repo,
+		jwtCfg:    jwtCfg,
+		wechatCfg: config.WechatConfig{EnableMockLogin: true},
+	}
 
 	body := `{"mock_openid":"new_user_999","mock_nickname":"新农户"}`
 	req := httptest.NewRequest("POST", "/api/v1/mini/mock-login", strings.NewReader(body))
@@ -144,5 +160,105 @@ func TestMiniLogin_NewUser_JWTContainsAudMini(t *testing.T) {
 	}
 	if claims.Aud != "mini" {
 		t.Errorf("new user mini token aud: want 'mini', got '%s'", claims.Aud)
+	}
+	if repo.createdUser == nil {
+		t.Fatal("new user login should create a farmer user")
+	}
+	if repo.createdUser.UserType != domain.UserTypeFarmer || repo.createdUser.Role != domain.RoleFarmer {
+		t.Fatalf("created user should be farmer, got user_type=%d role=%d", repo.createdUser.UserType, repo.createdUser.Role)
+	}
+}
+
+func TestMiniWechatLogin_JWTContainsAudMini(t *testing.T) {
+	displayName := "微信农户"
+	openID := "wx_openid_001"
+	repo := &mockMiniRepo{
+		userByOpenID: &domain.User{
+			UserID:       3,
+			UserType:     domain.UserTypeFarmer,
+			Role:         domain.RoleFarmer,
+			WechatOpenID: &openID,
+			DisplayName:  &displayName,
+			Status:       domain.UserStatusActive,
+		},
+	}
+
+	wechatServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Query().Get("appid"); got != "test-appid" {
+			t.Errorf("appid: want test-appid, got %q", got)
+		}
+		if got := r.URL.Query().Get("secret"); got != "test-secret" {
+			t.Errorf("secret: want test-secret, got %q", got)
+		}
+		if got := r.URL.Query().Get("js_code"); got != "wx-code-123" {
+			t.Errorf("js_code: want wx-code-123, got %q", got)
+		}
+		if got := r.URL.Query().Get("grant_type"); got != "authorization_code" {
+			t.Errorf("grant_type: want authorization_code, got %q", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"openid":"wx_openid_001","session_key":"session","unionid":"union_001"}`))
+	}))
+	defer wechatServer.Close()
+
+	oldEndpoint := wechatJscode2SessionURL
+	wechatJscode2SessionURL = wechatServer.URL
+	defer func() { wechatJscode2SessionURL = oldEndpoint }()
+
+	handler := &miniHandler{
+		repo:   repo,
+		jwtCfg: config.JWTConfig{Secret: testSecret, AdminTokenTTL: 24 * time.Hour, FarmerTokenTTL: 72 * time.Hour},
+		wechatCfg: config.WechatConfig{
+			AppID:  "test-appid",
+			Secret: "test-secret",
+		},
+	}
+
+	body := `{"code":"wx-code-123","nickname":"微信农户","avatar_url":"https://example.com/avatar.png"}`
+	req := httptest.NewRequest("POST", "/api/v1/mini/login", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.login(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("mini login: want 200, got %d, body=%s", rec.Code, rec.Body.String())
+	}
+
+	var resp map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+	data := resp["data"].(map[string]any)
+	tokenStr := data["token"].(string)
+	userID := data["user_id"].(string)
+	if userID != "3" {
+		t.Fatalf("user_id should stay string '3', got %#v", data["user_id"])
+	}
+
+	claims, err := auth.Parse(tokenStr, []byte(testSecret))
+	if err != nil {
+		t.Fatalf("failed to parse mini token: %v", err)
+	}
+	if claims.Aud != "mini" {
+		t.Errorf("mini token aud: want 'mini', got '%s'", claims.Aud)
+	}
+}
+
+func TestMiniMockLogin_DisabledByDefault(t *testing.T) {
+	handler := &miniHandler{
+		repo:   &mockMiniRepo{},
+		jwtCfg: config.JWTConfig{Secret: testSecret, AdminTokenTTL: 24 * time.Hour, FarmerTokenTTL: 72 * time.Hour},
+	}
+
+	body := `{"mock_openid":"mock_user_001","mock_nickname":"张三农场"}`
+	req := httptest.NewRequest("POST", "/api/v1/mini/mock-login", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.mockLogin(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("disabled mock-login: want 404, got %d, body=%s", rec.Code, rec.Body.String())
 	}
 }

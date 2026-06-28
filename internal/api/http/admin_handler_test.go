@@ -17,7 +17,7 @@ import (
 // ─── Mock repository for admin handler tests ──────────────────────────────────
 
 type mockAdminRepo struct {
-	userByUsername  *domain.User
+	userByUsername    *domain.User
 	userByUsernameErr error
 }
 
@@ -50,7 +50,7 @@ func (m *mockAdminRepo) ListBindingsByUserID(ctx context.Context, userID uint64)
 	return nil, nil
 }
 func (m *mockAdminRepo) CreateBinding(ctx context.Context, b *domain.BindRelation) error { return nil }
-func (m *mockAdminRepo) UnbindRelation(ctx context.Context, bindID uint64) error { return nil }
+func (m *mockAdminRepo) UnbindRelation(ctx context.Context, bindID uint64) error         { return nil }
 func (m *mockAdminRepo) ListRawEvents(ctx context.Context, limit int) ([]domain.RawDeviceEvent, error) {
 	return nil, nil
 }
@@ -70,6 +70,12 @@ func (m *mockAdminRepo) FindActiveBindingByPoint(ctx context.Context, pointID ui
 	return nil, nil
 }
 func (m *mockAdminRepo) SearchDevicePoints(ctx context.Context, keyword string, bindStatus string) ([]domain.DevicePointSearchResult, error) {
+	return nil, nil
+}
+func (m *mockAdminRepo) ListPayloadEvents(ctx context.Context, params domain.PayloadEventQuery) ([]domain.PayloadEventListItem, int, error) {
+	return nil, 0, nil
+}
+func (m *mockAdminRepo) GetPayloadEventDetail(ctx context.Context, rawEventID uint64) (*domain.PayloadEventDetail, error) {
 	return nil, nil
 }
 

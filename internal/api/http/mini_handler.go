@@ -3,7 +3,9 @@ package http
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -33,8 +35,16 @@ type miniRepository interface {
 
 // miniHandler handles all /api/v1/mini/* endpoints.
 type miniHandler struct {
-	repo   miniRepository
-	jwtCfg config.JWTConfig
+	repo      miniRepository
+	jwtCfg    config.JWTConfig
+	wechatCfg config.WechatConfig
+}
+
+// miniLoginRequest is the JSON body for POST /api/v1/mini/login.
+type miniLoginRequest struct {
+	Code      string `json:"code"`
+	Nickname  string `json:"nickname"`
+	AvatarURL string `json:"avatar_url"`
 }
 
 // mockLoginRequest is the JSON body for POST /api/v1/mini/mock-login.
@@ -43,9 +53,99 @@ type mockLoginRequest struct {
 	MockNickname string `json:"mock_nickname"`
 }
 
+type wechatSessionResponse struct {
+	OpenID     string `json:"openid"`
+	SessionKey string `json:"session_key"`
+	UnionID    string `json:"unionid"`
+	ErrCode    int    `json:"errcode"`
+	ErrMsg     string `json:"errmsg"`
+}
+
+var wechatJscode2SessionURL = "https://api.weixin.qq.com/sns/jscode2session"
+
+// login handles POST /api/v1/mini/login using a WeChat wx.login code.
+func (h *miniHandler) login(w http.ResponseWriter, r *http.Request) {
+	var req miniLoginRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeCode(w, http.StatusBadRequest, 400, "invalid request body")
+		return
+	}
+	req.Code = strings.TrimSpace(req.Code)
+	if req.Code == "" {
+		writeCode(w, http.StatusBadRequest, 400, "code is required")
+		return
+	}
+
+	session, err := h.exchangeWechatCode(r.Context(), req.Code)
+	if err != nil {
+		writeCode(w, http.StatusBadGateway, 502, err.Error())
+		return
+	}
+
+	user, isNewUser, err := h.loginByOpenID(r.Context(), session.OpenID, req.Nickname, req.AvatarURL, session.UnionID)
+	if err != nil {
+		writeCode(w, http.StatusInternalServerError, 500, "internal error")
+		return
+	}
+	h.writeLoginResponse(w, r, user, isNewUser)
+}
+
+func (h *miniHandler) exchangeWechatCode(ctx context.Context, code string) (*wechatSessionResponse, error) {
+	if h.wechatCfg.AppID == "" || h.wechatCfg.Secret == "" {
+		return nil, fmt.Errorf("wechat mini program credentials are not configured")
+	}
+
+	endpoint, err := url.Parse(wechatJscode2SessionURL)
+	if err != nil {
+		return nil, fmt.Errorf("invalid wechat login endpoint")
+	}
+	params := endpoint.Query()
+	params.Set("appid", h.wechatCfg.AppID)
+	params.Set("secret", h.wechatCfg.Secret)
+	params.Set("js_code", code)
+	params.Set("grant_type", "authorization_code")
+	endpoint.RawQuery = params.Encode()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build wechat request")
+	}
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("wechat login request failed")
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("wechat login returned status %d", resp.StatusCode)
+	}
+
+	var session wechatSessionResponse
+	if err := json.NewDecoder(resp.Body).Decode(&session); err != nil {
+		return nil, fmt.Errorf("invalid wechat login response")
+	}
+	if session.ErrCode != 0 {
+		if session.ErrMsg == "" {
+			session.ErrMsg = "wechat login failed"
+		}
+		return nil, fmt.Errorf("wechat login failed: %s", session.ErrMsg)
+	}
+	if session.OpenID == "" {
+		return nil, fmt.Errorf("wechat login response missing openid")
+	}
+	return &session, nil
+}
+
 // mockLogin handles POST /api/v1/mini/mock-login.
-// This endpoint is for development/testing only and should be disabled in production.
+// This endpoint is for development/testing only and is disabled by default.
 func (h *miniHandler) mockLogin(w http.ResponseWriter, r *http.Request) {
+	if !h.wechatCfg.EnableMockLogin {
+		writeCode(w, http.StatusNotFound, 404, "mock login is disabled")
+		return
+	}
+
 	var req mockLoginRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeCode(w, http.StatusBadRequest, 400, "invalid request body")
@@ -56,26 +156,30 @@ func (h *miniHandler) mockLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := h.repo.GetUserByOpenID(r.Context(), req.MockOpenID)
+	user, isNewUser, err := h.loginByOpenID(r.Context(), req.MockOpenID, req.MockNickname, "", "")
 	if err != nil {
 		writeCode(w, http.StatusInternalServerError, 500, "internal error")
 		return
 	}
+	h.writeLoginResponse(w, r, user, isNewUser)
+}
+
+func (h *miniHandler) loginByOpenID(ctx context.Context, openID, nickname, avatarURL, unionID string) (*domain.User, bool, error) {
+	user, err := h.repo.GetUserByOpenID(ctx, openID)
+	if err != nil {
+		return nil, false, err
+	}
 
 	isNewUser := false
 	if user == nil {
-		// User does not exist yet — create a new farmer account.
 		isNewUser = true
-		displayName := req.MockNickname
-		openID := req.MockOpenID
-
-		// If no nickname provided, generate a default display name.
+		displayName := strings.TrimSpace(nickname)
 		if displayName == "" {
 			suffix := openID
 			if len(suffix) > 6 {
 				suffix = suffix[len(suffix)-6:]
 			}
-			displayName = "测试农户_" + suffix
+			displayName = "微信农户_" + suffix
 		}
 
 		newUser := &domain.User{
@@ -85,11 +189,29 @@ func (h *miniHandler) mockLogin(w http.ResponseWriter, r *http.Request) {
 			DisplayName:  &displayName,
 			Status:       domain.UserStatusActive,
 		}
-		if err := h.repo.CreateUser(r.Context(), newUser); err != nil {
-			writeCode(w, http.StatusInternalServerError, 500, "failed to create user")
-			return
+		if avatarURL != "" {
+			newUser.AvatarURL = &avatarURL
+		}
+		if unionID != "" {
+			newUser.WechatUnionID = &unionID
+		}
+		if err := h.repo.CreateUser(ctx, newUser); err != nil {
+			return nil, false, err
 		}
 		user = newUser
+	}
+
+	return user, isNewUser, nil
+}
+
+func (h *miniHandler) writeLoginResponse(w http.ResponseWriter, r *http.Request, user *domain.User, isNewUser bool) {
+	if user.UserType != domain.UserTypeFarmer || user.Role != domain.RoleFarmer {
+		writeCode(w, http.StatusForbidden, 403, "mini login requires farmer account")
+		return
+	}
+	if user.Status != domain.UserStatusActive {
+		writeCode(w, http.StatusForbidden, 403, "user is disabled")
+		return
 	}
 
 	now := time.Now()

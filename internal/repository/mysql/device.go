@@ -613,6 +613,8 @@ func (r *Repository) GetMiniDeviceHistory(ctx context.Context, pointID uint64, r
 		since = time.Now().Add(-24 * time.Hour)
 	case "7d":
 		since = time.Now().Add(-7 * 24 * time.Hour)
+	case "30d":
+		since = time.Now().Add(-30 * 24 * time.Hour)
 	default:
 		since = time.Now().Add(-24 * time.Hour)
 	}

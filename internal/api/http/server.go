@@ -32,6 +32,7 @@ type repository interface {
 type Server struct {
 	repo         repository
 	jwtCfg       config.JWTConfig
+	wechatCfg    config.WechatConfig
 	adapterToken string
 }
 
@@ -40,6 +41,7 @@ func NewServer(repo repository, cfg config.Config) *Server {
 	return &Server{
 		repo:         repo,
 		jwtCfg:       cfg.JWT,
+		wechatCfg:    cfg.Wechat,
 		adapterToken: cfg.AdapterToken,
 	}
 }
@@ -69,7 +71,7 @@ func (s *Server) Routes() http.Handler {
 	farmerRoles := roleMiddleware(domain.RoleSuperAdmin, domain.RoleAdmin, domain.RoleFarmer)
 
 	ah := &adminHandler{repo: s.repo, jwtCfg: s.jwtCfg}
-	mh := &miniHandler{repo: s.repo, jwtCfg: s.jwtCfg}
+	mh := &miniHandler{repo: s.repo, jwtCfg: s.jwtCfg, wechatCfg: s.wechatCfg}
 	adh := &adapterHandler{repo: s.repo, adapterToken: s.adapterToken}
 
 	// Dashboard handler（独立文件，注入 service 层）
@@ -159,7 +161,16 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("/api/v1/admin/farmers",
 		authMiddleware(secret, adminRoles(http.HandlerFunc(ah.handleFarmers))))
 
-	// ─── Mini-program auth — public (dev/test only, Go 1.20 compatible) ───
+	// ─── Mini-program auth — public (Go 1.20 compatible) ───
+	mux.HandleFunc("/api/v1/mini/login", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeCode(w, http.StatusMethodNotAllowed, 405, "method not allowed")
+			return
+		}
+		mh.login(w, r)
+	})
+
+	// ─── Mini-program mock auth — public only when NEHUANG_ENABLE_MOCK_LOGIN=true ───
 	mux.HandleFunc("/api/v1/mini/mock-login", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			writeCode(w, http.StatusMethodNotAllowed, 405, "method not allowed")

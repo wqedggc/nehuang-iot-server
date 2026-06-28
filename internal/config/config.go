@@ -15,6 +15,7 @@ type Config struct {
 	HTTPAddr     string
 	MySQL        MySQLConfig
 	JWT          JWTConfig
+	Wechat       WechatConfig
 	AdapterToken string // Adapter API 认证 token，从环境变量 NEHUANG_ADAPTER_TOKEN 读取
 }
 
@@ -39,6 +40,13 @@ type JWTConfig struct {
 	FarmerTokenTTL time.Duration
 }
 
+// WechatConfig holds WeChat mini-program login configuration.
+type WechatConfig struct {
+	AppID           string
+	Secret          string
+	EnableMockLogin bool
+}
+
 // Load reads configuration from environment variables and the MySQL defaults file.
 func Load() (Config, error) {
 	cfg := Config{
@@ -47,6 +55,11 @@ func Load() (Config, error) {
 			Secret:         envDefault("NEHUANG_JWT_SECRET", "nehuang-dev-secret-change-me"),
 			AdminTokenTTL:  24 * time.Hour,
 			FarmerTokenTTL: 72 * time.Hour,
+		},
+		Wechat: WechatConfig{
+			AppID:           envDefault("NEHUANG_WECHAT_APPID", ""),
+			Secret:          envDefault("NEHUANG_WECHAT_SECRET", ""),
+			EnableMockLogin: envBool("NEHUANG_ENABLE_MOCK_LOGIN", false),
 		},
 		// Adapter API 认证 token，服务端和 Mock 脚本共用。
 		AdapterToken: envDefault("NEHUANG_ADAPTER_TOKEN", "nehuang-adapter-dev-token"),
@@ -119,6 +132,21 @@ func envDefault(key, fallback string) string {
 		return fallback
 	}
 	return val
+}
+
+func envBool(key string, fallback bool) bool {
+	val := strings.ToLower(strings.TrimSpace(os.Getenv(key)))
+	if val == "" {
+		return fallback
+	}
+	switch val {
+	case "1", "true", "yes", "y", "on":
+		return true
+	case "0", "false", "no", "n", "off":
+		return false
+	default:
+		return fallback
+	}
 }
 
 func envDefaultValue(val, fallback string) string {
