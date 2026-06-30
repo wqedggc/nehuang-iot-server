@@ -8,7 +8,7 @@ import (
 // ─── UpdateMiniProfile unit tests (logic tests without real DB) ──────────────
 
 // mockDB implements a minimal contract to test UpdateMiniProfile's SQL building.
-// We test the logic layer: the whitelist filtering, empty-value skipping,
+// We test the logic layer: the whitelist filtering, explicit empty-value updates,
 // and the SQL query construction.
 
 func TestUpdateMiniProfile_OnlyAllowedColumns(t *testing.T) {
@@ -52,8 +52,9 @@ func TestUpdateMiniProfile_OnlyAllowedColumns(t *testing.T) {
 	}
 }
 
-func TestUpdateMiniProfile_EmptyValuesSkipped(t *testing.T) {
-	// Verify the logic that empty string values are skipped.
+func TestUpdateMiniProfile_ExplicitEmptyValuesIncluded(t *testing.T) {
+	// Verify that explicit empty string values are included so optional profile
+	// fields can be cleared.
 	allowedColumns := map[string]bool{
 		"display_name": true,
 		"mobile":       true,
@@ -73,26 +74,27 @@ func TestUpdateMiniProfile_EmptyValuesSkipped(t *testing.T) {
 		if !allowedColumns[col] {
 			continue
 		}
-		if val == "" {
-			continue
-		}
+		_ = val
 		setClauses = append(setClauses, col)
 	}
 
-	if len(setClauses) != 2 {
-		t.Errorf("expected 2 non-empty fields, got %d: %v", len(setClauses), setClauses)
+	if len(setClauses) != 4 {
+		t.Errorf("expected 4 explicit fields, got %d: %v", len(setClauses), setClauses)
 	}
 
-	// Check that empty fields were skipped
+	seen := map[string]bool{}
 	for _, clause := range setClauses {
-		if clause == "mobile" || clause == "remark" {
-			t.Errorf("empty field %q should have been skipped", clause)
+		seen[clause] = true
+	}
+	for _, want := range []string{"display_name", "mobile", "address", "remark"} {
+		if !seen[want] {
+			t.Errorf("field %q should have been included", want)
 		}
 	}
 }
 
-func TestUpdateMiniProfile_AllEmpty_NoUpdate(t *testing.T) {
-	// All empty values → no SET clauses → returns nil (no-op).
+func TestUpdateMiniProfile_NoFields_NoUpdate(t *testing.T) {
+	// No allowed fields → no SET clauses → returns nil (no-op).
 	allowedColumns := map[string]bool{
 		"display_name": true,
 		"mobile":       true,
@@ -101,10 +103,9 @@ func TestUpdateMiniProfile_AllEmpty_NoUpdate(t *testing.T) {
 	}
 
 	updates := map[string]string{
-		"display_name": "",
-		"mobile":       "",
-		"address":      "",
-		"remark":       "",
+		"user_id": "",
+		"role":    "",
+		"status":  "",
 	}
 
 	var setClauses []string
@@ -112,9 +113,7 @@ func TestUpdateMiniProfile_AllEmpty_NoUpdate(t *testing.T) {
 		if !allowedColumns[col] {
 			continue
 		}
-		if val == "" {
-			continue
-		}
+		_ = val
 		setClauses = append(setClauses, col)
 	}
 
@@ -133,10 +132,10 @@ func TestUpdateMiniProfile_UnknownColumnsIgnored(t *testing.T) {
 	}
 
 	updates := map[string]string{
-		"avatar_url":     "http://example.com/avatar.png",
-		"password_hash":  "hash123",
-		"wechat_openid":  "wx_123",
-		"display_name":   "张三",
+		"avatar_url":    "http://example.com/avatar.png",
+		"password_hash": "hash123",
+		"wechat_openid": "wx_123",
+		"display_name":  "张三",
 	}
 
 	var setClauses []string
@@ -144,9 +143,7 @@ func TestUpdateMiniProfile_UnknownColumnsIgnored(t *testing.T) {
 		if !allowedColumns[col] {
 			continue
 		}
-		if val == "" {
-			continue
-		}
+		_ = val
 		setClauses = append(setClauses, col)
 	}
 
@@ -184,10 +181,8 @@ func TestUpdateMiniProfile_SQLInjectionSafe(t *testing.T) {
 			t.Errorf("column %q should be allowed", col)
 			continue
 		}
-		// The value is passed as a parameterized arg, not interpolated
-		if val == "" {
-			continue
-		}
+		// The value is passed as a parameterized arg, not interpolated.
+		_ = val
 		// In real code: setClauses = append(setClauses, col+" = ?")
 		// args = append(args, val)  -- this is safe
 	}

@@ -216,7 +216,7 @@ func (s *Server) Routes() http.Handler {
 		authMiddleware(secret, adminRoles(http.HandlerFunc(s.listGateways))))
 
 	// ─── Static frontend files (embedded in binary via //go:embed) ───
-	// web.Static embeds static/admin, static/mini, static/mock.
+	// web.Static embeds production H5 assets under static/admin, static/mini, static/shared.
 	// Prefix-rewriting handler maps /admin/... → static/admin/... etc.
 	fileServer := http.FileServer(http.FS(web.Static))
 	servePrefixed := func(prefix string) http.Handler {
@@ -227,7 +227,7 @@ func (s *Server) Routes() http.Handler {
 	}
 	mux.Handle("/admin/", servePrefixed("static"))
 	mux.Handle("/mini/", servePrefixed("static"))
-	mux.Handle("/mock/", servePrefixed("static"))
+	mux.Handle("/shared/", servePrefixed("static"))
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
 			http.NotFound(w, r)

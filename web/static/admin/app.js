@@ -129,14 +129,13 @@
           '</div>' +
           '<div class="form-group">' +
             '<label class="form-label">用户名</label>' +
-            '<input class="form-input" id="login-username" type="text" placeholder="请输入用户名" value="admin">' +
+            '<input class="form-input" id="login-username" type="text" placeholder="请输入用户名">' +
           '</div>' +
           '<div class="form-group">' +
             '<label class="form-label">密码</label>' +
-            '<input class="form-input" id="login-password" type="password" placeholder="请输入密码" value="admin123">' +
+            '<input class="form-input" id="login-password" type="password" placeholder="请输入密码">' +
           '</div>' +
           '<button class="btn btn-primary btn-block" id="login-submit" style="margin-top:8px">登录</button>' +
-          '<p style="font-size:11px;color:var(--color-text-muted);text-align:center;margin-top:12px">测试账号：admin / admin123</p>' +
         '</div>' +
       '</div>';
 
@@ -144,8 +143,8 @@
     // 必须通过 JS 显式设置，不能依赖 HTML value 属性
     var usernameInput = $('#login-username');
     var passwordInput = $('#login-password');
-    usernameInput.value = 'admin';
-    passwordInput.value = 'admin123';
+    usernameInput.value = '';
+    passwordInput.value = '';
 
     $('#login-submit').onclick = function () {
       // 每次点击时重新从 DOM 获取值（避免 Safari 引用丢失问题）
@@ -169,11 +168,10 @@
     btn.disabled = true;
     btn.textContent = '登录中...';
     try {
-      var res = await MockAPI.login('admin', { username: username, password: password });
+      var res = await NHApi.loginAdmin({ username: username, password: password });
       if (res.data && res.data.token) {
         localStorage.setItem('nh_admin_token', res.data.token);
-        localStorage.setItem('admin_user', JSON.stringify(res.data));
-        MockAPI.setUserId(res.data.user_id);
+        localStorage.setItem('nh_admin_user', JSON.stringify(res.data));
         updateSidebarUser(res.data);
         showToast('登录成功', 'success');
         $('#sidebar').style.display = '';
@@ -182,7 +180,7 @@
         showToast(res.message || '登录失败', 'error');
       }
     } catch (e) {
-      // 显示具体错误原因，方便调试（CORS/超时/mock 密码错误等）
+      // 显示具体错误原因，方便调试（CORS/超时/密码错误等）
       var msg = e.message || '网络异常，请重试';
       console.error('[AdminLogin] 登录失败:', e);
       showToast(msg, 'error');
@@ -202,7 +200,7 @@
 
   function doLogout() {
     localStorage.removeItem('nh_admin_token');
-    localStorage.removeItem('admin_user');
+    localStorage.removeItem('nh_admin_user');
     showToast('已退出登录', 'info');
     navigate('login');
   }
@@ -214,7 +212,7 @@
   async function renderDashboard(container) {
     container.innerHTML = '<div class="loading-state"><div class="loading-spinner"></div><p>加载仪表盘...</p></div>';
     try {
-      var res = await MockAPI.getDashboard(currentDashboardRange);
+      var res = await NHApi.getDashboard(currentDashboardRange);
       if (!res.data) { container.innerHTML = '<div class="error-state"><p>加载失败</p><button class="btn btn-outline btn-sm" onclick="renderPage()">重试</button></div>'; return; }
       var d = res.data;
       currentDashboardData = d;
@@ -275,15 +273,12 @@
   async function renderUsers(container) {
     container.innerHTML = '<div class="loading-state"><div class="loading-spinner"></div><p>加载农户列表...</p></div>';
     try {
-      var res = await MockAPI.getFarmers();
+      var res = await NHApi.getFarmers();
       if (!res.data) {
-        // fallback：使用 getUsers 接口，前端过滤 user_type=2
-        var usersRes = await MockAPI.getUsers();
-        if (!usersRes.data) { container.innerHTML = '<div class="error-state"><p>加载失败</p><button class="btn btn-outline btn-sm" onclick="renderPage()">重试</button></div>'; return; }
-        var farmers = usersRes.data.filter(function (u) { return u.user_type === 2; });
-      } else {
-        var farmers = res.data;
+        container.innerHTML = '<div class="error-state"><p>加载失败</p><button class="btn btn-outline btn-sm" onclick="renderPage()">重试</button></div>';
+        return;
       }
+      var farmers = res.data;
 
       var html = '<div class="table-section">' +
         '<div class="table-header">' +
@@ -316,7 +311,7 @@
 
       container.innerHTML = html;
 
-      // 搜索：优先通过后端 keyword 参数搜索，降级为前端过滤
+      // 搜索：只使用后端 keyword 参数。
       var searchTimer = null;
       $('#user-search').oninput = function () {
         var q = this.value.trim();
@@ -331,11 +326,8 @@
           }
         }, 400);
       };
-
-      // 存储当前 farmer 列表以便搜索降级
-      container._farmers = farmers;
     } catch (e) {
-      container.innerHTML = '<div class="error-state"><p>加载失败</p><button class="btn btn-outline btn-sm" onclick="renderPage()">重试</button></div>';
+      container.innerHTML = '<div class="error-state"><p>加载失败：' + escHtml(e.message || '网络异常') + '</p><button class="btn btn-outline btn-sm" onclick="renderPage()">重试</button></div>';
     }
   }
 
@@ -344,34 +336,16 @@
     if (!tbody) return;
     tbody.innerHTML = '<tr><td colspan="9" class="table-empty">搜索中...</td></tr>';
     try {
-      var res = await MockAPI.getFarmers(keyword);
+      var res = await NHApi.getFarmers(keyword);
       if (res.data && res.data.length > 0) {
         renderFarmerTableBody(res.data);
       } else if (res.data && res.data.length === 0) {
         tbody.innerHTML = '<tr><td colspan="9" class="table-empty">未找到匹配的农户</td></tr>';
       } else {
-        // fallback：前端过滤
-        var container = $('#main-content');
-        var farmers = container._farmers || [];
-        var kw = keyword.toLowerCase();
-        var filtered = farmers.filter(function (u) {
-          return (u.display_name && u.display_name.toLowerCase().includes(kw)) ||
-                 (u.mobile && u.mobile.toLowerCase().includes(kw)) ||
-                 (u.wechat_openid && u.wechat_openid.toLowerCase().includes(kw));
-        });
-        renderFarmerTableBody(filtered);
+        tbody.innerHTML = '<tr><td colspan="9" class="table-empty">搜索失败</td></tr>';
       }
     } catch (e) {
-      // 降级前端过滤
-      var container = $('#main-content');
-      var farmers = container._farmers || [];
-      var kw = keyword.toLowerCase();
-      var filtered = farmers.filter(function (u) {
-        return (u.display_name && u.display_name.toLowerCase().includes(kw)) ||
-               (u.mobile && u.mobile.toLowerCase().includes(kw)) ||
-               (u.wechat_openid && u.wechat_openid.toLowerCase().includes(kw));
-      });
-      renderFarmerTableBody(filtered);
+      tbody.innerHTML = '<tr><td colspan="9" class="table-empty">搜索失败：' + escHtml(e.message || '网络异常') + '</td></tr>';
     }
   }
 
@@ -408,8 +382,8 @@
     try {
       var farmerRes, bindingsRes;
       await Promise.all([
-        MockAPI.getFarmerDetail(userId),
-        MockAPI.getFarmerBindings(userId)
+        NHApi.getFarmerDetail(userId),
+        NHApi.getFarmerBindings(userId)
       ]).then(function (results) {
         farmerRes = results[0];
         bindingsRes = results[1];
@@ -520,7 +494,7 @@
 
     async function loadDevicePoints(keyword) {
       try {
-        var res = await MockAPI.searchDevicePoints(keyword, 'unbound');
+        var res = await NHApi.searchDevicePoints(keyword, 'unbound');
         var points = res.data || [];
         var listEl = $('#bind-device-list');
 
@@ -598,7 +572,7 @@
     // 加载农户详情
     (async function () {
       try {
-        var res = await MockAPI.getFarmerDetail(userId);
+        var res = await NHApi.getFarmerDetail(userId);
         if (res.data) {
           $('#edit-farmer-id').value = res.data.user_id;
           $('#edit-farmer-name').value = res.data.display_name || '';
@@ -630,7 +604,7 @@
     if (!data.display_name) { showToast('请输入姓名', 'error'); return; }
 
     try {
-      var res = await MockAPI.updateFarmer(userId, data);
+      var res = await NHApi.updateFarmer(userId, data);
       if (res.data) {
         showToast('保存成功', 'success');
         closeModal();
@@ -649,8 +623,8 @@
     try {
       var gwRes, treeRes;
       await Promise.all([
-        MockAPI.getGateways(),
-        MockAPI.getDeviceTree()
+        NHApi.getGateways(),
+        NHApi.getDeviceTree()
       ]).then(function (results) {
         gwRes = results[0];
         treeRes = results[1];
@@ -750,7 +724,7 @@
   async function renderBindings(container) {
     container.innerHTML = '<div class="loading-state"><div class="loading-spinner"></div><p>加载绑定关系...</p></div>';
     try {
-      var res = await MockAPI.getBindings();
+      var res = await NHApi.getBindings();
       if (!res.data) { container.innerHTML = '<div class="error-state"><p>加载失败</p><button class="btn btn-outline btn-sm" onclick="renderPage()">重试</button></div>'; return; }
       var bindings = res.data;
 
@@ -838,7 +812,7 @@
     var pointId = selectedEl.dataset.pointId;
 
     try {
-      var res = await MockAPI.addBinding({ user_id: userId, point_id: pointId });
+      var res = await NHApi.addBinding({ user_id: userId, point_id: pointId });
       if (res.code === 409) {
         // 冲突提示
         var existingName = (res.data && res.data.existing_user_name) || '其他农户';
@@ -889,7 +863,7 @@
 
     // 加载农户列表
     try {
-      var farmersRes = await MockAPI.getFarmers();
+      var farmersRes = await NHApi.getFarmers();
       var farmers = farmersRes.data || [];
       var select = $('#bind-add-farmer');
       farmers.forEach(function (f) {
@@ -913,7 +887,7 @@
 
     async function searchPointsForAdd(keyword) {
       try {
-        var res = await MockAPI.searchDevicePoints(keyword, 'unbound');
+        var res = await NHApi.searchDevicePoints(keyword, 'unbound');
         var points = res.data || [];
         var listEl = $('#bind-add-device-list');
 
@@ -956,7 +930,7 @@
     var pointId = selectedEl.dataset.pointId;
 
     try {
-      var res = await MockAPI.addBinding({ user_id: userId, point_id: pointId });
+      var res = await NHApi.addBinding({ user_id: userId, point_id: pointId });
       if (res.code === 409) {
         showToast('该设备已绑定给「' + ((res.data && res.data.existing_user_name) || '其他农户') + '」', 'error');
         return;
@@ -976,7 +950,7 @@
   async function doRemoveBinding(id) {
     if (!confirm('确认解除该绑定关系？')) return;
     try {
-      var res = await MockAPI.removeBinding(id);
+      var res = await NHApi.removeBinding(id);
       if (res.data && res.data.deleted) {
         showToast('解绑成功', 'success');
         renderPage();
@@ -992,7 +966,7 @@
   async function renderLogs(container) {
     container.innerHTML = '<div class="loading-state"><div class="loading-spinner"></div><p>加载控制日志...</p></div>';
     try {
-      var res = await MockAPI.getControlLogs();
+      var res = await NHApi.getControlLogs();
       if (!res.data) { container.innerHTML = '<div class="error-state"><p>加载失败</p><button class="btn btn-outline btn-sm" onclick="renderPage()">重试</button></div>'; return; }
       var logs = res.data;
 
@@ -1051,7 +1025,7 @@
     if (payloadState.keyword) params.keyword = payloadState.keyword;
 
     try {
-      var res = await MockAPI.getPayloadEvents(params);
+      var res = await NHApi.getPayloadEvents(params);
       var data = res.data || {};
       var items = data.items || [];
       var total = data.total || 0;
@@ -1099,22 +1073,25 @@
         '</div>' +
         '<div class="table-wrap"><table>' +
           '<thead><tr>' +
-            '<th>ID</th><th>时间</th><th>事件类型</th><th>Gateway</th><th>解析状态</th><th>Message ID</th><th>Events</th><th>来源IP</th><th>Payload</th><th>操作</th>' +
+            '<th>ID</th><th>时间</th><th>事件类型</th><th>Gateway</th><th>来源</th><th>解析状态</th><th>Message ID</th><th>Events</th><th>来源IP</th><th>Payload</th><th>操作</th>' +
           '</tr></thead>' +
           '<tbody id="payload-tbody">' +
-            (items.length === 0 ? '<tr><td colspan="10" class="table-empty">暂无数据</td></tr>' :
+            (items.length === 0 ? '<tr><td colspan="11" class="table-empty">暂无数据</td></tr>' :
               items.map(function (item) {
                 var statusCSS = (item.parse_status === 1 ? 'badge-warning' : item.parse_status === 2 ? 'badge-success' : item.parse_status === 3 ? 'badge-danger' : item.parse_status === 4 ? 'badge-info' : 'badge-muted');
                 var eventCSS = (item.event_type === 1 ? 'badge-info' : item.event_type === 2 ? 'badge-muted' : item.event_type === 3 ? 'badge-success' : 'badge-warning');
+                var isMock = !!item.is_mock;
+                var sourceName = item.source_type_name || '--';
                 return '<tr>' +
                   '<td style="font-family:monospace;font-size:12px">' + escHtml(String(item.raw_event_id)) + '</td>' +
                   '<td style="white-space:nowrap;font-size:12px">' + escHtml(item.received_at_ms) + '</td>' +
                   '<td><span class="badge ' + eventCSS + '">' + escHtml(item.event_type_name) + '</span></td>' +
                   '<td>' + escHtml(item.gateway_name || '--') + '</td>' +
+                  '<td><span class="badge ' + (isMock ? 'badge-warning' : 'badge-muted') + '">' + (isMock ? 'MOCK' : escHtml(sourceName)) + '</span></td>' +
                   '<td><span class="badge ' + statusCSS + '">' + escHtml(item.parse_status_name) + '</span>' +
                     (item.parse_error ? ' <span style="font-size:10px;color:var(--color-text-muted)" title="' + escHtml(item.parse_error) + '">⚠</span>' : '') +
                   '</td>' +
-                  '<td style="font-family:monospace;font-size:11px;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escHtml(item.message_id || '--') + '</td>' +
+                  '<td style="font-family:monospace;font-size:11px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + (isMock ? '<span class="badge badge-warning" style="margin-right:4px">MOCK</span>' : '') + escHtml(item.message_id || '--') + '</td>' +
                   '<td><span style="font-size:12px">' + item.parsed_count + '/' + item.event_count + '</span></td>' +
                   '<td style="font-size:12px">' + escHtml(item.remote_ip || '--') + ':' + item.remote_port + '</td>' +
                   '<td style="font-size:11px;color:var(--color-text-muted)">' + (item.payload_len || 0) + 'B</td>' +
@@ -1170,7 +1147,7 @@
 
   async function payloadCopySnapshot(rawEventId) {
     try {
-      var res = await MockAPI.getPayloadEventDetail(rawEventId);
+      var res = await NHApi.getPayloadEventDetail(rawEventId);
       if (!res.data) { showToast('获取详情失败', 'error'); return; }
       var snapshot = res.data.payload_snapshot || '';
       if (!snapshot) { showToast('该事件无 payload 数据', 'info'); return; }
@@ -1217,12 +1194,13 @@
     '</div>';
 
     try {
-      var res = await MockAPI.getPayloadEventDetail(rawEventId);
+      var res = await NHApi.getPayloadEventDetail(rawEventId);
       if (!res.data) {
         overlay.querySelector('.modal-body').innerHTML = '<div class="error-state"><p>获取详情失败</p></div>';
         return;
       }
       var d = res.data;
+      var isMock = !!d.is_mock;
 
       var bodyHtml = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px">' +
         '<div class="info-item"><label>事件 ID</label><span style="font-family:monospace">' + escHtml(String(d.raw_event_id)) + '</span></div>' +
@@ -1230,9 +1208,10 @@
         '<div class="info-item"><label>事件类型</label><span class="badge">' + escHtml(d.event_type_name) + '</span></div>' +
         '<div class="info-item"><label>解析状态</label><span>' + escHtml(d.parse_status_name) + (d.parse_error ? ' <span style="color:var(--color-danger);font-size:11px">' + escHtml(d.parse_error) + '</span>' : '') + '</span></div>' +
         '<div class="info-item"><label>Gateway</label><span>' + escHtml(d.gateway_name || '--') + '</span></div>' +
-        '<div class="info-item"><label>Message ID</label><span style="font-family:monospace;font-size:11px">' + escHtml(d.message_id || '--') + '</span></div>' +
+        '<div class="info-item"><label>来源</label><span><span class="badge ' + (isMock ? 'badge-warning' : 'badge-muted') + '">' + (isMock ? 'MOCK' : escHtml(d.source_type_name || '--')) + '</span></span></div>' +
+        '<div class="info-item"><label>Message ID</label><span style="font-family:monospace;font-size:11px">' + (isMock ? '<span class="badge badge-warning" style="margin-right:4px">MOCK</span>' : '') + escHtml(d.message_id || '--') + '</span></div>' +
         '<div class="info-item"><label>Events 数量</label><span>' + d.parsed_count + '/' + d.event_count + '</span></div>' +
-        '<div class="info-item"><label>来源</label><span>' + escHtml(d.remote_ip || '--') + ':' + d.remote_port + '</span></div>' +
+        '<div class="info-item"><label>来源 IP</label><span>' + escHtml(d.remote_ip || '--') + ':' + d.remote_port + '</span></div>' +
       '</div>';
 
       var snapshot = d.payload_snapshot || '';
@@ -1284,11 +1263,10 @@
   window.addEventListener('hashchange', renderPage);
   window.addEventListener('load', function () {
     var token = localStorage.getItem('nh_admin_token');
-    var userJson = localStorage.getItem('admin_user');
+    var userJson = localStorage.getItem('nh_admin_user');
     if (token && userJson) {
       try {
         var user = JSON.parse(userJson);
-        MockAPI.setUserId(user.user_id);
         updateSidebarUser(user);
         $('#sidebar').style.display = '';
       } catch (e) {}

@@ -8,10 +8,11 @@
 #   scripts/mock_device_events.sh --rounds 5 --interval 3  # 自定义轮次和间隔
 #
 # 环境变量：
-#   API_BASE        默认 http://localhost:8080
-#   ADAPTER_TOKEN   默认 nehuang-adapter-dev-token
-#   ADMIN_USERNAME  默认 admin
-#   ADMIN_PASSWORD  默认 admin123
+#   API_BASE             默认 http://localhost:8080
+#   ADAPTER_TOKEN        默认 nehuang-adapter-dev-token
+#   ADMIN_USERNAME       默认 admin
+#   ADMIN_PASSWORD       默认 admin123
+#   MOCK_DATA_ID_PREFIX  默认 MOCK，用于在 message_id / gateway_external_id / device_external_id 中标识模拟数据
 
 set -euo pipefail
 
@@ -20,6 +21,7 @@ API_BASE="${API_BASE:-http://localhost:8080}"
 ADAPTER_TOKEN="${ADAPTER_TOKEN:-nehuang-adapter-dev-token}"
 ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
 ADMIN_PASSWORD="${ADMIN_PASSWORD:-admin123}"
+MOCK_DATA_ID_PREFIX="${MOCK_DATA_ID_PREFIX:-MOCK}"
 
 ADAPTER_API="${API_BASE}/api/v1/adapter/device-events"
 ADMIN_LOGIN_API="${API_BASE}/api/v1/admin/login"
@@ -30,13 +32,13 @@ ROUNDS=20
 INTERVAL=2
 
 # ─── Mock 场景默认配置 ───
-GATEWAY_NAME="FP_TEST_ADMIN_001"
-GATEWAY_EXT_ID="TEST_ADMIN_001"
+GATEWAY_NAME="FP_${MOCK_DATA_ID_PREFIX}_TEST_ADMIN_001"
+GATEWAY_EXT_ID="${MOCK_DATA_ID_PREFIX}_TEST_ADMIN_001"
 
 # 2 个采集执行器节点
 NODES=(
-  "1|1001"  # frequency=1, device_external_id=1001
-  "2|1002"  # frequency=2, device_external_id=1002
+  "1|${MOCK_DATA_ID_PREFIX}-1001"  # frequency=1, device_external_id=MOCK-1001
+  "2|${MOCK_DATA_ID_PREFIX}-1002"  # frequency=2, device_external_id=MOCK-1002
 )
 
 # 每个节点的 3 个功能点
@@ -216,6 +218,7 @@ print_usage() {
   ADAPTER_TOKEN    默认 nehuang-adapter-dev-token
   ADMIN_USERNAME   默认 admin
   ADMIN_PASSWORD   默认 admin123
+  MOCK_DATA_ID_PREFIX 默认 MOCK；会写入 message_id、gateway_external_id、device_external_id
 EOF
 }
 
@@ -244,7 +247,7 @@ cmd_seed() {
   done
   EVENTS="${EVENTS%,}]"
 
-  MSG_ID="seed-$(date +%Y%m%d-%H%M%S)"
+  MSG_ID="mock-seed-${MOCK_DATA_ID_PREFIX}-$(date +%Y%m%d-%H%M%S)"
   echo "发送 seed 事件 (message_id: $MSG_ID)..."
 
   result=$(send_device_events "$MSG_ID" "$EVENTS")
@@ -422,7 +425,7 @@ cmd_emit() {
 
     EVENTS="${EVENTS%,}]"
 
-    MSG_ID="emit-${farmer_user_id}-$(date +%Y%m%d-%H%M%S)"
+    MSG_ID="mock-emit-${MOCK_DATA_ID_PREFIX}-farmer-${farmer_user_id}-$(date +%Y%m%d-%H%M%S)"
     echo "  发送到 gateway \"$gw_name\"..."
 
     result=$(send_device_events "$MSG_ID" "$EVENTS")
@@ -479,7 +482,7 @@ cmd_loop() {
   local fail_count=0
 
   for ((round=1; round<=ROUNDS; round++)); do
-    MSG_ID="mock-$(date +%Y%m%d)-$(printf '%04d' "$round")"
+    MSG_ID="mock-loop-${MOCK_DATA_ID_PREFIX}-$(date +%Y%m%d)-$(printf '%04d' "$round")"
 
     # 构建 events 数组
     EVENTS="["

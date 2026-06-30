@@ -46,6 +46,15 @@
     } catch (e) { return iso; }
   }
 
+  function valueStatusClass(valueStatus) {
+    var map = { 1: 'normal', 2: 'low', 3: 'high', 4: 'on', 5: 'off', 6: 'offline' };
+    return map[Number(valueStatus)] || 'normal';
+  }
+
+  function devicePointID(d) {
+    return d && d.point_id != null ? String(d.point_id) : '';
+  }
+
   // ============================================================
   // 导航
   // ============================================================
@@ -103,51 +112,52 @@
           '<h2>涅凰智农</h2>' +
           '<p>智慧农业物联网云平台</p>' +
         '</div>' +
-        '<div class="form-group">' +
-          '<label class="form-label">手机号 / 用户名</label>' +
-          '<input class="form-input" id="login-phone" type="text" placeholder="请输入手机号或用户名" value="mock_user_001">' +
+        '<div class="empty-state" style="padding:8px 0 18px">' +
+          '<p style="font-size:14px;color:var(--color-text-secondary);line-height:1.7">' +
+            '浏览器 H5 不支持微信 wx.login，请在微信小程序内完成真实登录。' +
+          '</p>' +
         '</div>' +
-        '<button class="btn btn-primary btn-block" id="login-submit">登录</button>' +
-        '<div class="divider-text">或</div>' +
-        '<button class="btn btn-outline btn-block" id="login-mock">模拟登录（测试用）</button>' +
-        '<p class="form-hint">测试阶段可使用模拟登录快速进入</p>' +
+        '<div class="form-group">' +
+          '<label class="form-label">H5 调试 Token</label>' +
+          '<input class="form-input" id="login-token" type="text" placeholder="粘贴真实 nh_mini_token">' +
+          '<p class="form-hint" style="text-align:left">仅用于浏览器调试真实接口；不会调用开发登录接口，也不会生成本地模拟用户。</p>' +
+        '</div>' +
+        '<button class="btn btn-primary btn-block" id="login-submit">使用 Token 调试</button>' +
       '</div>' +
     '</div>';
 
-    var phoneInput = $('#login-phone');
-    phoneInput.value = 'mock_user_001';
+    var tokenInput = $('#login-token');
 
     $('#login-submit').onclick = function () {
-      var phone = phoneInput.value.trim();
-      if (!phone) { showToast('请输入手机号或用户名', 'error'); return; }
-      doMiniLogin({ mock_openid: phone, mock_nickname: phone });
-    };
-
-    $('#login-mock').onclick = function () {
-      doMiniLogin({ mock_openid: 'mock_user_001', mock_nickname: '测试农户' });
+      var token = tokenInput.value.trim();
+      if (!token) { showToast('请粘贴真实 mini token', 'error'); return; }
+      saveMiniTokenForDebug(token);
     };
   }
 
-  async function doMiniLogin(credentials) {
+  async function saveMiniTokenForDebug(token) {
     var btn = $('#login-submit');
     btn.disabled = true;
-    btn.textContent = '登录中...';
+    btn.textContent = '校验中...';
     try {
-      var res = await MockAPI.login('mini', credentials);
-      if (res.data && res.data.token) {
-        localStorage.setItem('nh_mini_token', res.data.token);
-        localStorage.setItem('user_id', res.data.user_id);
-        MockAPI.setUserId(res.data.user_id);
+      localStorage.setItem('nh_mini_token', token);
+      var res = await NHApi.getMe('mini');
+      if (res.data) {
+        localStorage.setItem('nh_mini_user', JSON.stringify(res.data));
         showToast('登录成功', 'success');
         navigate('devices');
       } else {
+        localStorage.removeItem('nh_mini_token');
+        localStorage.removeItem('nh_mini_user');
         showToast(res.message || '登录失败', 'error');
       }
     } catch (e) {
-      showToast('网络异常，请重试', 'error');
+      localStorage.removeItem('nh_mini_token');
+      localStorage.removeItem('nh_mini_user');
+      showToast(e.message || 'Token 无效', 'error');
     } finally {
       btn.disabled = false;
-      btn.textContent = '登录';
+      btn.textContent = '使用 Token 调试';
     }
   }
 
@@ -165,7 +175,7 @@
         return;
       }
 
-      var res = await MockAPI.getDevices();
+      var res = await NHApi.getDevices();
 
       // 处理空绑定状态
       if (!res.data || res.data.length === 0) {
@@ -181,11 +191,15 @@
       var html = '<div class="page-header"><h2>我的设备</h2><span class="device-count">共 ' + devices.length + ' 台</span></div>';
       html += '<div class="device-list">';
       devices.forEach(function (d) {
-        var statusClass = 'status-' + d.status;
-        var statusTextClass = 'status-text-' + d.status;
-        html += '<div class="device-card ' + statusClass + '" onclick="navigate(\'device/' + d.de_re_id + '\')">' +
+        var pointID = devicePointID(d);
+        var status = valueStatusClass(d.value_status);
+        var statusClass = 'status-' + status;
+        var statusTextClass = 'status-text-' + status;
+        var title = escHtml(d.shed_no || '未设置棚号') + ' · 频点' + escHtml(d.freq);
+        var deviceNo = '设备ID ' + escHtml(d.devid || '--');
+        html += '<div class="device-card ' + statusClass + '" onclick="navigate(\'device/' + pointID + '\')">' +
           '<div class="device-card-header">' +
-            '<span class="device-card-title">' + escHtml(d.shed_no) + ' · ' + escHtml(d.collector_no) + '</span>' +
+            '<span class="device-card-title">' + title + '</span>' +
             '<span class="device-card-func">' + escHtml(d.func_name) + '</span>' +
           '</div>' +
           '<div class="device-card-body">' +
@@ -195,9 +209,9 @@
           '<div class="device-card-meta">' +
             '<span class="device-card-status">' +
               '<span class="status-dot"></span>' +
-              '<span class="' + statusTextClass + '">' + escHtml(d.status_label) + '</span>' +
+              '<span class="' + statusTextClass + '">' + escHtml(d.value_status_label || '--') + '</span>' +
             '</span>' +
-            '<span>' + formatTime(d.updated_at) + '</span>' +
+            '<span>' + deviceNo + ' · ' + formatTime(d.updated_at) + '</span>' +
           '</div>' +
         '</div>';
       });
@@ -219,12 +233,13 @@
     container.innerHTML = '<div class="loading-state"><div class="loading-spinner"></div><p>加载设备详情...</p></div>';
 
     try {
-      var res = await MockAPI.getDeviceRealtime(id);
+      var res = await NHApi.getDeviceRealtime(id);
       if (!res.data) {
         container.innerHTML = '<div class="error-state"><p>设备不存在</p><button class="btn btn-outline btn-sm" onclick="navigate(\'devices\')">返回列表</button></div>';
         return;
       }
       var d = res.data;
+      var pointID = devicePointID(d) || String(id);
 
       var controlHtml = '';
       if (d.func === 4 || d.func === 5 || d.func === 6) {
@@ -232,9 +247,9 @@
         controlHtml = '<div class="detail-section">' +
           '<h3>设备控制</h3>' +
           '<div class="detail-controls">' +
-            '<button class="btn btn-primary" onclick="doControl(' + d.de_re_id + ',\'start\')" ' + (d.status === 'on' ? 'disabled' : '') + '>开启</button>' +
-            '<button class="btn btn-outline" onclick="doControl(' + d.de_re_id + ',\'stop\')" ' + (d.status === 'off' ? 'disabled' : '') + '>停止</button>' +
-            '<button class="btn btn-danger" onclick="doControl(' + d.de_re_id + ',\'close\')" ' + (d.status === 'off' ? 'disabled' : '') + '>关闭</button>' +
+            '<button class="btn btn-primary" onclick="doControl(\'' + pointID + '\',\'start\')">开启</button>' +
+            '<button class="btn btn-outline" onclick="doControl(\'' + pointID + '\',\'stop\')">停止</button>' +
+            '<button class="btn btn-danger" onclick="doControl(\'' + pointID + '\',\'close\')">关闭</button>' +
           '</div>' +
         '</div>';
       } else if (d.func === 1 || d.func === 2) {
@@ -258,8 +273,9 @@
         rangeHint = '适宜范围：' + d.best_min + ' ~ ' + d.best_max + ' ' + escHtml(d.unit);
       }
 
-      var statusClass = 'status-' + d.status;
-      var statusTextClass = 'status-text-' + d.status;
+      var status = valueStatusClass(d.value_status);
+      var statusClass = 'status-' + status;
+      var statusTextClass = 'status-text-' + status;
 
       var html = '<div class="detail-section">' +
         '<h3>实时数据</h3>' +
@@ -267,7 +283,7 @@
           '<span class="big-value">' + (d.real_value != null ? d.real_value : '--') + '</span>' +
           '<span class="big-unit">' + escHtml(d.unit) + '</span>' +
           '<p class="range-hint">' + rangeHint + '</p>' +
-          '<p style="margin-top:4px"><span class="device-card-status"><span class="status-dot"></span><span class="' + statusTextClass + '">' + escHtml(d.status_label) + '</span></span></p>' +
+          '<p style="margin-top:4px"><span class="device-card-status ' + statusClass + '"><span class="status-dot"></span><span class="' + statusTextClass + '">' + escHtml(d.value_status_label || '--') + '</span></span></p>' +
         '</div>' +
       '</div>' +
 
@@ -275,9 +291,9 @@
         '<h3>基本信息</h3>' +
         '<div class="detail-grid">' +
           '<div class="detail-item"><div class="detail-item-label">棚号</div><div class="detail-item-value">' + escHtml(d.shed_no) + '</div></div>' +
-          '<div class="detail-item"><div class="detail-item-label">设备序号</div><div class="detail-item-value">' + escHtml(d.collector_no) + '</div></div>' +
+          '<div class="detail-item"><div class="detail-item-label">设备 ID</div><div class="detail-item-value">' + escHtml(d.devid || '--') + '</div></div>' +
           '<div class="detail-item"><div class="detail-item-label">频点</div><div class="detail-item-value">' + d.freq + '</div></div>' +
-          '<div class="detail-item"><div class="detail-item-label">设备 ID</div><div class="detail-item-value">' + d.devid + '</div></div>' +
+          '<div class="detail-item"><div class="detail-item-label">Point ID</div><div class="detail-item-value">' + escHtml(pointID) + '</div></div>' +
           '<div class="detail-item"><div class="detail-item-label">功能</div><div class="detail-item-value">' + escHtml(d.func_name) + '</div></div>' +
           '<div class="detail-item"><div class="detail-item-label">运行模式</div><div class="detail-item-value">' + escHtml(d.run_mode_label) + '</div></div>' +
         '</div>' +
@@ -291,7 +307,7 @@
       '</div>' +
 
       '<div style="margin-top:8px">' +
-        '<button class="btn btn-outline btn-block" onclick="navigate(\'history/' + d.de_re_id + '\')">查看历史曲线</button>' +
+        '<button class="btn btn-outline btn-block" onclick="navigate(\'history/' + pointID + '\')">查看历史曲线</button>' +
       '</div>';
 
       container.innerHTML = html;
@@ -304,8 +320,8 @@
     var actionLabels = { start: '开启', stop: '停止', close: '关闭' };
     showToast('正在' + (actionLabels[action] || action) + '...', 'info');
     try {
-      var res = await MockAPI.controlDevice(id, action);
-      if (res.data && res.data.status === 'succeeded') {
+      var res = await NHApi.controlDevice(id, action);
+      if (res.data && (res.data.status === 'succeeded' || res.data.status === 'created')) {
         showToast(res.data.message || '操作成功', 'success');
         // 刷新详情
         setTimeout(function () { renderPage(); }, 500);
@@ -318,19 +334,12 @@
   }
 
   // ---------- 历史曲线 ----------
-  var chartInstance = null;
-
   async function renderHistory(container, id) {
     if (!id) { navigate('devices'); return; }
     container.innerHTML = '<div class="loading-state"><div class="loading-spinner"></div><p>加载历史数据...</p></div>';
 
-    // 加载 Chart.js
-    if (typeof Chart === 'undefined') {
-      await loadScript('https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js');
-    }
-
     try {
-      var res = await MockAPI.getDeviceHistory(id, '24h');
+      var res = await NHApi.getDeviceHistory(id, '24h');
       if (!res.data) {
         container.innerHTML = '<div class="error-state"><p>设备不存在</p><button class="btn btn-outline btn-sm" onclick="navigate(\'device/' + id + '\')">返回详情</button></div>';
         return;
@@ -341,9 +350,9 @@
       var activeRange = '24h';
 
       var html = '<div class="range-tabs">' +
-        '<button class="range-tab" data-range="1h">近1小时</button>' +
         '<button class="range-tab active" data-range="24h">近24小时</button>' +
         '<button class="range-tab" data-range="7d">近7天</button>' +
+        '<button class="range-tab" data-range="30d">近30天</button>' +
       '</div>' +
       '<div class="chart-container">' +
         '<canvas id="history-chart"></canvas>' +
@@ -375,7 +384,7 @@
 
   async function loadHistoryData(id, range, info) {
     try {
-      var res = await MockAPI.getDeviceHistory(id, range);
+      var res = await NHApi.getDeviceHistory(id, range);
       if (res.data && res.data.points) {
         drawChart(res.data.points, info);
       }
@@ -385,10 +394,8 @@
   }
 
   function drawChart(points, info) {
-    if (chartInstance) { chartInstance.destroy(); chartInstance = null; }
-
-    var ctx = document.getElementById('history-chart');
-    if (!ctx) return;
+    var canvas = document.getElementById('history-chart');
+    if (!canvas) return;
 
     if (!points || points.length === 0) {
       var container = $('.chart-container');
@@ -396,82 +403,102 @@
       return;
     }
 
-    var labels = points.map(function (p) { return formatTime(p.time); });
-    var temps = points.map(function (p) { return p.real_temp; });
-    var humidities = points.map(function (p) { return p.real_humidity; });
+    var ctx = canvas.getContext('2d');
+    var rect = canvas.getBoundingClientRect();
+    var width = Math.max(rect.width || 320, 320);
+    var height = Math.max(rect.height || 220, 220);
+    var ratio = window.devicePixelRatio || 1;
+    canvas.width = Math.floor(width * ratio);
+    canvas.height = Math.floor(height * ratio);
+    ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+    ctx.clearRect(0, 0, width, height);
 
-    var datasets = [{
-      label: '温度 (°C)',
-      data: temps,
-      borderColor: '#c04a3a',
-      backgroundColor: 'rgba(192,74,58,0.08)',
-      fill: true,
-      tension: 0.3,
-      pointRadius: 0,
-      borderWidth: 1.5,
-    }];
-
-    if (info.func_name === '墒情') {
-      datasets = [{
-        label: '墒情 (%)',
-        data: humidities,
-        borderColor: '#3a6b8c',
-        backgroundColor: 'rgba(58,107,140,0.08)',
-        fill: true,
-        tension: 0.3,
-        pointRadius: 0,
-        borderWidth: 1.5,
-      }];
+    var padding = { left: 44, right: 18, top: 26, bottom: 36 };
+    var plotW = width - padding.left - padding.right;
+    var plotH = height - padding.top - padding.bottom;
+    var values = points.map(function (p) { return Number(p.real_temp); }).filter(function (v) { return Number.isFinite(v); });
+    if (values.length === 0) {
+      $('.chart-container').innerHTML = '<div class="empty-state"><p>暂无历史数据</p></div>';
+      return;
     }
 
-    // 添加适宜范围线
-    if (info.best_min != null && info.best_max != null) {
-      datasets.push({
-        label: '适宜上限',
-        data: points.map(function () { return info.best_max; }),
-        borderColor: 'rgba(74,124,63,0.4)',
-        borderDash: [4, 4],
-        borderWidth: 1,
-        pointRadius: 0,
-        fill: false,
-      });
-      datasets.push({
-        label: '适宜下限',
-        data: points.map(function () { return info.best_min; }),
-        borderColor: 'rgba(74,124,63,0.4)',
-        borderDash: [4, 4],
-        borderWidth: 1,
-        pointRadius: 0,
-        fill: false,
-      });
+    var min = Math.min.apply(null, values);
+    var max = Math.max.apply(null, values);
+    if (info.best_min != null) min = Math.min(min, Number(info.best_min));
+    if (info.best_max != null) max = Math.max(max, Number(info.best_max));
+    if (min === max) {
+      min -= 1;
+      max += 1;
+    }
+    var padY = (max - min) * 0.12;
+    min -= padY;
+    max += padY;
+
+    function xAt(i) {
+      return padding.left + (points.length === 1 ? plotW / 2 : (plotW * i / (points.length - 1)));
+    }
+    function yAt(value) {
+      return padding.top + plotH - ((value - min) / (max - min)) * plotH;
+    }
+    function drawGuide(value, label) {
+      if (value == null || !Number.isFinite(Number(value))) return;
+      var y = yAt(Number(value));
+      ctx.save();
+      ctx.strokeStyle = 'rgba(74,124,63,0.35)';
+      ctx.setLineDash([5, 5]);
+      ctx.beginPath();
+      ctx.moveTo(padding.left, y);
+      ctx.lineTo(width - padding.right, y);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = '#4a7c3f';
+      ctx.font = '11px sans-serif';
+      ctx.fillText(label, padding.left + 4, y - 4);
+      ctx.restore();
     }
 
-    chartInstance = new Chart(ctx, {
-      type: 'line',
-      data: { labels: labels, datasets: datasets },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        interaction: { intersect: false, mode: 'index' },
-        plugins: {
-          legend: {
-            display: true,
-            position: 'bottom',
-            labels: { boxWidth: 12, padding: 16, font: { size: 11 }, usePointStyle: true },
-          },
-        },
-        scales: {
-          x: {
-            ticks: { maxTicksLimit: 8, font: { size: 10 }, color: '#9ca393' },
-            grid: { display: false },
-          },
-          y: {
-            ticks: { font: { size: 10 }, color: '#9ca393' },
-            grid: { color: '#e2e6da' },
-          },
-        },
-      },
+    ctx.fillStyle = '#f8faf5';
+    ctx.fillRect(0, 0, width, height);
+
+    ctx.strokeStyle = '#e2e6da';
+    ctx.lineWidth = 1;
+    ctx.fillStyle = '#9ca393';
+    ctx.font = '11px sans-serif';
+    for (var g = 0; g <= 4; g++) {
+      var gy = padding.top + plotH * g / 4;
+      var gv = max - (max - min) * g / 4;
+      ctx.beginPath();
+      ctx.moveTo(padding.left, gy);
+      ctx.lineTo(width - padding.right, gy);
+      ctx.stroke();
+      ctx.fillText(gv.toFixed(1), 4, gy + 4);
+    }
+
+    drawGuide(info.best_max, '上限');
+    drawGuide(info.best_min, '下限');
+
+    ctx.strokeStyle = '#c04a3a';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    points.forEach(function (p, i) {
+      var value = Number(p.real_temp);
+      if (!Number.isFinite(value)) return;
+      var x = xAt(i);
+      var y = yAt(value);
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
     });
+    ctx.stroke();
+
+    ctx.fillStyle = '#5f6758';
+    ctx.font = '11px sans-serif';
+    ctx.fillText(formatTime(points[0].time), padding.left, height - 10);
+    ctx.textAlign = 'right';
+    ctx.fillText(formatTime(points[points.length - 1].time), width - padding.right, height - 10);
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#2f3a2a';
+    ctx.font = '12px sans-serif';
+    ctx.fillText((info.func_name || '采集值') + (info.unit ? ' (' + info.unit + ')' : ''), padding.left, 16);
   }
 
   // ---------- 设置 ----------
@@ -479,7 +506,7 @@
     container.innerHTML = '<div class="loading-state"><div class="loading-spinner"></div><p>加载用户信息...</p></div>';
 
     try {
-      var res = await MockAPI.getMe('mini');
+      var res = await NHApi.getMe('mini');
       if (!res.data) {
         container.innerHTML = '<div class="error-state"><p>加载失败</p></div>';
         return;
@@ -584,7 +611,7 @@
         btn.textContent = '保存中...';
 
         try {
-          var saveRes = await MockAPI.updateMyProfile({
+          var saveRes = await NHApi.updateMyProfile({
             display_name: displayName,
             mobile: mobile,
             address: address,
@@ -641,7 +668,7 @@
 
   function doLogout() {
     localStorage.removeItem('nh_mini_token');
-    localStorage.removeItem('user_id');
+    localStorage.removeItem('nh_mini_user');
     currentUser = null;
     showToast('已退出登录', 'info');
     navigate('login');
@@ -664,16 +691,6 @@
     '</div>';
   }
 
-  function loadScript(src) {
-    return new Promise(function (resolve, reject) {
-      var s = document.createElement('script');
-      s.src = src;
-      s.onload = resolve;
-      s.onerror = reject;
-      document.head.appendChild(s);
-    });
-  }
-
   // ============================================================
   // 初始化
   // ============================================================
@@ -683,12 +700,9 @@
     // 版本号
     console.info('%c涅凰智农 IoT (C端) v' + (window.APP_VERSION_STRING || '?'), 'color:#2ecc71;font-weight:bold');
 
-    // 恢复 token
-    var token = localStorage.getItem('nh_mini_token');
-    var uid = localStorage.getItem('user_id');
-    if (token && uid) {
-      MockAPI.setUserId(parseInt(uid));
-    }
+    // 清理旧版共享登录态，C 端只使用 nh_mini_*。
+    localStorage.removeItem('user_id');
+
     renderPage();
   });
 

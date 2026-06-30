@@ -272,7 +272,8 @@ LIMIT 1`, userID)
 }
 
 // UpdateMiniProfile updates editable profile fields for a mini-program farmer user.
-// Only display_name, mobile, address, remark are allowed. Empty values are skipped.
+// Only display_name, mobile, address, remark are allowed. Empty values are persisted
+// so mini-program farmers can clear optional profile fields.
 // The caller is responsible for validating that the user is a farmer (user_type=2).
 func (r *Repository) UpdateMiniProfile(ctx context.Context, userID uint64, updates map[string]string) error {
 	// Whitelist of allowed columns for mini-program self-edit.
@@ -283,14 +284,11 @@ func (r *Repository) UpdateMiniProfile(ctx context.Context, userID uint64, updat
 		"remark":       true,
 	}
 
-	// Build dynamic SET clause with only non-empty fields.
+	// Build dynamic SET clause with only explicitly supplied allowed fields.
 	var setClauses []string
 	var args []any
 	for col, val := range updates {
 		if !allowedColumns[col] {
-			continue
-		}
-		if val == "" {
 			continue
 		}
 		setClauses = append(setClauses, col+" = ?")

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"log"
+	"strings"
 	"time"
 
 	"nehuang-iot-server/internal/domain"
@@ -181,7 +182,7 @@ func (r *Repository) ListPayloadEvents(ctx context.Context, params domain.Payloa
 
 	// 查询列表
 	offset := (params.Page - 1) * params.Size
-	listQuery := `SELECT raw_event_id, COALESCE(gateway_name,''), event_type, parse_status,
+	listQuery := `SELECT raw_event_id, COALESCE(gateway_name,''), source_type, event_type, parse_status,
 		COALESCE(parse_error,''), COALESCE(message_id,''), event_count, parsed_count,
 		COALESCE(remote_ip,''), COALESCE(remote_port,0), received_at_ms,
 		COALESCE(payload_snapshot,'')
@@ -201,12 +202,14 @@ func (r *Repository) ListPayloadEvents(ctx context.Context, params domain.Payloa
 		var payloadSnapshot string
 		var receivedAt time.Time
 		if err := rows.Scan(
-			&item.RawEventID, &item.GatewayName, &item.EventType, &item.ParseStatus,
+			&item.RawEventID, &item.GatewayName, &item.SourceType, &item.EventType, &item.ParseStatus,
 			&item.ParseError, &item.MessageID, &item.EventCount, &item.ParsedCount,
 			&item.RemoteIP, &item.RemotePort, &receivedAt, &payloadSnapshot,
 		); err != nil {
 			return nil, 0, err
 		}
+		item.SourceTypeName = domain.SourceType(item.SourceType).SourceTypeName()
+		item.IsMock = isMockPayloadEvent(item.SourceType, item.MessageID, payloadSnapshot)
 		item.EventTypeName = domain.RawEventType(item.EventType).RawEventTypeName()
 		item.ParseStatusName = domain.ParseStatus(item.ParseStatus).ParseStatusName()
 		item.ReceivedAtMS = receivedAt.Format("2006-01-02 15:04:05")
@@ -225,13 +228,13 @@ func (r *Repository) GetPayloadEventDetail(ctx context.Context, rawEventID uint6
 
 	err := r.db.QueryRowContext(ctx, `
 SELECT raw_event_id, gateway_id, node_id, point_id,
-  COALESCE(gateway_name,''), event_type, parse_status,
+  COALESCE(gateway_name,''), source_type, event_type, parse_status,
   COALESCE(parse_error,''), COALESCE(message_id,''), event_count, parsed_count,
   COALESCE(remote_ip,''), COALESCE(remote_port,0), payload_snapshot,
   received_at_ms, created_at
 FROM raw_device_events WHERE raw_event_id = ?`, rawEventID,
 	).Scan(&d.RawEventID, &gwID, &nodeID, &pointID,
-		&d.GatewayName, &d.EventType, &d.ParseStatus,
+		&d.GatewayName, &d.SourceType, &d.EventType, &d.ParseStatus,
 		&d.ParseError, &d.MessageID, &d.EventCount, &d.ParsedCount,
 		&d.RemoteIP, &d.RemotePort, &payloadSnapshot,
 		&receivedAt, &createdAt)
@@ -255,10 +258,25 @@ FROM raw_device_events WHERE raw_event_id = ?`, rawEventID,
 		d.PayloadSnapshot = payloadSnapshot.String
 	}
 	d.EventTypeName = domain.RawEventType(d.EventType).RawEventTypeName()
+	d.SourceTypeName = domain.SourceType(d.SourceType).SourceTypeName()
+	d.IsMock = isMockPayloadEvent(d.SourceType, d.MessageID, d.PayloadSnapshot)
 	d.ParseStatusName = domain.ParseStatus(d.ParseStatus).ParseStatusName()
 	d.ReceivedAtMS = receivedAt.Format("2006-01-02 15:04:05")
 	d.CreatedAt = createdAt.Format("2006-01-02 15:04:05")
 	return &d, nil
+}
+
+func isMockPayloadEvent(sourceType uint8, messageID string, payloadSnapshot string) bool {
+	if domain.SourceType(sourceType) == domain.SourceTypeMock {
+		return true
+	}
+	msg := strings.ToLower(strings.TrimSpace(messageID))
+	if strings.HasPrefix(msg, "mock-") {
+		return true
+	}
+	payload := strings.ToLower(payloadSnapshot)
+	return strings.Contains(payload, `"source_type": "mock_script"`) ||
+		strings.Contains(payload, `"source_type":"mock_script"`)
 }
 
 // ─── 云边设备 ───
@@ -781,8 +799,8 @@ func (r *Repository) FindActiveBindingByUserAndPoint(ctx context.Context, userID
 	var b domain.BindRelation
 	var (
 		sUserID, sRealtimeID, sNodeID, sPointID, sCreatedBy sql.NullInt64
-		sUnboundAtMS                                           sql.NullTime
-		sExtra                                                 sql.NullString
+		sUnboundAtMS                                        sql.NullTime
+		sExtra                                              sql.NullString
 	)
 	err := r.db.QueryRowContext(ctx, `
 SELECT
@@ -850,8 +868,8 @@ func (r *Repository) FindActiveBindingByPoint(ctx context.Context, pointID uint6
 	var b domain.BindRelation
 	var (
 		sUserID, sRealtimeID, sNodeID, sPointID, sCreatedBy sql.NullInt64
-		sUnboundAtMS                                           sql.NullTime
-		sExtra                                                 sql.NullString
+		sUnboundAtMS                                        sql.NullTime
+		sExtra                                              sql.NullString
 	)
 	err := r.db.QueryRowContext(ctx, `
 SELECT
@@ -1085,13 +1103,20 @@ WHERE bind_status = 1`)
 
 	funcNameLabel := func(ft uint8) string {
 		switch ft {
-		case 1: return "温度"
-		case 2: return "墒情"
-		case 3: return "限位"
-		case 4: return "继电器"
-		case 5: return "水泵"
-		case 6: return "风机"
-		default: return "未知"
+		case 1:
+			return "温度"
+		case 2:
+			return "墒情"
+		case 3:
+			return "限位"
+		case 4:
+			return "继电器"
+		case 5:
+			return "水泵"
+		case 6:
+			return "风机"
+		default:
+			return "未知"
 		}
 	}
 
@@ -1156,8 +1181,8 @@ LIMIT 500`, userID)
 		var b domain.BindRelation
 		var (
 			sUserID, sRealtimeID, sNodeID, sPointID, sCreatedBy sql.NullInt64
-			sUnboundAtMS                                           sql.NullTime
-			sExtra                                                 sql.NullString
+			sUnboundAtMS                                        sql.NullTime
+			sExtra                                              sql.NullString
 		)
 		if err := rows.Scan(
 			&b.BindID,
@@ -1327,9 +1352,9 @@ LEFT JOIN (
   GROUP BY user_id
 ) bc ON u.user_id = bc.user_id
 WHERE u.user_type = 2 AND u.status <> 3
-  AND (u.display_name LIKE ? OR u.mobile LIKE ? OR u.wechat_openid LIKE ?)
-ORDER BY u.created_at DESC
-LIMIT 200`, like, like, like)
+	  AND (CAST(u.user_id AS CHAR) LIKE ? OR u.display_name LIKE ? OR u.mobile LIKE ? OR u.wechat_openid LIKE ?)
+	ORDER BY u.created_at DESC
+	LIMIT 200`, like, like, like, like)
 	} else {
 		rows, err = r.db.QueryContext(ctx, `
 SELECT
@@ -1579,7 +1604,7 @@ LIMIT 50`
 
 // 常量别名，避免写魔数。
 const (
-	RunModeAuto = 1
+	RunModeAuto    = 1
 	OpStateUnknown = 0
 )
 
@@ -1704,14 +1729,22 @@ func float64Value(v *float64) float64 {
 
 func valueStatusLabel(s uint8) string {
 	switch s {
-	case 0: return "unknown"
-	case 1: return "正常"
-	case 2: return "偏低"
-	case 3: return "偏高"
-	case 4: return "开启"
-	case 5: return "关闭"
-	case 6: return "离线"
-	default: return "未知"
+	case 0:
+		return "unknown"
+	case 1:
+		return "正常"
+	case 2:
+		return "偏低"
+	case 3:
+		return "偏高"
+	case 4:
+		return "开启"
+	case 5:
+		return "关闭"
+	case 6:
+		return "离线"
+	default:
+		return "未知"
 	}
 }
 
@@ -1724,10 +1757,15 @@ func runModeLabel(m uint8) string {
 
 func opTypeLabel(t uint8) string {
 	switch t {
-	case 1: return "绑定"
-	case 2: return "解绑"
-	case 3: return "控制"
-	case 4: return "配置"
-	default: return "未知"
+	case 1:
+		return "绑定"
+	case 2:
+		return "解绑"
+	case 3:
+		return "控制"
+	case 4:
+		return "配置"
+	default:
+		return "未知"
 	}
 }

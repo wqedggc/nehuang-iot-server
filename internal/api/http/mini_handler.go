@@ -309,21 +309,31 @@ func (h *miniHandler) handleUpdateMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 解析请求体。
-	var req struct {
-		DisplayName string `json:"display_name"`
-		Mobile      string `json:"mobile"`
-		Address     string `json:"address"`
-		Remark      string `json:"remark"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	// 解析请求体。只接受白名单字符串字段，同时保留“字段未传”和“字段传了空字符串”的区别。
+	var raw map[string]any
+	decoder := json.NewDecoder(r.Body)
+	decoder.UseNumber()
+	if err := decoder.Decode(&raw); err != nil {
 		writeCode(w, http.StatusBadRequest, 400, "invalid request body")
 		return
 	}
+	req := map[string]string{}
+	for _, field := range []string{"display_name", "mobile", "address", "remark"} {
+		val, ok := raw[field]
+		if !ok {
+			continue
+		}
+		strVal, ok := val.(string)
+		if !ok {
+			writeCode(w, http.StatusBadRequest, 400, field+" must be a string")
+			return
+		}
+		req[field] = strVal
+	}
 
 	// 校验 display_name：1-64 字符。
-	if req.DisplayName != "" {
-		runes := []rune(req.DisplayName)
+	if displayName, ok := req["display_name"]; ok {
+		runes := []rune(displayName)
 		if len(runes) < 1 || len(runes) > 64 {
 			writeCode(w, http.StatusBadRequest, 400, "display_name must be 1-64 characters")
 			return
@@ -331,23 +341,21 @@ func (h *miniHandler) handleUpdateMe(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 校验 mobile/address/remark：最长 512 字符。
-	for field, val := range map[string]string{
-		"mobile":  req.Mobile,
-		"address": req.Address,
-		"remark":  req.Remark,
-	} {
-		if len([]rune(val)) > 512 {
-			writeCode(w, http.StatusBadRequest, 400, field+" must be at most 512 characters")
-			return
+	for _, field := range []string{"mobile", "address", "remark"} {
+		if val, ok := req[field]; ok {
+			if len([]rune(val)) > 512 {
+				writeCode(w, http.StatusBadRequest, 400, field+" must be at most 512 characters")
+				return
+			}
 		}
 	}
 
-	// 构建更新 map。
-	updates := map[string]string{
-		"display_name": req.DisplayName,
-		"mobile":       req.Mobile,
-		"address":      req.Address,
-		"remark":       req.Remark,
+	// 构建更新 map，只包含请求体显式传入的白名单字段。
+	updates := map[string]string{}
+	for _, field := range []string{"display_name", "mobile", "address", "remark"} {
+		if val, ok := req[field]; ok {
+			updates[field] = val
+		}
 	}
 
 	if err := h.repo.UpdateMiniProfile(r.Context(), claims.UserID, updates); err != nil {

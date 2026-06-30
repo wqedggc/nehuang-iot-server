@@ -68,11 +68,11 @@ func (t RawEventType) RawEventTypeCSS() string {
 type RawEventType uint8
 
 const (
-	RawEventRegister       RawEventType = 1 // register：设备首次连接/注册
-	RawEventHeartbeat      RawEventType = 2 // heartbeat：设备在线状态刷新
-	RawEventWork           RawEventType = 3 // work：工作数据上报
-	RawEventControlResult  RawEventType = 4 // control_result：控制命令执行结果回传
-	RawEventJSONSnapshot   RawEventType = 5 // json_snapshot：JSON快照
+	RawEventRegister      RawEventType = 1 // register：设备首次连接/注册
+	RawEventHeartbeat     RawEventType = 2 // heartbeat：设备在线状态刷新
+	RawEventWork          RawEventType = 3 // work：工作数据上报
+	RawEventControlResult RawEventType = 4 // control_result：控制命令执行结果回传
+	RawEventJSONSnapshot  RawEventType = 5 // json_snapshot：JSON快照
 )
 
 // SourceType 事件来源。
@@ -82,17 +82,33 @@ const (
 	SourceTypeGateway SourceType = 1 // gateway：来自TCP Gateway
 	SourceTypeAdapter SourceType = 2 // adapter：来自HTTP Adapter API
 	SourceTypeManual  SourceType = 3 // manual：手动录入
+	SourceTypeMock    SourceType = 4 // mock：来自 mock_device_events.sh 等模拟上报脚本
 )
+
+func (s SourceType) SourceTypeName() string {
+	switch s {
+	case SourceTypeGateway:
+		return "gateway"
+	case SourceTypeAdapter:
+		return "adapter"
+	case SourceTypeManual:
+		return "manual"
+	case SourceTypeMock:
+		return "mock_script"
+	default:
+		return "unknown"
+	}
+}
 
 // ParseStatus 解析状态。
 type ParseStatus uint8
 
 const (
-	ParseStatusPending   ParseStatus = 1 // pending：待解析
-	ParseStatusParsed    ParseStatus = 2 // parsed：全部解析成功
-	ParseStatusFailed    ParseStatus = 3 // failed：解析失败
-	ParseStatusPartial   ParseStatus = 4 // partial：部分解析（新增）
-	ParseStatusIgnored   ParseStatus = 5 // ignored：手动忽略
+	ParseStatusPending ParseStatus = 1 // pending：待解析
+	ParseStatusParsed  ParseStatus = 2 // parsed：全部解析成功
+	ParseStatusFailed  ParseStatus = 3 // failed：解析失败
+	ParseStatusPartial ParseStatus = 4 // partial：部分解析（新增）
+	ParseStatusIgnored ParseStatus = 5 // ignored：手动忽略
 )
 
 // ParseStatusName returns the Chinese label for a ParseStatus.
@@ -145,8 +161,8 @@ type CollectorNode struct {
 	BaseName         string
 	AreaName         string
 	CollectorNo      *int
-	NodeStatus       uint8  // 1=active 2=disabled 3=deleted
-	OnlineStatus     uint8  // 0=离线 1=在线
+	NodeStatus       uint8 // 1=active 2=disabled 3=deleted
+	OnlineStatus     uint8 // 0=离线 1=在线
 	LastReportAtMS   *time.Time
 	LastRawEventID   *uint64
 	Remark           *string
@@ -226,13 +242,13 @@ func (ft FunctionType) FunctionTypeName() string {
 type ValueStatus uint8
 
 const (
-	ValueStatusUnknown  ValueStatus = 0 // unknown
-	ValueStatusNormal   ValueStatus = 1 // normal
-	ValueStatusLow      ValueStatus = 2 // low
-	ValueStatusHigh     ValueStatus = 3 // high
-	ValueStatusOpen     ValueStatus = 4 // open
-	ValueStatusClosed   ValueStatus = 5 // closed
-	ValueStatusOffline  ValueStatus = 6 // offline
+	ValueStatusUnknown ValueStatus = 0 // unknown
+	ValueStatusNormal  ValueStatus = 1 // normal
+	ValueStatusLow     ValueStatus = 2 // low
+	ValueStatusHigh    ValueStatus = 3 // high
+	ValueStatusOpen    ValueStatus = 4 // open
+	ValueStatusClosed  ValueStatus = 5 // closed
+	ValueStatusOffline ValueStatus = 6 // offline
 )
 
 // RunMode 运行模式。
@@ -280,24 +296,24 @@ type SensorData struct {
 
 // BindRelation 对应 bind_relations 表。
 type BindRelation struct {
-	BindID           uint64      `json:"bind_id,string"`
-	UserID           *uint64     `json:"user_id,string"`
-	BindUserName     string      `json:"bind_user_name"`
-	GatewayID        uint64      `json:"gateway_id,string"`
-	RealtimeID       *uint64     `json:"realtime_id,string"`
-	NodeID           *uint64     `json:"node_id,string"`
-	PointID          *uint64     `json:"point_id,string"`
-	ShedNo           string      `json:"shed_no"`
-	Frequency        int         `json:"frequency"`
-	DeviceExternalID string      `json:"device_external_id"`
+	BindID           uint64       `json:"bind_id,string"`
+	UserID           *uint64      `json:"user_id,string"`
+	BindUserName     string       `json:"bind_user_name"`
+	GatewayID        uint64       `json:"gateway_id,string"`
+	RealtimeID       *uint64      `json:"realtime_id,string"`
+	NodeID           *uint64      `json:"node_id,string"`
+	PointID          *uint64      `json:"point_id,string"`
+	ShedNo           string       `json:"shed_no"`
+	Frequency        int          `json:"frequency"`
+	DeviceExternalID string       `json:"device_external_id"`
 	FunctionType     FunctionType `json:"function_type"`
-	BindStatus       BindStatus  `json:"bind_status"`
-	BoundAtMS        time.Time   `json:"bound_at_ms"`
-	UnboundAtMS      *time.Time  `json:"unbound_at_ms"`
-	CreatedBy        *uint64     `json:"created_by,string"`
-	Extra            *string     `json:"extra"`
-	CreatedAt        time.Time   `json:"created_at"`
-	UpdatedAt        time.Time   `json:"updated_at"`
+	BindStatus       BindStatus   `json:"bind_status"`
+	BoundAtMS        time.Time    `json:"bound_at_ms"`
+	UnboundAtMS      *time.Time   `json:"unbound_at_ms"`
+	CreatedBy        *uint64      `json:"created_by,string"`
+	Extra            *string      `json:"extra"`
+	CreatedAt        time.Time    `json:"created_at"`
+	UpdatedAt        time.Time    `json:"updated_at"`
 }
 
 // BindStatus 绑定状态。
@@ -313,20 +329,20 @@ const (
 
 // ControlLogSummary 控制日志列表摘要，供管理端控制日志页使用。
 type ControlLogSummary struct {
-	OpID         uint64    `json:"op_id,string"`
-	GatewayID    uint64    `json:"gateway_id,string"`
-	GatewayName  string    `json:"gateway_name"`
-	BindUserName string    `json:"bind_usr_name"`
-	Frequency    int       `json:"freq"`
-	DevExternalID string   `json:"devid"`
-	FunctionType uint8     `json:"func"`
-	FunctionName string    `json:"func_name"`
-	OpType       string    `json:"op_type"`
-	RunMode      uint8     `json:"run_mode"`
-	CmdStatus    uint8     `json:"cmd_status"`
-	CmdStatusLabel string  `json:"cmd_status_label"`
-	Result       string    `json:"result"`
-	OpTime       time.Time `json:"op_time"`
+	OpID           uint64    `json:"op_id,string"`
+	GatewayID      uint64    `json:"gateway_id,string"`
+	GatewayName    string    `json:"gateway_name"`
+	BindUserName   string    `json:"bind_usr_name"`
+	Frequency      int       `json:"freq"`
+	DevExternalID  string    `json:"devid"`
+	FunctionType   uint8     `json:"func"`
+	FunctionName   string    `json:"func_name"`
+	OpType         string    `json:"op_type"`
+	RunMode        uint8     `json:"run_mode"`
+	CmdStatus      uint8     `json:"cmd_status"`
+	CmdStatusLabel string    `json:"cmd_status_label"`
+	Result         string    `json:"result"`
+	OpTime         time.Time `json:"op_time"`
 }
 
 // ─── C 端设备视图（聚合绑定+功能点） ───
@@ -383,21 +399,21 @@ type MiniHistoryPoint struct {
 
 // MiniDeviceHistory C 端历史数据响应。
 type MiniDeviceHistory struct {
-	PointID   uint64             `json:"point_id,string"`
-	FuncName  string             `json:"func_name"`
-	Unit      string             `json:"unit"`
-	BestMin   *float64           `json:"best_min"`
-	BestMax   *float64           `json:"best_max"`
-	Points    []MiniHistoryPoint `json:"points"`
+	PointID  uint64             `json:"point_id,string"`
+	FuncName string             `json:"func_name"`
+	Unit     string             `json:"unit"`
+	BestMin  *float64           `json:"best_min"`
+	BestMax  *float64           `json:"best_max"`
+	Points   []MiniHistoryPoint `json:"points"`
 }
 
 // ─── 设备树（管理端 device-tree 接口） ───
 
 // DeviceTreeNode 是设备树的顶层节点，对应一个 cloud_gateway。
 type DeviceTreeNode struct {
-	GatewayID   uint64               `json:"gateway_id,string"`
-	GatewayName string               `json:"gateway_name"`
-	Status      uint8                `json:"status"`
+	GatewayID   uint64                `json:"gateway_id,string"`
+	GatewayName string                `json:"gateway_name"`
+	Status      uint8                 `json:"status"`
 	Collectors  []DeviceTreeCollector `json:"collectors"`
 }
 
@@ -442,31 +458,34 @@ type DevicePointSearchResult struct {
 
 // PayloadEventQuery 是 payload 事件列表查询参数。
 type PayloadEventQuery struct {
-	Page        int        `json:"page"`
-	Size        int        `json:"size"`
-	EventType   *uint8     `json:"event_type"`
-	ParseStatus *uint8     `json:"parse_status"`
-	Start       *string    `json:"start"`
-	End         *string    `json:"end"`
-	Keyword     *string    `json:"keyword"`
+	Page        int     `json:"page"`
+	Size        int     `json:"size"`
+	EventType   *uint8  `json:"event_type"`
+	ParseStatus *uint8  `json:"parse_status"`
+	Start       *string `json:"start"`
+	End         *string `json:"end"`
+	Keyword     *string `json:"keyword"`
 }
 
 // PayloadEventListItem 是 payload 事件列表项。
 type PayloadEventListItem struct {
-	RawEventID     uint64 `json:"raw_event_id,string"`
-	GatewayName    string `json:"gateway_name"`
-	EventType      uint8  `json:"event_type"`
-	EventTypeName  string `json:"event_type_name"`
-	ParseStatus    uint8  `json:"parse_status"`
+	RawEventID      uint64 `json:"raw_event_id,string"`
+	GatewayName     string `json:"gateway_name"`
+	SourceType      uint8  `json:"source_type"`
+	SourceTypeName  string `json:"source_type_name"`
+	IsMock          bool   `json:"is_mock"`
+	EventType       uint8  `json:"event_type"`
+	EventTypeName   string `json:"event_type_name"`
+	ParseStatus     uint8  `json:"parse_status"`
 	ParseStatusName string `json:"parse_status_name"`
-	ParseError     string `json:"parse_error"`
-	MessageID      string `json:"message_id"`
-	EventCount     int    `json:"event_count"`
-	ParsedCount    int    `json:"parsed_count"`
-	RemoteIP       string `json:"remote_ip"`
-	RemotePort     int    `json:"remote_port"`
-	ReceivedAtMS   string `json:"received_at_ms"`
-	PayloadLen     int    `json:"payload_len"`
+	ParseError      string `json:"parse_error"`
+	MessageID       string `json:"message_id"`
+	EventCount      int    `json:"event_count"`
+	ParsedCount     int    `json:"parsed_count"`
+	RemoteIP        string `json:"remote_ip"`
+	RemotePort      int    `json:"remote_port"`
+	ReceivedAtMS    string `json:"received_at_ms"`
+	PayloadLen      int    `json:"payload_len"`
 }
 
 // PayloadEventDetail 是 payload 事件详情。
@@ -476,6 +495,9 @@ type PayloadEventDetail struct {
 	NodeID          *uint64 `json:"node_id,string,omitempty"`
 	PointID         *uint64 `json:"point_id,string,omitempty"`
 	GatewayName     string  `json:"gateway_name"`
+	SourceType      uint8   `json:"source_type"`
+	SourceTypeName  string  `json:"source_type_name"`
+	IsMock          bool    `json:"is_mock"`
 	EventType       uint8   `json:"event_type"`
 	EventTypeName   string  `json:"event_type_name"`
 	ParseStatus     uint8   `json:"parse_status"`

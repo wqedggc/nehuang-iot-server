@@ -20,16 +20,16 @@ import (
 // mockMiniRepoExt extends the mock to support handleMe and handleUpdateMe.
 type mockMiniRepoExt struct {
 	// GET /me data
-	userByID      *domain.User
-	userByIDErr   error
-	miniDevices   []domain.MiniDevice
+	userByID       *domain.User
+	userByIDErr    error
+	miniDevices    []domain.MiniDevice
 	miniDevicesErr error
 
 	// PATCH /me data
-	updateProfileCalled bool
-	updateProfileUserID uint64
+	updateProfileCalled  bool
+	updateProfileUserID  uint64
 	updateProfileUpdates map[string]string
-	updateProfileErr    error
+	updateProfileErr     error
 
 	// Track state for verification
 	mu sync.Mutex
@@ -568,16 +568,14 @@ func TestHandleUpdateMe_EmptyDisplayName_ReturnsValidationError(t *testing.T) {
 
 	handler.handleUpdateMe(rec, req)
 
-	// Empty display_name should be allowed (it means "don't update")
-	// Per the handler: req.DisplayName != "" check only triggers validation when non-empty
-	// So empty string is valid — it's skipped
-	if rec.Code != http.StatusOK {
-		t.Fatalf("empty display_name: want 200 (skip update), got %d, body=%s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("empty display_name: want 400, got %d, body=%s", rec.Code, rec.Body.String())
 	}
-
-	// Verify UpdateMiniProfile was called but display_name was empty (skipped by repo)
-	if !repo.updateProfileCalled {
-		t.Fatal("UpdateMiniProfile should have been called")
+	if !strings.Contains(rec.Body.String(), "display_name") {
+		t.Fatalf("empty display_name: response should mention display_name, body=%s", rec.Body.String())
+	}
+	if repo.updateProfileCalled {
+		t.Fatal("UpdateMiniProfile should not have been called")
 	}
 }
 

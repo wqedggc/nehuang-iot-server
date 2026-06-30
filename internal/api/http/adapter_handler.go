@@ -6,13 +6,14 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strings"
 
 	"nehuang-iot-server/internal/domain"
 )
 
 // adapterHandler 处理 /api/v1/adapter/* 端点的设备事件上报。
 type adapterHandler struct {
-	repo   adapterRepository
+	repo         adapterRepository
 	adapterToken string
 }
 
@@ -47,26 +48,26 @@ type adapterRepository interface {
 
 // deviceEventEnvelope 设备事件外层信封，对应实施计划中的统一事件结构。
 type deviceEventEnvelope struct {
-	ProtocolVersion     string              `json:"protocol_version"`
-	SourceType          string              `json:"source_type"`
-	MessageID           string              `json:"message_id"`
-	GatewayName         string              `json:"gateway_name"`
-	GatewayExternalID   string              `json:"gateway_external_id"`
-	RemoteIP            string              `json:"remote_ip"`
-	RemotePort          int                 `json:"remote_port"`
-	ReportedAtMS        string              `json:"reported_at_ms"`
-	Events              []deviceEvent       `json:"events"`
+	ProtocolVersion   string        `json:"protocol_version"`
+	SourceType        string        `json:"source_type"`
+	MessageID         string        `json:"message_id"`
+	GatewayName       string        `json:"gateway_name"`
+	GatewayExternalID string        `json:"gateway_external_id"`
+	RemoteIP          string        `json:"remote_ip"`
+	RemotePort        int           `json:"remote_port"`
+	ReportedAtMS      string        `json:"reported_at_ms"`
+	Events            []deviceEvent `json:"events"`
 }
 
 // deviceEvent 设备事件内层，对应 events[] 中的单条事件。
 type deviceEvent struct {
-	EventType         string   `json:"event_type"` // register / heartbeat / telemetry / control_result
-	Frequency         int      `json:"frequency"`
-	DeviceExternalID  string   `json:"device_external_id"`
-	FunctionType      uint8    `json:"function_type"`
-	ChannelNo         int      `json:"channel_no"`
-	Value             *float64 `json:"value"`
-	Unit              string   `json:"unit"`
+	EventType        string   `json:"event_type"` // register / heartbeat / telemetry / control_result
+	Frequency        int      `json:"frequency"`
+	DeviceExternalID string   `json:"device_external_id"`
+	FunctionType     uint8    `json:"function_type"`
+	ChannelNo        int      `json:"channel_no"`
+	Value            *float64 `json:"value"`
+	Unit             string   `json:"unit"`
 }
 
 // handleDeviceEvents 处理 POST /api/v1/adapter/device-events。
@@ -107,13 +108,14 @@ func (h *adapterHandler) handleDeviceEvents(w http.ResponseWriter, r *http.Reque
 	//    使用原始 bodyBytes 而非 json.Marshal(envelope)，避免反序列化再序列化
 	//    导致的字段顺序/精度/空白字符差异。
 	payloadSnapshot := string(bodyBytes)
+	sourceType := sourceTypeFromEnvelope(envelope.SourceType)
 
 	// 4. 先写 raw_device_events（原始事件保留，不做推断）。
 	//    这一步在所有业务逻辑之前，确保即使后续处理失败，原始数据也不丢失。
 	rawEvent := &domain.RawDeviceEvent{
 		GatewayName:     strPtr(envelope.GatewayName),
 		EventType:       domain.RawEventWork, // 默认 work，后续按 event_type 细分
-		SourceType:      domain.SourceTypeAdapter,
+		SourceType:      sourceType,
 		RemoteIP:        strPtr(envelope.RemoteIP),
 		RemotePort:      intPtr(envelope.RemotePort),
 		PayloadSnapshot: &payloadSnapshot,
@@ -173,7 +175,7 @@ func (h *adapterHandler) handleDeviceEvents(w http.ResponseWriter, r *http.Reque
 				IP:                envelope.RemoteIP,
 				Port:              envelope.RemotePort,
 				OnlineStatus:      1, // 在线
-				SourceType:        uint8(domain.SourceTypeAdapter),
+				SourceType:        uint8(sourceType),
 			}
 			gid, err := h.repo.UpsertGatewayByExternalID(r.Context(), gw)
 			if err != nil {
@@ -321,6 +323,19 @@ func (h *adapterHandler) handleDeviceEvents(w http.ResponseWriter, r *http.Reque
 func readAllBody(r *http.Request) ([]byte, error) {
 	defer r.Body.Close()
 	return io.ReadAll(r.Body)
+}
+
+func sourceTypeFromEnvelope(sourceType string) domain.SourceType {
+	switch strings.TrimSpace(strings.ToLower(sourceType)) {
+	case "mock_script", "mock", "mock_device_events":
+		return domain.SourceTypeMock
+	case "gateway":
+		return domain.SourceTypeGateway
+	case "manual":
+		return domain.SourceTypeManual
+	default:
+		return domain.SourceTypeAdapter
+	}
 }
 
 // strPtr 返回字符串指针，nil 时返回 nil。
