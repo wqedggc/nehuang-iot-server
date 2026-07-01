@@ -247,9 +247,9 @@ log_success "管理员账号已就绪 (username=admin)"
 log_info "Step 6/8: 编译服务端..."
 
 # 如果已有运行中的服务，先停止
-if pgrep -f "nehuang-server" &>/dev/null; then
+if pgrep -x "nehuang-server" &>/dev/null; then
     log_warn "检测到已有 nehuang-server 进程，正在停止..."
-    pkill -f "nehuang-server" || true
+    pkill -x "nehuang-server" || true
     sleep 2
 fi
 
