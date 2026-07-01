@@ -1320,18 +1320,20 @@ func (r *Repository) UnbindRelation(ctx context.Context, bindID uint64) error {
 
 // ─── 控制日志 ───
 
-// ListControlLogs 返回控制日志列表。
-func (r *Repository) ListControlLogs(ctx context.Context, limit int) ([]domain.ControlLogSummary, error) {
-	rows, err := r.db.QueryContext(ctx, `
+const listControlLogsQuery = `
 SELECT
-  op_id, gateway_id, cg.gateway_name,
-  bind_user_name, frequency, device_external_id,
-  op_type, run_mode, 0 as cmd_status,
-  op_content, operated_at_ms
+  op_records.op_id, op_records.gateway_id, cg.gateway_name,
+  op_records.bind_user_name, op_records.frequency, op_records.device_external_id,
+  op_records.op_type, op_records.run_mode, 0 as cmd_status,
+  op_records.op_content, op_records.operated_at_ms
 FROM op_records
 LEFT JOIN cloud_gateways cg ON op_records.gateway_id = cg.gateway_id
-ORDER BY operated_at_ms DESC
-LIMIT ?`, limit)
+ORDER BY op_records.operated_at_ms DESC
+LIMIT ?`
+
+// ListControlLogs 返回控制日志列表。
+func (r *Repository) ListControlLogs(ctx context.Context, limit int) ([]domain.ControlLogSummary, error) {
+	rows, err := r.db.QueryContext(ctx, listControlLogsQuery, limit)
 	if err != nil {
 		return nil, err
 	}
