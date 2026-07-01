@@ -498,7 +498,7 @@ func (h *miniHandler) handleDeviceHistory(w http.ResponseWriter, r *http.Request
 	// 读取 range 查询参数。
 	rangeType := r.URL.Query().Get("range")
 	if rangeType == "" {
-		rangeType = "24h"
+		rangeType = "1d"
 	}
 
 	points, err := h.repo.GetMiniDeviceHistory(r.Context(), pointID, rangeType)

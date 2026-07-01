@@ -37,7 +37,7 @@ ESCAPED_PASSWORD="$(sql_escape "$APP_PASSWORD")"
 mysql --protocol=TCP -h "$MYSQL_HOST" -P "$MYSQL_PORT" -u "$ADMIN_USER" -p <<SQL
 CREATE DATABASE IF NOT EXISTS \`$DB_NAME\`
   DEFAULT CHARACTER SET utf8mb4
-  DEFAULT COLLATE utf8mb4_0900_ai_ci;
+  DEFAULT COLLATE utf8mb4_unicode_ci;
 
 CREATE USER IF NOT EXISTS '$APP_USER'@'localhost'
   IDENTIFIED BY '$ESCAPED_PASSWORD';
@@ -64,5 +64,4 @@ EOF
 chmod 600 "$CREDENTIALS_FILE"
 
 echo "created credentials file: $CREDENTIALS_FILE"
-echo "next: scripts/mysql_nehuang.sh < schema/mysql/001_nehuang_v1.sql"
-
+echo "next: ./deploy.sh"

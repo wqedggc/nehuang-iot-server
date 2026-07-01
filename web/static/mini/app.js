@@ -339,7 +339,7 @@
     container.innerHTML = '<div class="loading-state"><div class="loading-spinner"></div><p>加载历史数据...</p></div>';
 
     try {
-      var res = await NHApi.getDeviceHistory(id, '24h');
+      var res = await NHApi.getDeviceHistory(id, '1d');
       if (!res.data) {
         container.innerHTML = '<div class="error-state"><p>设备不存在</p><button class="btn btn-outline btn-sm" onclick="navigate(\'device/' + id + '\')">返回详情</button></div>';
         return;
@@ -347,10 +347,11 @@
 
       var d = res.data;
       var points = d.points || [];
-      var activeRange = '24h';
+      var activeRange = '1d';
 
       var html = '<div class="range-tabs">' +
-        '<button class="range-tab active" data-range="24h">近24小时</button>' +
+        '<button class="range-tab active" data-range="1d">近1天</button>' +
+        '<button class="range-tab" data-range="3d">近3天</button>' +
         '<button class="range-tab" data-range="7d">近7天</button>' +
         '<button class="range-tab" data-range="30d">近30天</button>' +
       '</div>' +

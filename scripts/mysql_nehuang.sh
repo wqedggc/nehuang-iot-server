@@ -12,7 +12,7 @@ usage() {
 用法：
   scripts/mysql_nehuang.sh
   scripts/mysql_nehuang.sh -e "SHOW TABLES;"
-  scripts/mysql_nehuang.sh < schema/mysql/001_nehuang_v1.sql
+  scripts/mysql_nehuang.sh -e "SELECT * FROM schema_migrations;"
 
 默认凭证：
   configs/mysql/nehuang_agent.cnf
@@ -22,6 +22,7 @@ usage() {
 
 首次使用：
   scripts/init_mysql_nehuang.sh
+  ./deploy.sh
 USAGE
 }
 

@@ -206,7 +206,7 @@
   }
 
   // ---------- Dashboard ----------
-  var currentDashboardRange = '24h';
+  var currentDashboardRange = '1d';
   var currentDashboardData = null;
 
   async function renderDashboard(container) {
@@ -224,14 +224,14 @@
       var control = d.control || {};
 
       var rangeLabels = {
-        '1h': '1 小时',
-        '6h': '6 小时',
-        '24h': '24 小时',
-        '7d': '一周',
+        '1d': '1 天',
+        '3d': '3 天',
+        '7d': '7 天',
+        '30d': '30 天',
       };
-      var ranges = ['1h', '6h', '24h', '7d'];
+      var ranges = ['1d', '3d', '7d', '30d'];
       var rangeBtns = ranges.map(function (r) {
-        var active = r === (d.range || '24h') ? ' btn-primary' : ' btn-outline';
+        var active = r === (d.range || '1d') ? ' btn-primary' : ' btn-outline';
         return '<button class="btn btn-sm' + active + '" onclick="switchDashboardRange(\'' + r + '\')">' + (rangeLabels[r] || r) + '</button>';
       }).join('');
 

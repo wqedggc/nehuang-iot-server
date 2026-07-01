@@ -14,7 +14,7 @@ type adminDashboardHandler struct {
 }
 
 // handleDashboard 处理 Dashboard 请求。
-// Query: ?range=1h|6h|24h|7d（默认 24h）。
+// Query: ?range=1d|3d|7d|30d（兼容 1h|6h|24h，默认 1d）。
 func (h *adminDashboardHandler) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	// 校验 Method
 	if r.Method != http.MethodGet {
@@ -25,7 +25,7 @@ func (h *adminDashboardHandler) handleDashboard(w http.ResponseWriter, r *http.R
 	// 解析 range 参数
 	rangeStr := r.URL.Query().Get("range")
 	if rangeStr == "" {
-		rangeStr = "24h"
+		rangeStr = "1d"
 	}
 
 	// 校验 range 合法性

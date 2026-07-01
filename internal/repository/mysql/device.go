@@ -627,8 +627,12 @@ func (r *Repository) GetMiniDeviceHistory(ctx context.Context, pointID uint64, r
 	switch rangeType {
 	case "1h":
 		since = time.Now().Add(-1 * time.Hour)
-	case "24h":
+	case "6h":
+		since = time.Now().Add(-6 * time.Hour)
+	case "1d", "24h":
 		since = time.Now().Add(-24 * time.Hour)
+	case "3d":
+		since = time.Now().Add(-3 * 24 * time.Hour)
 	case "7d":
 		since = time.Now().Add(-7 * 24 * time.Hour)
 	case "30d":
@@ -696,13 +700,15 @@ VALUES
 // UpsertDeviceRealtimeMap 同步更新 device_realtime_maps 兼容投影表。
 // 新代码优先以 device_points 为实时状态主表，此表仅做兼容。
 func (r *Repository) UpsertDeviceRealtimeMap(ctx context.Context, point *domain.DevicePoint) error {
-	// 按 gateway_id + frequency + device_external_id + function_type 查找。
+	projection := newDeviceRealtimeMapProjection(point)
+
+	// 按 gateway_id + frequency + device_external_id + function_type + channel_no 查找。
 	var existingID uint64
 	err := r.db.QueryRowContext(ctx,
 		`SELECT realtime_id FROM device_realtime_maps
-		 WHERE gateway_id = ? AND frequency = ? AND device_external_id = ? AND function_type = ?
+		 WHERE gateway_id = ? AND frequency = ? AND device_external_id = ? AND function_type = ? AND channel_no = ?
 		 LIMIT 1`,
-		point.GatewayID, point.Frequency, point.DeviceExternalID, uint8(point.FunctionType),
+		projection.GatewayID, projection.Frequency, projection.DeviceExternalID, projection.FunctionType, projection.ChannelNo,
 	).Scan(&existingID)
 
 	now := time.Now()
@@ -714,9 +720,9 @@ func (r *Repository) UpsertDeviceRealtimeMap(ctx context.Context, point *domain.
 			     node_id = ?, point_id = ?,
 			     unit = ?, last_report_at_ms = ?, updated_at = ?
 			 WHERE realtime_id = ?`,
-			nullableFloat64(point.RealValue), point.RealTemp, uint8(point.ValueStatus),
-			point.NodeID, &existingID,
-			point.Unit, now, now,
+			nullableFloat64(projection.RealValue), projection.RealTemp, projection.ValueStatus,
+			projection.NodeID, projection.PointID,
+			projection.Unit, now, now,
 			existingID,
 		)
 		return err
@@ -732,20 +738,50 @@ func (r *Repository) UpsertDeviceRealtimeMap(ctx context.Context, point *domain.
 	_, err = r.db.ExecContext(ctx, `
 INSERT INTO device_realtime_maps
   (realtime_id, gateway_id, node_id, point_id,
-   frequency, device_external_id, function_type,
+   frequency, device_external_id, function_type, channel_no,
    unit, real_value, real_temp, value_status,
    run_mode, poll_interval, last_report_at_ms,
    created_at, updated_at)
 VALUES
-  (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		rtID, point.GatewayID, point.NodeID, point.PointID,
-		point.Frequency, point.DeviceExternalID, uint8(point.FunctionType),
-		point.Unit,
-		nullableFloat64(point.RealValue), point.RealTemp, uint8(point.ValueStatus),
+  (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		rtID, projection.GatewayID, projection.NodeID, projection.PointID,
+		projection.Frequency, projection.DeviceExternalID, projection.FunctionType, projection.ChannelNo,
+		projection.Unit,
+		nullableFloat64(projection.RealValue), projection.RealTemp, projection.ValueStatus,
 		uint8(RunModeAuto), 300, now,
 		now, now,
 	)
 	return err
+}
+
+type deviceRealtimeMapProjection struct {
+	GatewayID        uint64
+	NodeID           uint64
+	PointID          uint64
+	Frequency        int
+	DeviceExternalID string
+	FunctionType     uint8
+	ChannelNo        int
+	Unit             string
+	RealValue        *float64
+	RealTemp         float64
+	ValueStatus      uint8
+}
+
+func newDeviceRealtimeMapProjection(point *domain.DevicePoint) deviceRealtimeMapProjection {
+	return deviceRealtimeMapProjection{
+		GatewayID:        point.GatewayID,
+		NodeID:           point.NodeID,
+		PointID:          point.PointID,
+		Frequency:        point.Frequency,
+		DeviceExternalID: point.DeviceExternalID,
+		FunctionType:     uint8(point.FunctionType),
+		ChannelNo:        point.ChannelNo,
+		Unit:             point.Unit,
+		RealValue:        point.RealValue,
+		RealTemp:         point.RealTemp,
+		ValueStatus:      uint8(point.ValueStatus),
+	}
 }
 
 // ─── 绑定关系 ───

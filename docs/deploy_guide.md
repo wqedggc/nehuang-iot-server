@@ -1,6 +1,6 @@
 # 涅凰智农 IoT — 部署流程文档
 
-> 最后更新：2026-06-29（前端嵌入二进制 + deploy.sh 一键部署）
+> 最后更新：2026-07-01（双远端推送 + GitHub device flow）
 
 ## 一、服务器信息
 
@@ -20,8 +20,9 @@
 | 仓库 | 地址 |
 |------|------|
 | Go 服务端（含前端） | `https://cnb.cool/wqedggc/nehuang-iot-server`（CNB） |
+| Go 服务端（GitHub 镜像） | `https://github.com/wqedggc/nehuang-iot-server.git`（GitHub） |
 
-本地项目路径：`~/Library/Mobile Documents/com~apple~CloudDocs/Knowledge/nehuang-iot-server/`
+本地项目路径：`/Users/shore/Desktop/ShoreOS/services/nehuang-iot-server/`
 
 > **注意**：前端静态文件已通过 `//go:embed` 嵌入 Go 二进制中，无需独立的前端仓库。前端代码在 `web/static/` 目录下，与服务端代码同仓库管理。
 
@@ -54,7 +55,7 @@
 │   ├── mini/                   # C 端 HTML/CSS/JS
 │   └── mock/                   # Mock API 层（mock-api.js）
 ├── configs/mysql/              # MySQL 配置文件（nehuang_agent.cnf）
-├── schema/mysql/               # 数据库 DDL（001_nehuang_v1.sql）
+├── schema/mysql/               # 数据库迁移 SQL（001-005，deploy.sh 顺序执行）
 ├── scripts/
 │   └── mock_device_events.sh   # Mock 设备事件上报脚本
 ├── .env                        # 环境变量（JWT secret、MySQL 密码等）
@@ -122,6 +123,11 @@ NEHUANG_MYSQL_PASSWORD=Nehuang@2026!
 NEHUANG_MYSQL_HOST=127.0.0.1
 NEHUANG_MYSQL_PORT=3306
 NEHUANG_MYSQL_DATABASE=nehuang_db
+
+# 离线扫描（默认开启）
+NEHUANG_OFFLINE_SCAN_ENABLED=true
+NEHUANG_OFFLINE_THRESHOLD_SECONDS=35
+NEHUANG_OFFLINE_SCAN_INTERVAL_SECONDS=10
 ```
 
 ## 六、首次部署流程
@@ -169,7 +175,7 @@ chmod +x deploy.sh
 1. 检查前置条件（Go、MySQL 客户端）
 2. 加载 `.env` 环境变量
 3. 生成 MySQL 配置文件 `configs/mysql/nehuang_agent.cnf`
-4. 执行建表 DDL（`schema/mysql/001_nehuang_v1.sql`）
+4. 创建/检查 `schema_migrations`，按顺序执行 `schema/mysql/*.sql`
 5. 创建管理员账号（user_id=10001, username=admin）
 6. 编译服务端二进制（含嵌入式前端）
 7. 后台启动服务
@@ -204,12 +210,16 @@ curl -X POST http://localhost:8080/api/v1/admin/login \
 
 ```bash
 # === 本地操作 ===
-cd ~/Library/Mobile\ Documents/com~apple~CloudDocs/Knowledge/nehuang-iot-server/
+cd /Users/shore/Desktop/ShoreOS/services/nehuang-iot-server/
 
-# 修改代码后提交推送
+# 修改代码后提交，并推送到 CNB + GitHub
 git add -A
 git commit -m "描述你的改动"
 git push cnb master
+/Users/shore/Desktop/Knowledge/tools/github_device_push.sh \
+  --repo /Users/shore/Desktop/ShoreOS/services/nehuang-iot-server \
+  --remote origin \
+  --ref master
 
 # === 服务器操作 ===
 ssh -i ~/shore.pem root@43.143.208.153
@@ -244,6 +254,10 @@ curl http://localhost:8080/healthz
 git add -A
 git commit -m "feat: 描述前端改动"
 git push cnb master
+/Users/shore/Desktop/Knowledge/tools/github_device_push.sh \
+  --repo /Users/shore/Desktop/ShoreOS/services/nehuang-iot-server \
+  --remote origin \
+  --ref master
 
 # === 服务器操作 ===
 ssh -i ~/shore.pem root@43.143.208.153
@@ -411,9 +425,10 @@ Gateway (云边网关) ──1:N──→ CollectorNode (采集执行器) ──
 3. **CORS 中间件**：已在 `server.go` 的 `Routes()` 最外层应用，允许所有来源跨域访问。
 4. **安全组**：需要在腾讯云控制台放行 8080 端口（TCP 入站），否则外网无法访问。
 5. **CNB token**：服务器 git remote 中嵌入了 token，生产环境建议改用 SSH key 认证。
-6. **前端模式切换**：`web/static/mock/mock-api.js` 中 `MODE` 变量控制调真实 API（`'real'`）还是本地 mock（`'mock'`）。当前已设为 `'real'`，后端未实现的接口会自动 fallback mock。
-7. **Adapter Token**：`NEHUANG_ADAPTER_TOKEN` 用于设备事件上报接口认证，不走用户 JWT。服务器 `.env` 中必须配置，Mock 脚本和未来 Gateway 都需要使用此 token。
-8. **NewServer 签名**：`NewServer(repo repository, cfg config.Config)`，接收完整 Config（含 JWT + AdapterToken）。
-9. **二进制名**：统一使用 `nehuang-server`，编译命令为 `go build -o nehuang-server ./cmd/server/`。
-10. **环境变量**：Go 程序通过 `os.Getenv` 读取环境变量，`.env` 文件由 `deploy.sh` 加载。手动 `nohup` 启动时确保所需环境变量已 export（或使用 `deploy.sh` 自动处理）。
-11. **部署铁律**：所有代码变更（后端 + 前端）必须走 `git commit → git push → 服务器 git pull → go build` 流程，严禁 scp 覆盖。
+6. **GitHub 认证**：本机或 Agent 推送 GitHub 时必须使用 `/Users/shore/Desktop/Knowledge/tools/github_device_push.sh`。该脚本使用 device flow 和临时 `GH_CONFIG_DIR`，并在 `git push` 时清空默认 credential helper，禁止使用 macOS Keychain 或登录钥匙串密码。
+7. **前端模式切换**：`web/static/mock/mock-api.js` 中 `MODE` 变量控制调真实 API（`'real'`）还是本地 mock（`'mock'`）。当前已设为 `'real'`，后端未实现的接口会自动 fallback mock。
+8. **Adapter Token**：`NEHUANG_ADAPTER_TOKEN` 用于设备事件上报接口认证，不走用户 JWT。服务器 `.env` 中必须配置，Mock 脚本和未来 Gateway 都需要使用此 token。
+9. **NewServer 签名**：`NewServer(repo repository, cfg config.Config)`，接收完整 Config（含 JWT + AdapterToken）。
+10. **二进制名**：统一使用 `nehuang-server`，编译命令为 `go build -o nehuang-server ./cmd/server/`。
+11. **环境变量**：Go 程序通过 `os.Getenv` 读取环境变量，`.env` 文件由 `deploy.sh` 加载。手动 `nohup` 启动时确保所需环境变量已 export（或使用 `deploy.sh` 自动处理）。
+12. **部署铁律**：所有代码变更（后端 + 前端）必须走 `git commit → git push → 服务器 git pull → go build` 流程，严禁 scp 覆盖。

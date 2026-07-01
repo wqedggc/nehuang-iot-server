@@ -15,7 +15,7 @@
 在项目目录执行：
 
 ```bash
-cd /Users/shore/Knowledge/nehuang-iot-server
+cd /Users/shore/Desktop/ShoreOS/services/nehuang-iot-server
 scripts/init_mysql_nehuang.sh
 ```
 
@@ -28,13 +28,14 @@ scripts/init_mysql_nehuang.sh
 
 脚本会提示输入本机 MySQL 管理员密码，也会提示输入 `nehuang_agent` 的新密码。
 
-## 3. 导入表结构
+## 3. 执行表结构迁移
 
 ```bash
-cd /Users/shore/Knowledge/nehuang-iot-server
-scripts/mysql_nehuang.sh < schema/mysql/001_nehuang_v1.sql
-scripts/mysql_nehuang.sh < schema/mysql/002_device_node_point_model.sql
+cd /Users/shore/Desktop/ShoreOS/services/nehuang-iot-server
+./deploy.sh
 ```
+
+`deploy.sh` 会按顺序执行 `schema/mysql/*.sql`，并通过 `schema_migrations` 记录已执行版本。
 
 验证：
 
@@ -45,7 +46,7 @@ scripts/mysql_nehuang.sh -e "SHOW TABLES;"
 ## 4. 日常连接
 
 ```bash
-cd /Users/shore/Knowledge/nehuang-iot-server
+cd /Users/shore/Desktop/ShoreOS/services/nehuang-iot-server
 scripts/mysql_nehuang.sh
 ```
 

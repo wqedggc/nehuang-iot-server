@@ -139,7 +139,7 @@
       return request('GET', '/api/v1/mini/devices/' + encodeURIComponent(pointID) + '/realtime');
     },
     getDeviceHistory: function (pointID, range) {
-      return request('GET', '/api/v1/mini/devices/' + encodeURIComponent(pointID) + '/history?range=' + encodeURIComponent(range || '24h'));
+      return request('GET', '/api/v1/mini/devices/' + encodeURIComponent(pointID) + '/history?range=' + encodeURIComponent(range || '1d'));
     },
     controlDevice: function (pointID, action) {
       return request('POST', '/api/v1/mini/devices/' + encodeURIComponent(pointID) + '/control', { action: action });
@@ -188,6 +188,9 @@
       if (keyword) params.push('keyword=' + encodeURIComponent(keyword));
       if (bindStatus) params.push('bind_status=' + encodeURIComponent(bindStatus));
       return request('GET', '/api/v1/admin/device-points' + (params.length ? '?' + params.join('&') : ''));
+    },
+    updateDevicePoint: function (pointID, data) {
+      return request('PATCH', '/api/v1/admin/device-points/' + encodeURIComponent(pointID), data);
     },
     getPayloadEvents: function (params) {
       var qs = [];

@@ -1,49 +1,45 @@
-# 涅凰智农 IoT 云平台 V1.0
+# 涅凰智农 IoT 服务端
 
-本目录是涅凰智农新 Go 服务端的项目上下文与后续工程落点。
+这是涅凰智农 IoT 平台的 Go 服务端仓库，包含 REST API、MySQL 数据访问、嵌入式 Admin/C 端 H5 页面和 Adapter 设备事件入口。
 
-新开 Codex 线程或上下文丢失时，先读：
+私有项目背景、甲方资料、产品判断和长期复盘不在本代码仓维护；当前代码事实以本 README、`docs/current_api.md` 和 `schema/mysql/README.md` 为准。
 
-1. `docs/project_context.md`
-2. `docs/table_structure_v1.md`
-3. `docs/architecture_v1.md`
-4. `docs/mysql_setup.md`
-5. `schema/mysql/001_nehuang_v1.sql`
-6. `schema/mysql/002_device_node_point_model.sql`
-
-辅助图：
-
-- `docs/server_architecture_visual.html`：服务端视角全局架构图
-- `docs/system_views_visual.html`：硬件链路、农户视角、管理员视角说明图
-
-当前结论：保留旧 Python Gateway 的 TCP 接入职责，业务平台新建；MySQL 是业务唯一事实来源，`devices.json` 只作为 Gateway 输出缓存和短期 Adapter 输入。
-
-表结构以 `schema/mysql/001_nehuang_v1.sql` 和 `schema/mysql/002_device_node_point_model.sql` 为最终 DDL，字段说明和写库 cycle 以 `docs/table_structure_v1.md` 为准。
-
-本地 MySQL 初始化和导入方式见 `docs/mysql_setup.md`。不要复用 `shoreos_agent`，涅凰平台使用独立的 `nehuang_db` 和 `nehuang_agent`。
-
-## 当前 Go 服务端骨架
-
-框架选择：当前不引入 Gin / Hertz，先使用 Go 标准库 `net/http`。原因是一期目标是尽快把“数据库 -> 业务服务 -> REST API”的通路跑通，标准库已经支持路由、JSON 响应、中间件和优雅退出，依赖最少，后续如需统一接入更多 Web 能力再替换为 Gin 也不难。
-
-启动：
+## Quick Start
 
 ```bash
-cd /Users/shore/Knowledge/nehuang-iot-server
+cd /Users/shore/Desktop/ShoreOS/services/nehuang-iot-server
+go test ./...
 go run ./cmd/server
 ```
 
-如需换端口：
+服务默认读取：
 
-```bash
-NEHUANG_HTTP_ADDR=:18080 go run ./cmd/server
-```
+- MySQL defaults file：`configs/mysql/nehuang_agent.cnf`
+- HTTP 地址：`NEHUANG_HTTP_ADDR`，默认 `:8080`
+- Adapter token：`NEHUANG_ADAPTER_TOKEN`
+- JWT secret：`NEHUANG_JWT_SECRET`
 
-当前接口：
+## Commands
 
-```text
-GET /healthz
-GET /readyz
-GET /api/v1/admin/dashboard
-GET /api/v1/gateways
-```
+| Command | Description |
+|---------|-------------|
+| `go test ./...` | 运行后端测试 |
+| `go build ./cmd/server` | 编译服务端 |
+| `go build ./cmd/hash_password` | 编译部署脚本使用的密码哈希工具 |
+| `bash -n deploy.sh` | 检查部署脚本语法 |
+| `./deploy.sh` | 加载 `.env`、执行迁移、创建管理员、编译并启动服务 |
+
+## Architecture
+
+- HTTP：Go 标准库 `net/http`。
+- Frontend：`web/static/` 通过 `//go:embed` 打进服务端二进制。
+- Database：MySQL `nehuang_db`，schema 位于 `schema/mysql/*.sql`。
+- Auth：Admin/Mini 使用不同 JWT audience；Adapter 使用 `X-Adapter-Token`。
+- Device model：`cloud_gateways -> collector_nodes -> device_points` 是主模型，`device_realtime_maps` 只做兼容投影。
+
+## Docs
+
+- 当前 API：`docs/current_api.md`
+- 部署流程：`docs/deploy_guide.md`
+- 表结构和迁移：`schema/mysql/README.md`
+- 历史产品/架构材料：`docs/` 下旧文档，仅作背景参考，改动前先核对代码事实。

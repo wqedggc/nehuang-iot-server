@@ -128,6 +128,14 @@ func (s *Server) Routes() http.Handler {
 		authMiddleware(secret, adminRoles(http.HandlerFunc(ah.handleDeviceTree))))
 	mux.Handle("/api/v1/admin/device-points",
 		authMiddleware(secret, adminRoles(http.HandlerFunc(ah.handleDevicePointSearch))))
+	mux.Handle("/api/v1/admin/device-points/",
+		authMiddleware(secret, adminRoles(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodPatch {
+				ah.handleDevicePointUpdate(w, r)
+			} else {
+				writeCode(w, http.StatusMethodNotAllowed, 405, "method not allowed")
+			}
+		}))))
 	mux.Handle("/api/v1/admin/payload-events",
 		authMiddleware(secret, adminRoles(http.HandlerFunc(ah.handlePayloadEvents))))
 	mux.Handle("/api/v1/admin/payload-events/",

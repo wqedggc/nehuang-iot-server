@@ -12,6 +12,7 @@ import (
 	httpapi "nehuang-iot-server/internal/api/http"
 	"nehuang-iot-server/internal/config"
 	mysqlrepo "nehuang-iot-server/internal/repository/mysql"
+	"nehuang-iot-server/internal/service"
 )
 
 func main() {
@@ -28,6 +29,19 @@ func main() {
 
 	repo := mysqlrepo.New(db)
 	handler := httpapi.NewServer(repo, cfg)
+
+	offlineCtx, stopOfflineScanner := context.WithCancel(context.Background())
+	defer stopOfflineScanner()
+	if cfg.OfflineScan.Enabled {
+		scanner := service.NewOfflineScanner(
+			repo,
+			time.Duration(cfg.OfflineScan.ThresholdSeconds)*time.Second,
+			time.Duration(cfg.OfflineScan.IntervalSeconds)*time.Second,
+		)
+		go scanner.Run(offlineCtx)
+		log.Printf("offline scanner enabled threshold=%ds interval=%ds",
+			cfg.OfflineScan.ThresholdSeconds, cfg.OfflineScan.IntervalSeconds)
+	}
 
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
@@ -52,6 +66,8 @@ func main() {
 			log.Fatalf("server error: %v", err)
 		}
 	}
+
+	stopOfflineScanner()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

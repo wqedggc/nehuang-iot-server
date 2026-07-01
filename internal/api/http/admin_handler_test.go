@@ -17,8 +17,12 @@ import (
 // ─── Mock repository for admin handler tests ──────────────────────────────────
 
 type mockAdminRepo struct {
-	userByUsername    *domain.User
-	userByUsernameErr error
+	userByUsername       *domain.User
+	userByUsernameErr    error
+	devicePointByID      *domain.DevicePoint
+	updateDevicePointErr error
+	updatedPointID       uint64
+	updatedPointInput    domain.DevicePointUpdateInput
 }
 
 func (m *mockAdminRepo) GetUserByUsername(ctx context.Context, username string) (*domain.User, error) {
@@ -61,7 +65,7 @@ func (m *mockAdminRepo) GetDeviceTree(ctx context.Context) ([]domain.DeviceTreeN
 	return nil, nil
 }
 func (m *mockAdminRepo) FindDevicePointByID(ctx context.Context, pointID uint64) (*domain.DevicePoint, error) {
-	return nil, nil
+	return m.devicePointByID, nil
 }
 func (m *mockAdminRepo) FindActiveBindingByUserAndPoint(ctx context.Context, userID uint64, pointID uint64) (*domain.BindRelation, error) {
 	return nil, nil
@@ -71,6 +75,11 @@ func (m *mockAdminRepo) FindActiveBindingByPoint(ctx context.Context, pointID ui
 }
 func (m *mockAdminRepo) SearchDevicePoints(ctx context.Context, keyword string, bindStatus string) ([]domain.DevicePointSearchResult, error) {
 	return nil, nil
+}
+func (m *mockAdminRepo) UpdateDevicePointConfig(ctx context.Context, pointID uint64, input domain.DevicePointUpdateInput) error {
+	m.updatedPointID = pointID
+	m.updatedPointInput = input
+	return m.updateDevicePointErr
 }
 func (m *mockAdminRepo) ListPayloadEvents(ctx context.Context, params domain.PayloadEventQuery) ([]domain.PayloadEventListItem, int, error) {
 	return nil, 0, nil
@@ -179,5 +188,103 @@ func TestAdminLogin_InvalidPassword_Returns4013(t *testing.T) {
 	// Should return code 4013
 	if !contains(rec.Body.String(), "4013") {
 		t.Errorf("wrong password should return code 4013, got: %s", rec.Body.String())
+	}
+}
+
+func TestHandleDevicePointUpdate_Success(t *testing.T) {
+	bestMax := 30.0
+	repo := &mockAdminRepo{
+		devicePointByID: &domain.DevicePoint{
+			PointID: 1001,
+			NodeID:  2001,
+			BestMax: &bestMax,
+		},
+	}
+	handler := &adminHandler{repo: repo}
+
+	body := `{"point_name":" A棚温度 ","shed_no":" A棚 ","unit":"C","best_min":18,"run_mode":2,"controllable_status":1,"poll_interval":300,"poll_cmd":"0102","point_status":1,"remark":" 现场 "}`
+	req := httptest.NewRequest("PATCH", "/api/v1/admin/device-points/1001", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.handleDevicePointUpdate(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("patch device point: want 200, got %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if repo.updatedPointID != 1001 {
+		t.Fatalf("updated point id: want 1001, got %d", repo.updatedPointID)
+	}
+	if repo.updatedPointInput.PointName == nil || *repo.updatedPointInput.PointName != "A棚温度" {
+		t.Fatalf("point_name was not trimmed/applied: %#v", repo.updatedPointInput.PointName)
+	}
+	if repo.updatedPointInput.ShedNo == nil || *repo.updatedPointInput.ShedNo != "A棚" {
+		t.Fatalf("shed_no was not trimmed/applied: %#v", repo.updatedPointInput.ShedNo)
+	}
+	if repo.updatedPointInput.PollCmd == nil || *repo.updatedPointInput.PollCmd != "0102" {
+		t.Fatalf("poll_cmd not applied: %#v", repo.updatedPointInput.PollCmd)
+	}
+}
+
+func TestHandleDevicePointUpdate_InvalidPollCmdReturns400(t *testing.T) {
+	repo := &mockAdminRepo{
+		devicePointByID: &domain.DevicePoint{PointID: 1001, NodeID: 2001},
+	}
+	handler := &adminHandler{repo: repo}
+
+	req := httptest.NewRequest("PATCH", "/api/v1/admin/device-points/1001", strings.NewReader(`{"poll_cmd":"XYZ"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.handleDevicePointUpdate(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("invalid poll_cmd: want 400, got %d, body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleDevicePointUpdate_NotFoundReturns404(t *testing.T) {
+	handler := &adminHandler{repo: &mockAdminRepo{}}
+
+	req := httptest.NewRequest("PATCH", "/api/v1/admin/device-points/404", strings.NewReader(`{"unit":"C"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.handleDevicePointUpdate(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("missing point: want 404, got %d, body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestDevicePointUpdateMiniTokenReturns403(t *testing.T) {
+	repo := &mockAdminRepo{
+		devicePointByID: &domain.DevicePoint{PointID: 1001, NodeID: 2001},
+	}
+	handler := &adminHandler{repo: repo}
+	adminRoles := roleMiddleware(domain.RoleSuperAdmin, domain.RoleAdmin)
+	protected := authMiddleware([]byte(testSecret), adminRoles(http.HandlerFunc(handler.handleDevicePointUpdate)))
+
+	now := time.Now()
+	token, err := auth.Sign(auth.Claims{
+		UserID:   7,
+		UserType: domain.UserTypeFarmer,
+		Role:     domain.RoleFarmer,
+		Aud:      "mini",
+		IssuedAt: now.UnixMilli(),
+		ExpireAt: now.Add(time.Hour).UnixMilli(),
+	}, []byte(testSecret))
+	if err != nil {
+		t.Fatalf("sign token: %v", err)
+	}
+
+	req := httptest.NewRequest("PATCH", "/api/v1/admin/device-points/1001", strings.NewReader(`{"unit":"C"}`))
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+
+	protected.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("mini token on admin patch: want 403, got %d, body=%s", rec.Code, rec.Body.String())
 	}
 }

@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS collector_nodes (
   KEY idx_collector_online (online_status, last_report_at_ms),
   KEY idx_updated_at (updated_at),
   CONSTRAINT fk_collector_gateway FOREIGN KEY (gateway_id) REFERENCES cloud_gateways(gateway_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='采集执行器节点表';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='采集执行器节点表';
 
 CREATE TABLE IF NOT EXISTS device_points (
   point_id BIGINT UNSIGNED NOT NULL COMMENT '功能点雪花ID',
@@ -70,7 +70,7 @@ CREATE TABLE IF NOT EXISTS device_points (
   KEY idx_updated_at (updated_at),
   CONSTRAINT fk_point_node FOREIGN KEY (node_id) REFERENCES collector_nodes(node_id),
   CONSTRAINT fk_point_gateway FOREIGN KEY (gateway_id) REFERENCES cloud_gateways(gateway_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='采集执行器功能点表';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='采集执行器功能点表';
 
 ALTER TABLE device_realtime_maps
   ADD COLUMN node_id BIGINT UNSIGNED DEFAULT NULL COMMENT '采集执行器节点ID' AFTER gateway_id,

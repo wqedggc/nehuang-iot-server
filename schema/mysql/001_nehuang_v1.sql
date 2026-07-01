@@ -8,7 +8,7 @@
 
 CREATE DATABASE IF NOT EXISTS nehuang_db
   DEFAULT CHARACTER SET utf8mb4
-  DEFAULT COLLATE utf8mb4_0900_ai_ci;
+  DEFAULT COLLATE utf8mb4_unicode_ci;
 
 USE nehuang_db;
 
@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS users (
   UNIQUE KEY uk_users_wechat_openid (wechat_openid),
   UNIQUE KEY uk_users_username (username),
   KEY idx_updated_at (updated_at)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='平台用户表';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='平台用户表';
 
 CREATE TABLE IF NOT EXISTS cloud_gateways (
   gateway_id BIGINT UNSIGNED NOT NULL COMMENT '云边设备雪花ID',
@@ -52,7 +52,7 @@ CREATE TABLE IF NOT EXISTS cloud_gateways (
   UNIQUE KEY uk_cloud_gateways_external_id (gateway_external_id),
   KEY idx_cloud_gateways_online (online_status, last_heartbeat_at_ms),
   KEY idx_updated_at (updated_at)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='云边采集数据汇总表';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='云边采集数据汇总表';
 
 CREATE TABLE IF NOT EXISTS device_realtime_maps (
   realtime_id BIGINT UNSIGNED NOT NULL COMMENT '采集执行器实时状态雪花ID',
@@ -62,6 +62,7 @@ CREATE TABLE IF NOT EXISTS device_realtime_maps (
   frequency INT NOT NULL COMMENT '智农采集执行器通信频点',
   device_external_id VARCHAR(64) NOT NULL COMMENT '智农采集执行器设备ID',
   function_type TINYINT UNSIGNED NOT NULL COMMENT '功能类型：1=温度 2=墒情 3=限位',
+  channel_no INT NOT NULL DEFAULT 0 COMMENT '节点内通道号，未知时为0',
   best_min FLOAT DEFAULT NULL COMMENT '适宜数值下限',
   best_max FLOAT DEFAULT NULL COMMENT '适宜数值上限',
   unit VARCHAR(16) NOT NULL DEFAULT '' COMMENT '数值单位',
@@ -80,11 +81,11 @@ CREATE TABLE IF NOT EXISTS device_realtime_maps (
   created_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT '创建时间',
   updated_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3) COMMENT '更新时间',
   PRIMARY KEY (realtime_id),
-  UNIQUE KEY uk_realtime_gateway_freq_device (gateway_id, frequency, device_external_id),
+  UNIQUE KEY uk_realtime_gateway_freq_device_func_channel (gateway_id, frequency, device_external_id, function_type, channel_no),
   KEY idx_realtime_function_type (function_type),
   KEY idx_updated_at (updated_at),
   CONSTRAINT fk_realtime_gateway FOREIGN KEY (gateway_id) REFERENCES cloud_gateways(gateway_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='智农采集执行器-云边设备映射对照表';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='智农采集执行器-云边设备映射对照表';
 
 CREATE TABLE IF NOT EXISTS bind_relations (
   bind_id BIGINT UNSIGNED NOT NULL COMMENT '农户设备绑定雪花ID',
@@ -111,7 +112,7 @@ CREATE TABLE IF NOT EXISTS bind_relations (
   CONSTRAINT fk_bind_user FOREIGN KEY (user_id) REFERENCES users(user_id),
   CONSTRAINT fk_bind_gateway FOREIGN KEY (gateway_id) REFERENCES cloud_gateways(gateway_id),
   CONSTRAINT fk_bind_realtime FOREIGN KEY (realtime_id) REFERENCES device_realtime_maps(realtime_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='农户关联表';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='农户关联表';
 
 CREATE TABLE IF NOT EXISTS sensor_data (
   sensor_id BIGINT UNSIGNED NOT NULL COMMENT '传感器时序数据雪花ID',
@@ -135,7 +136,7 @@ CREATE TABLE IF NOT EXISTS sensor_data (
   KEY idx_updated_at (updated_at),
   CONSTRAINT fk_sensor_gateway FOREIGN KEY (gateway_id) REFERENCES cloud_gateways(gateway_id),
   CONSTRAINT fk_sensor_realtime FOREIGN KEY (realtime_id) REFERENCES device_realtime_maps(realtime_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='温湿度智农采集执行器时序曲线表';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='温湿度智农采集执行器时序曲线表';
 
 CREATE TABLE IF NOT EXISTS op_records (
   op_id BIGINT UNSIGNED NOT NULL COMMENT '操作记录雪花ID',
@@ -162,7 +163,7 @@ CREATE TABLE IF NOT EXISTS op_records (
   CONSTRAINT fk_op_gateway FOREIGN KEY (gateway_id) REFERENCES cloud_gateways(gateway_id),
   CONSTRAINT fk_op_realtime FOREIGN KEY (realtime_id) REFERENCES device_realtime_maps(realtime_id),
   CONSTRAINT fk_op_user FOREIGN KEY (user_id) REFERENCES users(user_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='操作记录表';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='操作记录表';
 
 CREATE TABLE IF NOT EXISTS raw_device_events (
   raw_event_id BIGINT UNSIGNED NOT NULL COMMENT '原始设备事件雪花ID',
@@ -184,7 +185,7 @@ CREATE TABLE IF NOT EXISTS raw_device_events (
   KEY idx_raw_type_status (event_type, parse_status),
   KEY idx_updated_at (updated_at),
   CONSTRAINT fk_raw_gateway FOREIGN KEY (gateway_id) REFERENCES cloud_gateways(gateway_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='原始设备事件表';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='原始设备事件表';
 
 CREATE TABLE IF NOT EXISTS control_commands (
   command_id BIGINT UNSIGNED NOT NULL COMMENT '控制命令雪花ID',
@@ -215,7 +216,7 @@ CREATE TABLE IF NOT EXISTS control_commands (
   CONSTRAINT fk_command_gateway FOREIGN KEY (gateway_id) REFERENCES cloud_gateways(gateway_id),
   CONSTRAINT fk_command_realtime FOREIGN KEY (realtime_id) REFERENCES device_realtime_maps(realtime_id),
   CONSTRAINT fk_command_user FOREIGN KEY (requested_by) REFERENCES users(user_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='控制命令表';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='控制命令表';
 
 CREATE TABLE IF NOT EXISTS control_results (
   result_id BIGINT UNSIGNED NOT NULL COMMENT '控制结果雪花ID',
@@ -239,7 +240,7 @@ CREATE TABLE IF NOT EXISTS control_results (
   CONSTRAINT fk_result_gateway FOREIGN KEY (gateway_id) REFERENCES cloud_gateways(gateway_id),
   CONSTRAINT fk_result_realtime FOREIGN KEY (realtime_id) REFERENCES device_realtime_maps(realtime_id),
   CONSTRAINT fk_result_raw_event FOREIGN KEY (raw_event_id) REFERENCES raw_device_events(raw_event_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='控制结果表';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='控制结果表';
 
 CREATE TABLE IF NOT EXISTS protocol_command_templates (
   template_id BIGINT UNSIGNED NOT NULL COMMENT '协议命令模板雪花ID',
@@ -255,4 +256,4 @@ CREATE TABLE IF NOT EXISTS protocol_command_templates (
   PRIMARY KEY (template_id),
   KEY idx_template_function_command (function_type, command_type),
   KEY idx_updated_at (updated_at)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='协议命令模板表';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='协议命令模板表';

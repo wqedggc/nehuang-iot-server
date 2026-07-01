@@ -166,18 +166,54 @@ log_success "MySQL 连接正常"
 # ----------------------------------------------------------------------------
 log_info "Step 4/8: 初始化数据库..."
 
-# 检查 users 表是否已存在，避免重复建表（虽然 DDL 使用 IF NOT EXISTS，
-# 但显式检查可提供更好的日志体验）
-TABLE_EXISTS=$(mysql "${MYSQL_BASE_ARGS[@]}" -N -e \
-    "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='${NEHUANG_MYSQL_DATABASE}' AND table_name='users';" 2>/dev/null || echo "0")
+mysql "${MYSQL_BASE_ARGS[@]}" -e \
+    "CREATE DATABASE IF NOT EXISTS \`${NEHUANG_MYSQL_DATABASE}\` DEFAULT CHARACTER SET utf8mb4 DEFAULT COLLATE utf8mb4_unicode_ci;"
 
-if [ "$TABLE_EXISTS" -gt 0 ]; then
-    log_warn "数据库已存在 users 表，跳过建表步骤"
-else
-    log_info "执行建表 DDL: schema/mysql/001_nehuang_v1.sql"
-    mysql "${MYSQL_BASE_ARGS[@]}" < schema/mysql/001_nehuang_v1.sql
-    log_success "数据库表创建完成"
-fi
+mysql "${MYSQL_BASE_ARGS[@]}" "${NEHUANG_MYSQL_DATABASE}" -e \
+    "CREATE TABLE IF NOT EXISTS schema_migrations (
+       version VARCHAR(64) NOT NULL,
+       applied_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+       PRIMARY KEY (version)
+     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;"
+
+mark_migration_if_present() {
+    local version="$1"
+    local condition_sql="$2"
+    local exists
+    exists=$(mysql "${MYSQL_BASE_ARGS[@]}" -N -s -e "$condition_sql" 2>/dev/null || echo "0")
+    exists="${exists:-0}"
+    if [ "$exists" -gt 0 ]; then
+        mysql "${MYSQL_BASE_ARGS[@]}" "${NEHUANG_MYSQL_DATABASE}" -e \
+            "INSERT IGNORE INTO schema_migrations (version) VALUES ('${version}');"
+    fi
+}
+
+# 兼容已手动执行过旧 SQL、但尚未引入 schema_migrations 的数据库。
+mark_migration_if_present "001_nehuang_v1.sql" \
+    "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='${NEHUANG_MYSQL_DATABASE}' AND table_name='users';"
+mark_migration_if_present "002_device_node_point_model.sql" \
+    "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='${NEHUANG_MYSQL_DATABASE}' AND table_name='device_points';"
+mark_migration_if_present "003_user_management_binding.sql" \
+    "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema='${NEHUANG_MYSQL_DATABASE}' AND table_name='users' AND column_name IN ('address','remark') HAVING COUNT(*) = 2;"
+mark_migration_if_present "004_bind_relations_user_id.sql" \
+    "SELECT COUNT(*) FROM information_schema.statistics WHERE table_schema='${NEHUANG_MYSQL_DATABASE}' AND table_name='bind_relations' AND index_name='uk_point_active';"
+
+for migration in schema/mysql/*.sql; do
+    version="$(basename "$migration")"
+    applied=$(mysql "${MYSQL_BASE_ARGS[@]}" "${NEHUANG_MYSQL_DATABASE}" -N -s -e \
+        "SELECT COUNT(*) FROM schema_migrations WHERE version='${version}';")
+    if [ "$applied" -gt 0 ]; then
+        log_info "跳过已执行迁移: $version"
+        continue
+    fi
+
+    log_info "执行数据库迁移: $version"
+    mysql "${MYSQL_BASE_ARGS[@]}" < "$migration"
+    mysql "${MYSQL_BASE_ARGS[@]}" "${NEHUANG_MYSQL_DATABASE}" -e \
+        "INSERT INTO schema_migrations (version) VALUES ('${version}');"
+done
+
+log_success "数据库迁移完成"
 
 # ----------------------------------------------------------------------------
 # Step 5: 创建管理员账号

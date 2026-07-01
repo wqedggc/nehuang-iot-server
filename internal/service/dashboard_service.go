@@ -35,7 +35,10 @@ var validRanges = map[string]bool{
 	"1h":  true,
 	"6h":  true,
 	"24h": true,
+	"1d":  true,
+	"3d":  true,
 	"7d":  true,
+	"30d": true,
 }
 
 // RangeDuration 将 range 参数解析为时间间隔。
@@ -48,17 +51,23 @@ func RangeDuration(rangeStr string) (time.Duration, error) {
 		return 6 * time.Hour, nil
 	case "24h":
 		return 24 * time.Hour, nil
+	case "1d":
+		return 24 * time.Hour, nil
+	case "3d":
+		return 3 * 24 * time.Hour, nil
 	case "7d":
 		return 7 * 24 * time.Hour, nil
+	case "30d":
+		return 30 * 24 * time.Hour, nil
 	default:
-		return 0, fmt.Errorf("invalid range: %s (allowed: 1h, 6h, 24h, 7d)", rangeStr)
+		return 0, fmt.Errorf("invalid range: %s (allowed: 1h, 6h, 24h, 1d, 3d, 7d, 30d)", rangeStr)
 	}
 }
 
 // ValidateRange 校验 range 参数是否合法。
 func ValidateRange(rangeStr string) error {
 	if !validRanges[rangeStr] {
-		return fmt.Errorf("invalid range: %s (allowed: 1h, 6h, 24h, 7d)", rangeStr)
+		return fmt.Errorf("invalid range: %s (allowed: 1h, 6h, 24h, 1d, 3d, 7d, 30d)", rangeStr)
 	}
 	return nil
 }
@@ -84,40 +93,40 @@ type UserStats struct {
 
 // DeviceStats 设备统计。
 type DeviceStats struct {
-	GatewayTotal        int64  `json:"gateway_total"`
-	GatewayOnline       int64  `json:"gateway_online"`
-	GatewayOffline      int64  `json:"gateway_offline"`
-	CollectorNodeTotal  int64  `json:"collector_node_total"`
-	DevicePointTotal    int64  `json:"device_point_total"`
-	BoundPointCount     int64  `json:"bound_point_count"`
-	UnboundPointCount   int64  `json:"unbound_point_count"`
-	NormalPointCount    int64  `json:"normal_point_count"`
-	AbnormalPointCount  int64  `json:"abnormal_point_count"`
-	OfflinePointCount   int64  `json:"offline_point_count"`
-	LatestReportTime    string `json:"latest_report_time"`
+	GatewayTotal       int64  `json:"gateway_total"`
+	GatewayOnline      int64  `json:"gateway_online"`
+	GatewayOffline     int64  `json:"gateway_offline"`
+	CollectorNodeTotal int64  `json:"collector_node_total"`
+	DevicePointTotal   int64  `json:"device_point_total"`
+	BoundPointCount    int64  `json:"bound_point_count"`
+	UnboundPointCount  int64  `json:"unbound_point_count"`
+	NormalPointCount   int64  `json:"normal_point_count"`
+	AbnormalPointCount int64  `json:"abnormal_point_count"`
+	OfflinePointCount  int64  `json:"offline_point_count"`
+	LatestReportTime   string `json:"latest_report_time"`
 }
 
 // IngestStats 数据上报统计。
 type IngestStats struct {
-	RawEventCount       int64   `json:"raw_event_count"`
-	TelemetryCount      int64   `json:"telemetry_count"`
-	RegisterCount       int64   `json:"register_count"`
-	HeartbeatCount      int64   `json:"heartbeat_count"`
-	WorkCount           int64   `json:"work_count"`
-	ControlResultCount  int64   `json:"control_result_count"`
-	HeartbeatTotal      int64   `json:"heartbeat_total"`
-	HeartbeatSuccess    int64   `json:"heartbeat_success"`
-	HeartbeatFailed     int64   `json:"heartbeat_failed"`
+	RawEventCount        int64   `json:"raw_event_count"`
+	TelemetryCount       int64   `json:"telemetry_count"`
+	RegisterCount        int64   `json:"register_count"`
+	HeartbeatCount       int64   `json:"heartbeat_count"`
+	WorkCount            int64   `json:"work_count"`
+	ControlResultCount   int64   `json:"control_result_count"`
+	HeartbeatTotal       int64   `json:"heartbeat_total"`
+	HeartbeatSuccess     int64   `json:"heartbeat_success"`
+	HeartbeatFailed      int64   `json:"heartbeat_failed"`
 	HeartbeatSuccessRate float64 `json:"heartbeat_success_rate"`
 }
 
 // ControlStats 控制统计。
 type ControlStats struct {
-	ControlCommandCount  int64   `json:"control_command_count"`
-	ControlSuccessCount  int64   `json:"control_success_count"`
-	ControlFailedCount   int64   `json:"control_failed_count"`
-	ControlTimeoutCount  int64   `json:"control_timeout_count"`
-	ControlSuccessRate   float64 `json:"control_success_rate"`
+	ControlCommandCount int64   `json:"control_command_count"`
+	ControlSuccessCount int64   `json:"control_success_count"`
+	ControlFailedCount  int64   `json:"control_failed_count"`
+	ControlTimeoutCount int64   `json:"control_timeout_count"`
+	ControlSuccessRate  float64 `json:"control_success_rate"`
 }
 
 // Build 聚合所有统计查询并返回完整的 DashboardData。
@@ -200,17 +209,17 @@ func (s *DashboardService) Build(ctx context.Context, rangeStr string) (*Dashboa
 			DisabledFarmerCount: disabledFarmerCount,
 		},
 		Devices: DeviceStats{
-			GatewayTotal:        gatewayTotal,
-			GatewayOnline:       gatewayOnline,
-			GatewayOffline:      gatewayOffline,
-			CollectorNodeTotal:  collectorNodeTotal,
-			DevicePointTotal:    devicePointTotal,
-			BoundPointCount:     boundPointCount,
-			UnboundPointCount:   unboundPointCount,
-			NormalPointCount:    normalPointCount,
-			AbnormalPointCount:  abnormalPointCount,
-			OfflinePointCount:   offlinePointCount,
-			LatestReportTime:    latestReportTime,
+			GatewayTotal:       gatewayTotal,
+			GatewayOnline:      gatewayOnline,
+			GatewayOffline:     gatewayOffline,
+			CollectorNodeTotal: collectorNodeTotal,
+			DevicePointTotal:   devicePointTotal,
+			BoundPointCount:    boundPointCount,
+			UnboundPointCount:  unboundPointCount,
+			NormalPointCount:   normalPointCount,
+			AbnormalPointCount: abnormalPointCount,
+			OfflinePointCount:  offlinePointCount,
+			LatestReportTime:   latestReportTime,
 		},
 		Ingest: IngestStats{
 			RawEventCount:        rawEventCount,

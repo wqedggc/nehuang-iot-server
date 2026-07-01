@@ -16,6 +16,7 @@ type Config struct {
 	MySQL        MySQLConfig
 	JWT          JWTConfig
 	Wechat       WechatConfig
+	OfflineScan  OfflineScanConfig
 	AdapterToken string // Adapter API 认证 token，从环境变量 NEHUANG_ADAPTER_TOKEN 读取
 }
 
@@ -47,6 +48,13 @@ type WechatConfig struct {
 	EnableMockLogin bool
 }
 
+// OfflineScanConfig controls background offline status correction.
+type OfflineScanConfig struct {
+	Enabled          bool
+	ThresholdSeconds int
+	IntervalSeconds  int
+}
+
 // Load reads configuration from environment variables and the MySQL defaults file.
 func Load() (Config, error) {
 	cfg := Config{
@@ -60,6 +68,11 @@ func Load() (Config, error) {
 			AppID:           envDefault("NEHUANG_WECHAT_APPID", ""),
 			Secret:          envDefault("NEHUANG_WECHAT_SECRET", ""),
 			EnableMockLogin: envBool("NEHUANG_ENABLE_MOCK_LOGIN", false),
+		},
+		OfflineScan: OfflineScanConfig{
+			Enabled:          envBool("NEHUANG_OFFLINE_SCAN_ENABLED", true),
+			ThresholdSeconds: envInt("NEHUANG_OFFLINE_THRESHOLD_SECONDS", 35),
+			IntervalSeconds:  envInt("NEHUANG_OFFLINE_SCAN_INTERVAL_SECONDS", 10),
 		},
 		// Adapter API 认证 token，服务端和 Mock 脚本共用。
 		AdapterToken: envDefault("NEHUANG_ADAPTER_TOKEN", "nehuang-adapter-dev-token"),
@@ -147,6 +160,18 @@ func envBool(key string, fallback bool) bool {
 	default:
 		return fallback
 	}
+}
+
+func envInt(key string, fallback int) int {
+	val := strings.TrimSpace(os.Getenv(key))
+	if val == "" {
+		return fallback
+	}
+	n, err := strconv.Atoi(val)
+	if err != nil {
+		return fallback
+	}
+	return n
 }
 
 func envDefaultValue(val, fallback string) string {

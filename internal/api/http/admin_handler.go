@@ -3,6 +3,7 @@ package http
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -51,6 +52,8 @@ type adminRepository interface {
 	FindActiveBindingByPoint(ctx context.Context, pointID uint64) (*domain.BindRelation, error)
 	// 管理端设备点位搜索。
 	SearchDevicePoints(ctx context.Context, keyword string, bindStatus string) ([]domain.DevicePointSearchResult, error)
+	// 管理端设备点位配置更新。
+	UpdateDevicePointConfig(ctx context.Context, pointID uint64, input domain.DevicePointUpdateInput) error
 	// Payload 排查页面。
 	ListPayloadEvents(ctx context.Context, params domain.PayloadEventQuery) ([]domain.PayloadEventListItem, int, error)
 	GetPayloadEventDetail(ctx context.Context, rawEventID uint64) (*domain.PayloadEventDetail, error)
@@ -70,10 +73,10 @@ type loginRequest struct {
 
 // loginResponse is the JSON payload returned on successful admin login.
 type loginResponse struct {
-	Token       string  `json:"token"`
-	UserID      uint64  `json:"user_id"`
-	Role        uint8   `json:"role"`
-	DisplayName string  `json:"display_name"`
+	Token       string `json:"token"`
+	UserID      uint64 `json:"user_id"`
+	Role        uint8  `json:"role"`
+	DisplayName string `json:"display_name"`
 }
 
 // login handles POST /api/v1/admin/login.
@@ -480,6 +483,167 @@ func (h *adminHandler) handleDevicePointSearch(w http.ResponseWriter, r *http.Re
 	writeJSON(w, http.StatusOK, map[string]any{"data": results})
 }
 
+// handleDevicePointUpdate 处理 PATCH /api/v1/admin/device-points/{point_id}。
+func (h *adminHandler) handleDevicePointUpdate(w http.ResponseWriter, r *http.Request) {
+	path := strings.TrimPrefix(r.URL.Path, "/api/v1/admin/device-points/")
+	path = strings.TrimSpace(path)
+	pointID, err := strconv.ParseUint(path, 10, 64)
+	if err != nil || pointID == 0 {
+		writeCode(w, http.StatusBadRequest, 400, "invalid point id")
+		return
+	}
+
+	point, err := h.repo.FindDevicePointByID(r.Context(), pointID)
+	if err != nil {
+		writeCode(w, http.StatusInternalServerError, 500, "internal error: "+err.Error())
+		return
+	}
+	if point == nil {
+		writeCode(w, http.StatusNotFound, 404, "device point not found")
+		return
+	}
+
+	input, err := decodeDevicePointUpdateInput(r, point)
+	if err != nil {
+		writeCode(w, http.StatusBadRequest, 400, err.Error())
+		return
+	}
+	if !hasDevicePointUpdate(input) {
+		writeCode(w, http.StatusBadRequest, 400, "no fields to update")
+		return
+	}
+
+	if err := h.repo.UpdateDevicePointConfig(r.Context(), pointID, input); err != nil {
+		writeCode(w, http.StatusInternalServerError, 500, "failed to update device point: "+err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"data": map[string]any{
+			"point_id": idStr(pointID),
+			"updated":  true,
+		},
+	})
+}
+
+type devicePointUpdateRequest struct {
+	PointName          *string         `json:"point_name"`
+	ShedNo             *string         `json:"shed_no"`
+	Unit               *string         `json:"unit"`
+	BestMin            *float64        `json:"best_min"`
+	BestMax            *float64        `json:"best_max"`
+	RunMode            *domain.RunMode `json:"run_mode"`
+	ControllableStatus *uint8          `json:"controllable_status"`
+	PollInterval       *int            `json:"poll_interval"`
+	PollCmd            *string         `json:"poll_cmd"`
+	PointStatus        *uint8          `json:"point_status"`
+	Remark             *string         `json:"remark"`
+}
+
+func decodeDevicePointUpdateInput(r *http.Request, existing *domain.DevicePoint) (domain.DevicePointUpdateInput, error) {
+	var req devicePointUpdateRequest
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil {
+		return domain.DevicePointUpdateInput{}, err
+	}
+
+	input := domain.DevicePointUpdateInput{
+		PointName:          trimStringPtr(req.PointName),
+		ShedNo:             trimStringPtr(req.ShedNo),
+		Unit:               trimStringPtr(req.Unit),
+		BestMin:            req.BestMin,
+		BestMax:            req.BestMax,
+		RunMode:            req.RunMode,
+		ControllableStatus: req.ControllableStatus,
+		PollInterval:       req.PollInterval,
+		PollCmd:            trimStringPtr(req.PollCmd),
+		PointStatus:        req.PointStatus,
+		Remark:             trimStringPtr(req.Remark),
+	}
+
+	if input.PointName != nil {
+		if *input.PointName == "" || len([]rune(*input.PointName)) > 64 {
+			return input, fmt.Errorf("point_name must be 1-64 characters")
+		}
+	}
+	if input.ShedNo != nil && len([]rune(*input.ShedNo)) > 64 {
+		return input, fmt.Errorf("shed_no must be at most 64 characters")
+	}
+	if input.Unit != nil && len([]rune(*input.Unit)) > 16 {
+		return input, fmt.Errorf("unit must be at most 16 characters")
+	}
+	bestMin := existing.BestMin
+	bestMax := existing.BestMax
+	if input.BestMin != nil {
+		bestMin = input.BestMin
+	}
+	if input.BestMax != nil {
+		bestMax = input.BestMax
+	}
+	if bestMin != nil && bestMax != nil && *bestMin > *bestMax {
+		return input, fmt.Errorf("best_min must be less than or equal to best_max")
+	}
+	if input.RunMode != nil && *input.RunMode != domain.RunModeAuto && *input.RunMode != domain.RunModeManu {
+		return input, fmt.Errorf("run_mode must be 1 or 2")
+	}
+	if input.ControllableStatus != nil && *input.ControllableStatus > 1 {
+		return input, fmt.Errorf("controllable_status must be 0 or 1")
+	}
+	if input.PollInterval != nil && (*input.PollInterval < 5 || *input.PollInterval > 86400) {
+		return input, fmt.Errorf("poll_interval must be between 5 and 86400")
+	}
+	if input.PointStatus != nil && (*input.PointStatus < 1 || *input.PointStatus > 3) {
+		return input, fmt.Errorf("point_status must be 1, 2, or 3")
+	}
+	if input.PollCmd != nil && !isHexCommand(*input.PollCmd) {
+		return input, fmt.Errorf("poll_cmd must be an even-length hex string")
+	}
+	if input.Remark != nil && len([]rune(*input.Remark)) > 512 {
+		return input, fmt.Errorf("remark must be at most 512 characters")
+	}
+
+	return input, nil
+}
+
+func hasDevicePointUpdate(input domain.DevicePointUpdateInput) bool {
+	return input.PointName != nil ||
+		input.ShedNo != nil ||
+		input.Unit != nil ||
+		input.BestMin != nil ||
+		input.BestMax != nil ||
+		input.RunMode != nil ||
+		input.ControllableStatus != nil ||
+		input.PollInterval != nil ||
+		input.PollCmd != nil ||
+		input.PointStatus != nil ||
+		input.Remark != nil
+}
+
+func trimStringPtr(v *string) *string {
+	if v == nil {
+		return nil
+	}
+	trimmed := strings.TrimSpace(*v)
+	return &trimmed
+}
+
+func isHexCommand(v string) bool {
+	if v == "" {
+		return true
+	}
+	if len(v)%2 != 0 {
+		return false
+	}
+	for _, r := range v {
+		if (r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F') {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
 // handleFarmerBindings 处理 GET /api/v1/admin/farmers/{user_id}/bindings。
 // 返回指定农户的所有绑定关系（含 active 和已解绑）。
 func (h *adminHandler) handleFarmerBindings(w http.ResponseWriter, r *http.Request) {
@@ -576,10 +740,10 @@ func (h *adminHandler) handleFarmerUpdate(w http.ResponseWriter, r *http.Request
 	}
 
 	var req struct {
-		DisplayName *string           `json:"display_name"`
-		Mobile      *string           `json:"mobile"`
-		Address     *string           `json:"address"`
-		Remark      *string           `json:"remark"`
+		DisplayName *string            `json:"display_name"`
+		Mobile      *string            `json:"mobile"`
+		Address     *string            `json:"address"`
+		Remark      *string            `json:"remark"`
 		Status      *domain.UserStatus `json:"status"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {

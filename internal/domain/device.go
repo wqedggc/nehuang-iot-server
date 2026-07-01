@@ -206,6 +206,21 @@ type DevicePoint struct {
 	UpdatedAt          time.Time
 }
 
+// DevicePointUpdateInput is the admin-side patch payload for device point config.
+type DevicePointUpdateInput struct {
+	PointName          *string
+	ShedNo             *string
+	Unit               *string
+	BestMin            *float64
+	BestMax            *float64
+	RunMode            *RunMode
+	ControllableStatus *uint8
+	PollInterval       *int
+	PollCmd            *string
+	PointStatus        *uint8
+	Remark             *string
+}
+
 // FunctionType 功能类型。
 type FunctionType uint8
 
