@@ -63,27 +63,27 @@ func selectFrames(name string) ([]sampleFrame, error) {
 		{
 			name:    "register",
 			payload: []byte("FP_TEST_ADMIN_001\n"),
-			note:    "ASCII register; Adapter forwards register to /api/v1/adapter/device-events",
+			note:    "ASCII register; Adapter forwards raw bytes to /api/v1/adapter/raw-frames",
 		},
 		{
 			name:    "heartbeat",
 			payload: []byte("HEARTBEAT\n"),
-			note:    "ASCII heartbeat; Adapter forwards heartbeat after gateway_name is known",
+			note:    "ASCII heartbeat; Adapter forwards raw bytes after gateway_name is known",
 		},
 		{
 			name:    "work",
 			payload: protocol.AppendCRC16Modbus(mustHex("AAAA0B010203")),
-			note:    "CRC-valid placeholder work frame; first version records raw only",
+			note:    "CRC-valid placeholder work frame; Server keeps it pending until protocol fields freeze",
 		},
 		{
 			name:    "alarm",
 			payload: protocol.AppendCRC16Modbus(mustHex("AAAA0BFFFFFF01")),
-			note:    "alarm-looking placeholder frame; first version records raw only",
+			note:    "alarm-looking placeholder frame; Server keeps it pending until protocol fields freeze",
 		},
 		{
 			name:    "unknown",
 			payload: mustHex("01020304"),
-			note:    "unknown bytes; Adapter must keep raw journal and continue",
+			note:    "unknown bytes; Adapter keeps raw journal and Server stores raw frame",
 		},
 	}
 
