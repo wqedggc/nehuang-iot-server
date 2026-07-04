@@ -429,8 +429,9 @@ func (h *adapterHandler) parseRawFrame(ctx context.Context, rawEventID uint64, e
 		if envelope.GatewayName != "" {
 			gatewayName = envelope.GatewayName
 		}
+		gatewayExternalID := gatewayExternalIDFromName(gatewayName)
 		gatewayID, err := h.repo.UpsertGatewayByExternalID(ctx, &domain.Gateway{
-			GatewayExternalID: gatewayName,
+			GatewayExternalID: gatewayExternalID,
 			GatewayName:       gatewayName,
 			IP:                envelope.RemoteIP,
 			Port:              envelope.RemotePort,
@@ -451,8 +452,9 @@ func (h *adapterHandler) parseRawFrame(ctx context.Context, rawEventID uint64, e
 		if gatewayName == "" {
 			return domain.ParseStatusFailed, errRawFrameHeartbeatMissingGateway
 		}
+		gatewayExternalID := gatewayExternalIDFromName(gatewayName)
 		_, err := h.repo.UpsertGatewayByExternalID(ctx, &domain.Gateway{
-			GatewayExternalID: gatewayName,
+			GatewayExternalID: gatewayExternalID,
 			GatewayName:       gatewayName,
 			IP:                envelope.RemoteIP,
 			Port:              envelope.RemotePort,
@@ -468,6 +470,18 @@ func (h *adapterHandler) parseRawFrame(ctx context.Context, rawEventID uint64, e
 	}
 
 	return domain.ParseStatusPending, nil
+}
+
+func gatewayExternalIDFromName(gatewayName string) string {
+	name := strings.TrimSpace(gatewayName)
+	upper := strings.ToUpper(name)
+	if strings.HasPrefix(upper, "FP_") {
+		return name[3:]
+	}
+	if strings.HasPrefix(upper, "FP") {
+		return strings.TrimLeft(name[2:], "_- ")
+	}
+	return name
 }
 
 var errRawFrameHeartbeatMissingGateway = rawFrameParseError("heartbeat missing gateway_name")

@@ -106,8 +106,11 @@ func TestHandleRawFramesStoresRawPayloadAndParsesRegister(t *testing.T) {
 	if len(repo.upsertedGateways) != 1 {
 		t.Fatalf("UpsertGatewayByExternalID calls: want 1, got %d", len(repo.upsertedGateways))
 	}
-	if repo.upsertedGateways[0].GatewayExternalID != "FP_TEST_ADMIN_001" {
-		t.Fatalf("gateway external id: want FP_TEST_ADMIN_001, got %q", repo.upsertedGateways[0].GatewayExternalID)
+	if repo.upsertedGateways[0].GatewayExternalID != "TEST_ADMIN_001" {
+		t.Fatalf("gateway external id: want TEST_ADMIN_001, got %q", repo.upsertedGateways[0].GatewayExternalID)
+	}
+	if repo.upsertedGateways[0].GatewayName != "FP_TEST_ADMIN_001" {
+		t.Fatalf("gateway name: want FP_TEST_ADMIN_001, got %q", repo.upsertedGateways[0].GatewayName)
 	}
 	if repo.parseStatus != domain.ParseStatusParsed {
 		t.Fatalf("parse status: want parsed, got %v", repo.parseStatus)
