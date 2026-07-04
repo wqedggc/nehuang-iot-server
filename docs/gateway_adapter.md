@@ -8,7 +8,8 @@
 
 - 接收硬件网关 TCP 连接，默认监听 `NEHUANG_GATEWAY_TCP_ADDR=:8081`。
 - 收到任意 bytes 后立即写 raw frame journal。
-- 识别旧网关 `FP_xxx` 注册包和显式心跳包，并转发到 `POST /api/v1/adapter/device-events`。
+- 将每次 TCP read 到的原始 bytes 上报到 `POST /api/v1/adapter/raw-frames`。
+- 保留旧网关 `FP_xxx` 注册包和显式心跳包的最小分类，用于连接维度 `gateway_name` 和 debug 日志；业务解析由 Go 服务完成。
 - 提供 `/healthz` 和 `/readyz`，默认监听 `NEHUANG_GATEWAY_HEALTH_ADDR=:18081`。
 - 提供 CRC-16/MODBUS 和协议分类骨架，真实工作包解析等硬件样例包稳定后再补。
 
@@ -53,7 +54,7 @@ go run ./cmd/gateway-adapter-replay -raw-log data/gateway-adapter/raw-frames/raw
 当前第一版 Adapter 对甲方暴露的是 **TCP 字节流入口**，不是 HTTP JSON 接口。
 
 ```text
-硬件网关 TCP client -> gateway-adapter TCP listener -> raw journal -> 协议识别 -> Go 服务 HTTP API
+硬件网关 TCP client -> gateway-adapter TCP listener -> raw journal -> /api/v1/adapter/raw-frames -> Go 服务解析
 ```
 
 甲方需要做的事情：
@@ -62,11 +63,11 @@ go run ./cmd/gateway-adapter-replay -raw-log data/gateway-adapter/raw-frames/raw
 2. 连接建立后，直接向 socket 写入原始 bytes。可以是 ASCII 注册包，也可以是 MCU 透传出来的二进制包。
 3. 第一版不要求硬件网关先组 JSON，也不要求硬件网关调用 HTTP。
 4. 每次写入的 bytes 都会被 Adapter 立即写入 raw frame journal，用于后续确认真实协议和解析规则。
-5. 当前只有注册包和心跳包会被 Adapter 转成 Go 服务的 `/api/v1/adapter/device-events`；其他包先只留 raw，不误解析。
+5. 当前所有 bytes 都会被 Adapter 上报到 Go 服务的 `/api/v1/adapter/raw-frames`；Go 服务第一版只解析注册和心跳，工作包/告警包保持 pending。
 
 业务解析边界：
 
-- TCP 接收循环只负责连接、读写、raw journal 和最小分类。
+- TCP 接收循环只负责连接、读写、raw journal、全量 raw 上报和最小分类。
 - 工作包、告警包、ACK 的业务字段解析必须基于真实 raw 样例和 replay 回归。
 - 不把 MCU 温控算法、时隙策略、告警去重规则写死在 TCP 接收循环中。
 
@@ -74,11 +75,11 @@ go run ./cmd/gateway-adapter-replay -raw-log data/gateway-adapter/raw-frames/raw
 
 | 报文 | 示例 | Adapter 行为 |
 |------|------|--------------|
-| 注册 | ASCII `FP_TEST_ADMIN_001\n` | 识别为 `register`，`gateway_external_id=TEST_ADMIN_001`，转发到 Go 服务 |
-| 心跳 | ASCII `HEARTBEAT\n`、`HB`、`PING`、`HEART` | 识别为 `heartbeat`，转发到 Go 服务 |
-| 工作包 | 二进制 `AA AA ... CRC_LO CRC_HI` | 当前只落 raw；CRC 校验和字段解析等真实样例确认后补 |
-| 告警包 | 二进制 `AA AA ... FF FF ... CRC_LO CRC_HI` | 当前只落 raw；去重和告警入库等真实样例确认后补 |
-| 未知包 | 任意无法识别 bytes | 只落 raw，不中断连接 |
+| 注册 | ASCII `FP_TEST_ADMIN_001\n` | Adapter 上报 raw；Go 服务解析为 `register` 并刷新 gateway |
+| 心跳 | ASCII `HEARTBEAT\n`、`HB`、`PING`、`HEART` | Adapter 上报 raw；Go 服务第一版解析 `HEARTBEAT` 并刷新 gateway |
+| 工作包 | 二进制 `AA AA ... CRC_LO CRC_HI` | Adapter 上报 raw；Go 服务保持 pending，字段解析等真实样例确认后补 |
+| 告警包 | 二进制 `AA AA ... FF FF ... CRC_LO CRC_HI` | Adapter 上报 raw；Go 服务保持 pending，去重和告警入库等真实样例确认后补 |
+| 未知包 | 任意无法识别 bytes | Adapter 上报 raw，不中断连接 |
 
 ### 本地模拟报文
 
@@ -131,7 +132,7 @@ Adapter 标准输出是结构化 JSON。重点看这些事件：
 | `gateway_adapter_started` | Adapter 启动完成 |
 | `gateway_connection_opened` | 硬件网关建立 TCP 连接 |
 | `gateway_protocol_classified` | debug 开启时输出协议识别结果 |
-| `gateway_event_forward_failed` | register/heartbeat 转发 Go 服务失败 |
+| `gateway_raw_frame_forward_failed` | raw frame 上报 Go 服务失败 |
 | `gateway_connection_closed` | TCP 连接断开 |
 
 开启协议调试：
@@ -174,9 +175,9 @@ go run ./cmd/gateway-adapter-replay -raw-log data/gateway-adapter/raw-frames/raw
 
 ## 联调顺序
 
-1. 发送 `FP_TEST_ADMIN_001`，确认 raw journal 有记录，Go 服务出现 register 事件。
+1. 发送 `FP_TEST_ADMIN_001`，确认 raw journal 有记录，Go 服务 `raw_device_events` 有 raw frame，gateway 被刷新。
 2. 发送心跳包，确认 gateway 在线时间刷新。
-3. 发送真实工作包，只检查 raw journal，不要求第一版立刻解析。
+3. 发送真实工作包，检查 raw journal 和 Go 服务 `raw_device_events`，不要求第一版立刻解析。
 4. 拿 raw journal 跑 replay，补协议 parser 和 CRC 校验。
 5. 控制链路先走 `control_commands` 异步状态，等 MCU ACK 协议确认后再启用完整闭环。
 

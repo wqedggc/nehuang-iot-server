@@ -328,6 +328,12 @@ curl -X POST http://localhost:8080/api/v1/admin/login \
   -d '{"username":"admin","password":"admin123"}'
 
 # 测试 Adapter 接口
+curl -X POST http://localhost:8080/api/v1/adapter/raw-frames \
+  -H "Content-Type: application/json" \
+  -H "X-Adapter-Token: nehuang-adapter-dev-token" \
+  -d '{"protocol_version":"nehuang-gateway-adapter-v1","source_type":"gateway_adapter","message_id":"manual-1","connection_id":"manual","gateway_name":"","remote_ip":"127.0.0.1","remote_port":40000,"direction":"inbound","payload_hex":"46505F544553545F41444D494E5F3030310A","received_at":"2026-07-04T18:08:04.79022Z","raw_seq":1}'
+
+# 兼容旧 JSON 事件入口
 curl -X POST http://localhost:8080/api/v1/adapter/device-events \
   -H "Content-Type: application/json" \
   -H "X-Adapter-Token: nehuang-adapter-dev-token" \
@@ -357,6 +363,10 @@ go run ./cmd/gateway-adapter-mock -addr 127.0.0.1:8081 -frame all
 
 # 查看 raw journal
 tail -n 20 data/gateway-adapter/raw-frames/raw-frames-YYYYMMDD.jsonl
+
+# 查看 Go 服务 raw payload 入库情况
+curl -H "Authorization: Bearer <admin-token>" \
+  "http://localhost:8080/api/v1/admin/payload-events?limit=20"
 
 # 验证静态文件（嵌入式前端）
 curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/admin/

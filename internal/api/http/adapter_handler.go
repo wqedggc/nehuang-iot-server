@@ -1,12 +1,15 @@
 package http
 
 import (
+	"bytes"
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	"nehuang-iot-server/internal/domain"
 )
@@ -73,6 +76,106 @@ type deviceEvent struct {
 	Unit             string   `json:"unit"`
 }
 
+type rawFrameEnvelope struct {
+	ProtocolVersion string `json:"protocol_version"`
+	SourceType      string `json:"source_type"`
+	MessageID       string `json:"message_id"`
+	ConnectionID    string `json:"connection_id"`
+	GatewayName     string `json:"gateway_name"`
+	RemoteIP        string `json:"remote_ip"`
+	RemotePort      int    `json:"remote_port"`
+	Direction       string `json:"direction"`
+	PayloadHex      string `json:"payload_hex"`
+	ReceivedAt      string `json:"received_at"`
+	RawSeq          uint64 `json:"raw_seq"`
+}
+
+// handleRawFrames stores one raw TCP frame captured by gateway-adapter.
+//
+// This endpoint is intentionally raw-first: it validates the envelope, writes the
+// original bytes to raw_device_events, and only performs minimal stable parsing
+// for register/heartbeat. Work/alarm frames stay pending until the hardware
+// protocol is frozen.
+func (h *adapterHandler) handleRawFrames(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeCode(w, http.StatusMethodNotAllowed, 405, "method not allowed")
+		return
+	}
+	if !h.validAdapterToken(r) {
+		writeCode(w, http.StatusUnauthorized, 401, "invalid or missing adapter token")
+		return
+	}
+
+	bodyBytes, err := readAllBody(r)
+	if err != nil {
+		writeCode(w, http.StatusBadRequest, 400, "failed to read request body: "+err.Error())
+		return
+	}
+	var envelope rawFrameEnvelope
+	if err := json.Unmarshal(bodyBytes, &envelope); err != nil {
+		writeCode(w, http.StatusBadRequest, 400, "invalid request body: "+err.Error())
+		return
+	}
+
+	payloadHex := strings.ToUpper(strings.TrimSpace(envelope.PayloadHex))
+	payload, err := hex.DecodeString(payloadHex)
+	if err != nil || payloadHex == "" {
+		writeCode(w, http.StatusBadRequest, 400, "invalid payload_hex")
+		return
+	}
+	if envelope.GatewayName == "" {
+		trimmed := bytes.TrimSpace(payload)
+		if bytes.HasPrefix(trimmed, []byte("FP_")) {
+			envelope.GatewayName = string(trimmed)
+		}
+	}
+
+	var receivedAt time.Time
+	if strings.TrimSpace(envelope.ReceivedAt) != "" {
+		receivedAt, err = time.Parse(time.RFC3339Nano, envelope.ReceivedAt)
+		if err != nil {
+			writeCode(w, http.StatusBadRequest, 400, "invalid received_at")
+			return
+		}
+	}
+
+	payloadSnapshot := string(bodyBytes)
+	rawEvent := &domain.RawDeviceEvent{
+		GatewayName:     strPtr(envelope.GatewayName),
+		EventType:       domain.RawEventWork,
+		SourceType:      sourceTypeFromEnvelope(envelope.SourceType),
+		RemoteIP:        strPtr(envelope.RemoteIP),
+		RemotePort:      intPtr(envelope.RemotePort),
+		PayloadHex:      strPtr(payloadHex),
+		PayloadSnapshot: &payloadSnapshot,
+		ParseStatus:     domain.ParseStatusPending,
+		MessageID:       strPtr(envelope.MessageID),
+		EventCount:      1,
+		ParsedCount:     0,
+		ReceivedAtMS:    receivedAt,
+	}
+	rawEventID, err := h.repo.InsertRawEvent(r.Context(), rawEvent)
+	if err != nil {
+		writeCode(w, http.StatusInternalServerError, 500, "failed to insert raw frame: "+err.Error())
+		return
+	}
+
+	status := domain.ParseStatusPending
+	if parsedStatus, err := h.parseRawFrame(r.Context(), rawEventID, envelope, payload); err != nil {
+		status = domain.ParseStatusFailed
+		_ = h.repo.UpdateRawEventParseStatus(r.Context(), rawEventID, status, strPtr(err.Error()))
+	} else {
+		status = parsedStatus
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"data": map[string]any{
+			"raw_event_id": rawEventID,
+			"parse_status": status.ParseStatusName(),
+		},
+	})
+}
+
 // handleDeviceEvents 处理 POST /api/v1/adapter/device-events。
 // 认证使用 X-Adapter-Token header，不走用户 JWT。
 //
@@ -87,8 +190,7 @@ type deviceEvent struct {
 //  6. INSERT 成功 → 再按 events[] 逐条处理，失败不丢失原始数据
 func (h *adapterHandler) handleDeviceEvents(w http.ResponseWriter, r *http.Request) {
 	// 校验 Adapter Token。
-	token := r.Header.Get("X-Adapter-Token")
-	if token == "" || token != h.adapterToken {
+	if !h.validAdapterToken(r) {
 		writeCode(w, http.StatusUnauthorized, 401, "invalid or missing adapter token")
 		return
 	}
@@ -320,6 +422,60 @@ func (h *adapterHandler) handleDeviceEvents(w http.ResponseWriter, r *http.Reque
 	})
 }
 
+func (h *adapterHandler) parseRawFrame(ctx context.Context, rawEventID uint64, envelope rawFrameEnvelope, payload []byte) (domain.ParseStatus, error) {
+	trimmed := bytes.TrimSpace(payload)
+	if bytes.HasPrefix(trimmed, []byte("FP_")) {
+		gatewayName := string(trimmed)
+		if envelope.GatewayName != "" {
+			gatewayName = envelope.GatewayName
+		}
+		gatewayID, err := h.repo.UpsertGatewayByExternalID(ctx, &domain.Gateway{
+			GatewayExternalID: gatewayName,
+			GatewayName:       gatewayName,
+			IP:                envelope.RemoteIP,
+			Port:              envelope.RemotePort,
+			OnlineStatus:      1,
+			SourceType:        uint8(domain.SourceTypeGateway),
+		})
+		if err != nil {
+			return domain.ParseStatusFailed, err
+		}
+		_ = gatewayID
+		_ = h.repo.UpdateRawEventParseMeta(ctx, rawEventID, domain.RawEventRegister, 1, 1, strPtr(envelope.MessageID))
+		_ = h.repo.UpdateRawEventParseStatus(ctx, rawEventID, domain.ParseStatusParsed, nil)
+		return domain.ParseStatusParsed, nil
+	}
+
+	if bytes.EqualFold(trimmed, []byte("HEARTBEAT")) {
+		gatewayName := strings.TrimSpace(envelope.GatewayName)
+		if gatewayName == "" {
+			return domain.ParseStatusFailed, errRawFrameHeartbeatMissingGateway
+		}
+		_, err := h.repo.UpsertGatewayByExternalID(ctx, &domain.Gateway{
+			GatewayExternalID: gatewayName,
+			GatewayName:       gatewayName,
+			IP:                envelope.RemoteIP,
+			Port:              envelope.RemotePort,
+			OnlineStatus:      1,
+			SourceType:        uint8(domain.SourceTypeGateway),
+		})
+		if err != nil {
+			return domain.ParseStatusFailed, err
+		}
+		_ = h.repo.UpdateRawEventParseMeta(ctx, rawEventID, domain.RawEventHeartbeat, 1, 1, strPtr(envelope.MessageID))
+		_ = h.repo.UpdateRawEventParseStatus(ctx, rawEventID, domain.ParseStatusParsed, nil)
+		return domain.ParseStatusParsed, nil
+	}
+
+	return domain.ParseStatusPending, nil
+}
+
+var errRawFrameHeartbeatMissingGateway = rawFrameParseError("heartbeat missing gateway_name")
+
+type rawFrameParseError string
+
+func (e rawFrameParseError) Error() string { return string(e) }
+
 // readAllBody 读取请求体全部字节，失败返回错误。
 // 与 json.NewDecoder(r.Body).Decode() 不同，此函数先完整读取原始字节，
 // 保证 payload_snapshot 中存储的是硬件原始数据，而非 Go 结构体二次序列化结果。
@@ -332,8 +488,10 @@ func sourceTypeFromEnvelope(sourceType string) domain.SourceType {
 	switch strings.TrimSpace(strings.ToLower(sourceType)) {
 	case "mock_script", "mock", "mock_device_events":
 		return domain.SourceTypeMock
-	case "gateway":
+	case "gateway", "gateway_adapter", "tcp_gateway":
 		return domain.SourceTypeGateway
+	case "adapter", "adapter_api":
+		return domain.SourceTypeAdapter
 	case "manual":
 		return domain.SourceTypeManual
 	default:
@@ -352,4 +510,9 @@ func strPtr(s string) *string {
 // intPtr 返回整数指针。
 func intPtr(i int) *int {
 	return &i
+}
+
+func (h *adapterHandler) validAdapterToken(r *http.Request) bool {
+	token := r.Header.Get("X-Adapter-Token")
+	return token != "" && token == h.adapterToken
 }

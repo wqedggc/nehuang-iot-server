@@ -211,40 +211,37 @@ func (s *Server) handleConn(conn net.Conn) {
 			"raw_seq":       rawSeq,
 		})
 
-		if msg.Kind == protocol.MessageRegister || msg.Kind == protocol.MessageHeartbeat {
-			if gatewayName == "" {
-				gatewayName = msg.GatewayName
-			}
-			if err := s.forwardGatewayEvent(context.Background(), msg.Kind, connectionID, gatewayName, remoteIP, remotePort, rawSeq); err != nil {
-				s.forwardFailures.Add(1)
-				s.logger.Warn("gateway_event_forward_failed", map[string]any{
-					"connection_id": connectionID,
-					"gateway_name":  gatewayName,
-					"kind":          msg.Kind,
-					"error":         err.Error(),
-				})
-			}
+		if msg.Kind == protocol.MessageHeartbeat && gatewayName == "" {
+			gatewayName = msg.GatewayName
+		}
+		if err := s.forwardRawFrame(context.Background(), frame, gatewayName, remoteIP, remotePort); err != nil {
+			s.forwardFailures.Add(1)
+			s.logger.Warn("gateway_raw_frame_forward_failed", map[string]any{
+				"connection_id": connectionID,
+				"gateway_name":  gatewayName,
+				"kind":          msg.Kind,
+				"raw_seq":       rawSeq,
+				"error":         err.Error(),
+			})
 		}
 	}
 }
 
-func (s *Server) forwardGatewayEvent(ctx context.Context, kind protocol.MessageKind, connectionID, gatewayName, remoteIP string, remotePort int, rawSeq uint64) error {
-	eventType := "heartbeat"
-	if kind == protocol.MessageRegister {
-		eventType = "register"
+func (s *Server) forwardRawFrame(ctx context.Context, frame journal.Frame, gatewayName, remoteIP string, remotePort int) error {
+	envelope := RawFrameEnvelope{
+		ProtocolVersion: "nehuang-gateway-adapter-v1",
+		SourceType:      "gateway_adapter",
+		MessageID:       frame.ConnectionID + "-" + strconv.FormatUint(frame.RawSeq, 10),
+		ConnectionID:    frame.ConnectionID,
+		GatewayName:     gatewayName,
+		RemoteIP:        remoteIP,
+		RemotePort:      remotePort,
+		Direction:       string(frame.Direction),
+		PayloadHex:      frame.PayloadHex,
+		ReceivedAt:      frame.ReceivedAt.Format(time.RFC3339Nano),
+		RawSeq:          frame.RawSeq,
 	}
-	envelope := DeviceEventEnvelope{
-		ProtocolVersion:   "nehuang-gateway-adapter-v1",
-		SourceType:        "gateway_adapter",
-		MessageID:         connectionID + "-" + strconv.FormatUint(rawSeq, 10),
-		GatewayName:       gatewayName,
-		GatewayExternalID: protocol.GatewayExternalID(gatewayName),
-		RemoteIP:          remoteIP,
-		RemotePort:        remotePort,
-		ReportedAtMS:      time.Now().UTC().Format(time.RFC3339),
-		Events:            []DeviceEvent{{EventType: eventType}},
-	}
-	return s.forwarder.PostDeviceEvents(ctx, envelope)
+	return s.forwarder.PostRawFrame(ctx, envelope)
 }
 
 func (s *Server) healthRoutes() http.Handler {

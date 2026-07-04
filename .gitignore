@@ -9,7 +9,9 @@ configs/mysql/*.cnf
 # 编译产物
 # ============================================================================
 /nehuang-server
+/server
 /gateway-adapter
+/gateway-adapter-mock
 /gateway-adapter-replay
 /hash_password
 *.exe

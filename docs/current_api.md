@@ -18,12 +18,31 @@ HTTP Adapter API 是 Go `gateway-adapter` 和 Go `nehuang-server` 之间的内�
 
 | Method | Path | Auth | Status |
 |--------|------|------|--------|
+| POST | `/api/v1/adapter/raw-frames` | `X-Adapter-Token` | 正式，硬件 TCP raw frame 主入口 |
 | POST | `/api/v1/adapter/device-events` | `X-Adapter-Token` | 正式 |
 | GET | `/api/v1/adapter/commands/pending?gateway_external_id=` | `X-Adapter-Token` | 新增，Adapter 拉取待下发命令 |
 | POST | `/api/v1/adapter/commands/{command_id}/sent` | `X-Adapter-Token` | 新增，Adapter 标记已下发 |
 | POST | `/api/v1/adapter/commands/{command_id}/result` | `X-Adapter-Token` | 新增，Adapter 回写 ACK/成功/失败/超时 |
 
-说明：Adapter 事件入口接收 register、heartbeat、telemetry/work、control_result 等 envelope。TCP 硬件网关由独立 `gateway-adapter` 接入，先做 raw capture 与 register/heartbeat 转发；工作包解析随硬件协议稳定后补充。
+说明：`gateway-adapter` 的 TCP 主链路会把每次收到的 bytes 上报到 `/api/v1/adapter/raw-frames`，Server 先写 `raw_device_events`，第一版只解析 `FP_` 注册包和 `HEARTBEAT` 心跳包；工作包、告警包、未知包先保持 pending，等真实协议稳定后补 parser。`/api/v1/adapter/device-events` 保留给已结构化 JSON 上报和旧联调脚本。
+
+### POST `/api/v1/adapter/raw-frames`
+
+请求字段：
+
+- `protocol_version`
+- `source_type`
+- `message_id`
+- `connection_id`
+- `gateway_name`
+- `remote_ip`
+- `remote_port`
+- `direction`
+- `payload_hex`
+- `received_at`
+- `raw_seq`
+
+返回 `raw_event_id` 和 `parse_status`。该接口不要求同步完成业务解析。
 
 ## Admin
 

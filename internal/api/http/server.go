@@ -79,6 +79,7 @@ func (s *Server) Routes() http.Handler {
 	dashH := &adminDashboardHandler{svc: dashSvc}
 
 	// ─── Adapter API（X-Adapter-Token 认证，不走用户 JWT） ───
+	mux.HandleFunc("/api/v1/adapter/raw-frames", adh.handleRawFrames)
 	mux.HandleFunc("/api/v1/adapter/device-events", adh.handleDeviceEvents)
 	mux.HandleFunc("/api/v1/adapter/commands/pending", adh.handlePendingCommands)
 	mux.HandleFunc("/api/v1/adapter/commands/", func(w http.ResponseWriter, r *http.Request) {

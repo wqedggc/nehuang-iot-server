@@ -10,7 +10,8 @@
 ```text
 硬件网关 TCP
   -> Go gateway-adapter 原始收包和 raw journal
-  -> 已识别 register/heartbeat 转发 Go 服务
+  -> 全量 raw frame 上报 Go 服务
+  -> Go 服务先写 raw_device_events，再最小解析 register/heartbeat
   -> Go nehuang-server 维护 MySQL 主模型
   -> Admin 管理已有设备点位和绑定
   -> Mini/C 端查看已绑定设备并创建异步控制命令
@@ -62,19 +63,20 @@
 - 健康检查端口，默认 `NEHUANG_GATEWAY_HEALTH_ADDR=:18081`。
 - 每个 TCP 连接生成 `connection_id`。
 - 收到任何 bytes 后立即写 raw frame journal。
+- 将每次 TCP read 到的原始 bytes 上报到 `POST /api/v1/adapter/raw-frames`。
 - runtime log 使用结构化 JSON。
 - debug/protocol log 通过 `NEHUANG_GATEWAY_DEBUG=true` 开启。
 - 识别 ASCII `FP_xxx` 注册包。
 - 识别 `HEARTBEAT/HB/PING/HEART` 心跳包。
-- 注册/心跳转发到 `POST /api/v1/adapter/device-events`。
+- 注册/心跳的业务解析由 Go 服务在 raw frame 落库后完成。
 - CRC-16/MODBUS 固定实现。
 - `cmd/gateway-adapter-mock` 可模拟注册、心跳、工作包、告警包、未知包。
 - `cmd/gateway-adapter-replay` 可回放 raw journal 并统计分类结果。
 
 当前限制：
 
-- 工作包只做占位分类，不解析字段。
-- 告警包只做占位分类，不入业务告警。
+- 工作包已经能进入 Go 服务 `raw_device_events`，但仍不解析字段。
+- 告警包已经能进入 Go 服务 `raw_device_events`，但仍不入业务告警。
 - 未实现真实下行 hex 写回硬件连接。
 - 未实现时隙调度。
 
@@ -99,9 +101,9 @@
 
 ### 2.4 设备接入与主数据
 
-当前设备主数据仍是 Adapter 驱动：
+当前设备主数据仍由硬件上报驱动：
 
-- register/heartbeat 会创建或更新 `cloud_gateways`。
+- raw frame 中的 register/heartbeat 会创建或更新 `cloud_gateways`。
 - telemetry/work 后续应创建或更新：
   - `collector_nodes`
   - `device_points`
