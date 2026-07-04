@@ -24,7 +24,7 @@ HTTP Adapter API 是 Go `gateway-adapter` 和 Go `nehuang-server` 之间的内�
 | POST | `/api/v1/adapter/commands/{command_id}/sent` | `X-Adapter-Token` | 新增，Adapter 标记已下发 |
 | POST | `/api/v1/adapter/commands/{command_id}/result` | `X-Adapter-Token` | 新增，Adapter 回写 ACK/成功/失败/超时 |
 
-说明：`gateway-adapter` 的 TCP 主链路会把每次收到的 bytes 上报到 `/api/v1/adapter/raw-frames`，Server 先写 `raw_device_events`，第一版只解析 `FP_` 注册包和 `HEARTBEAT` 心跳包；工作包、告警包、未知包先保持 pending，等真实协议稳定后补 parser。`/api/v1/adapter/device-events` 保留给已结构化 JSON 上报和旧联调脚本。
+说明：`gateway-adapter` 的 TCP 主链路会把每次收到的 bytes 上报到 `/api/v1/adapter/raw-frames`，Server 先写 `raw_device_events`。第一版只解析 `FP_` 注册包和 `HEARTBEAT` 心跳包；工作包、告警包、未知包会先按 `event_type=3/6/7` 分开展示，但业务解析仍保持 pending，等真实协议稳定后补 parser。`/api/v1/adapter/device-events` 保留给已结构化 JSON 上报和旧联调脚本。
 
 ### POST `/api/v1/adapter/raw-frames`
 

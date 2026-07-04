@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"nehuang-iot-server/internal/domain"
+	"nehuang-iot-server/internal/gatewayadapter/protocol"
 )
 
 // adapterHandler 处理 /api/v1/adapter/* 端点的设备事件上报。
@@ -142,7 +143,7 @@ func (h *adapterHandler) handleRawFrames(w http.ResponseWriter, r *http.Request)
 	payloadSnapshot := string(bodyBytes)
 	rawEvent := &domain.RawDeviceEvent{
 		GatewayName:     strPtr(envelope.GatewayName),
-		EventType:       domain.RawEventWork,
+		EventType:       rawFrameEventType(payload),
 		SourceType:      sourceTypeFromEnvelope(envelope.SourceType),
 		RemoteIP:        strPtr(envelope.RemoteIP),
 		RemotePort:      intPtr(envelope.RemotePort),
@@ -470,6 +471,23 @@ func (h *adapterHandler) parseRawFrame(ctx context.Context, rawEventID uint64, e
 	}
 
 	return domain.ParseStatusPending, nil
+}
+
+func rawFrameEventType(payload []byte) domain.RawEventType {
+	switch protocol.ClassifyPayload(payload).Kind {
+	case protocol.MessageRegister:
+		return domain.RawEventRegister
+	case protocol.MessageHeartbeat:
+		return domain.RawEventHeartbeat
+	case protocol.MessageAlarm:
+		return domain.RawEventAlarm
+	case protocol.MessageControlResult:
+		return domain.RawEventControlResult
+	case protocol.MessageWorkData:
+		return domain.RawEventWork
+	default:
+		return domain.RawEventUnknown
+	}
 }
 
 func gatewayExternalIDFromName(gatewayName string) string {

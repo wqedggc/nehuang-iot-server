@@ -41,6 +41,10 @@ func (t RawEventType) RawEventTypeName() string {
 		return "控制结果"
 	case RawEventJSONSnapshot:
 		return "JSON快照"
+	case RawEventAlarm:
+		return "告警"
+	case RawEventUnknown:
+		return "未知包"
 	default:
 		return "未知"
 	}
@@ -59,6 +63,10 @@ func (t RawEventType) RawEventTypeCSS() string {
 		return "warning"
 	case RawEventJSONSnapshot:
 		return "primary"
+	case RawEventAlarm:
+		return "danger"
+	case RawEventUnknown:
+		return "muted"
 	default:
 		return ""
 	}
@@ -73,6 +81,8 @@ const (
 	RawEventWork          RawEventType = 3 // work：工作数据上报
 	RawEventControlResult RawEventType = 4 // control_result：控制命令执行结果回传
 	RawEventJSONSnapshot  RawEventType = 5 // json_snapshot：JSON快照
+	RawEventAlarm         RawEventType = 6 // alarm：告警原始包
+	RawEventUnknown       RawEventType = 7 // unknown：未知原始包
 )
 
 // SourceType 事件来源。

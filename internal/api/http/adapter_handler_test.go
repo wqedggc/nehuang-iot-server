@@ -140,6 +140,9 @@ func TestHandleRawFramesKeepsUnknownPayloadPending(t *testing.T) {
 	if repo.insertedRawEvents[0].ParseStatus != domain.ParseStatusPending {
 		t.Fatalf("insert parse status: want pending, got %v", repo.insertedRawEvents[0].ParseStatus)
 	}
+	if repo.insertedRawEvents[0].EventType != domain.RawEventUnknown {
+		t.Fatalf("event type: want unknown, got %v", repo.insertedRawEvents[0].EventType)
+	}
 	if repo.parseStatus != 0 {
 		t.Fatalf("unknown payload should not update parse status, got %v", repo.parseStatus)
 	}
@@ -152,6 +155,34 @@ func TestHandleRawFramesKeepsUnknownPayloadPending(t *testing.T) {
 	}
 	if resp["data"]["parse_status"] != domain.ParseStatusPending.ParseStatusName() {
 		t.Fatalf("response parse_status mismatch: %#v", resp)
+	}
+}
+
+func TestHandleRawFramesStoresAlarmPayloadAsAlarmPending(t *testing.T) {
+	repo := &mockAdapterRepo{}
+	handler := &adapterHandler{repo: repo, adapterToken: "test-token"}
+	body := `{"protocol_version":"nehuang-gateway-adapter-v1","source_type":"gateway_adapter","message_id":"conn-1-4","connection_id":"conn-1","gateway_name":"FP_TEST_ADMIN_001","remote_ip":"127.0.0.1","remote_port":63254,"direction":"inbound","payload_hex":"AAAA0BFFFFFF012CD5","received_at":"2026-07-04T18:08:05Z","raw_seq":4}`
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/adapter/raw-frames", strings.NewReader(body))
+	req.Header.Set("X-Adapter-Token", "test-token")
+	rec := httptest.NewRecorder()
+
+	handler.handleRawFrames(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("handleRawFrames: want 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if len(repo.insertedRawEvents) != 1 {
+		t.Fatalf("InsertRawEvent calls: want 1, got %d", len(repo.insertedRawEvents))
+	}
+	if repo.insertedRawEvents[0].EventType != domain.RawEventAlarm {
+		t.Fatalf("event type: want alarm, got %v", repo.insertedRawEvents[0].EventType)
+	}
+	if repo.insertedRawEvents[0].ParseStatus != domain.ParseStatusPending {
+		t.Fatalf("parse status: want pending, got %v", repo.insertedRawEvents[0].ParseStatus)
+	}
+	if repo.parseStatus != 0 {
+		t.Fatalf("alarm payload should not update parse status, got %v", repo.parseStatus)
 	}
 }
 

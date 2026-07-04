@@ -169,7 +169,7 @@ CREATE TABLE IF NOT EXISTS raw_device_events (
   raw_event_id BIGINT UNSIGNED NOT NULL COMMENT '原始设备事件雪花ID',
   gateway_id BIGINT UNSIGNED DEFAULT NULL COMMENT '云边设备ID',
   gateway_name VARCHAR(64) DEFAULT NULL COMMENT 'FP设备名',
-  event_type TINYINT UNSIGNED NOT NULL COMMENT '事件类型：1=register 2=heartbeat 3=work 4=control_result 5=json_snapshot',
+  event_type TINYINT UNSIGNED NOT NULL COMMENT '事件类型：1=register 2=heartbeat 3=work 4=control_result 5=json_snapshot 6=alarm 7=unknown',
   source_type TINYINT UNSIGNED NOT NULL DEFAULT 1 COMMENT '事件来源：1=gateway 2=adapter 3=manual',
   remote_ip VARCHAR(64) DEFAULT NULL COMMENT '远端IP',
   remote_port INT DEFAULT NULL COMMENT '远端端口',

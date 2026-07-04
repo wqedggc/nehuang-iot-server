@@ -274,7 +274,7 @@ cloud_gateways
 | `node_id` | `BIGINT UNSIGNED DEFAULT NULL` | 是 | 解析后的采集执行器节点ID |
 | `point_id` | `BIGINT UNSIGNED DEFAULT NULL` | 是 | 解析后的功能点ID |
 | `gateway_name` | `VARCHAR(64) DEFAULT NULL` | 是 | FP设备名 |
-| `event_type` | `TINYINT UNSIGNED NOT NULL` | 否 | 事件类型：1=register 2=heartbeat 3=work 4=control_result 5=json_snapshot |
+| `event_type` | `TINYINT UNSIGNED NOT NULL` | 否 | 事件类型：1=register 2=heartbeat 3=work 4=control_result 5=json_snapshot 6=alarm 7=unknown |
 | `source_type` | `TINYINT UNSIGNED NOT NULL DEFAULT 1` | 否 | 事件来源：1=gateway 2=adapter 3=manual |
 | `remote_ip` | `VARCHAR(64) DEFAULT NULL` | 是 | 远端IP |
 | `remote_port` | `INT DEFAULT NULL` | 是 | 远端端口 |

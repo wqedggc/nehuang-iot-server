@@ -584,8 +584,8 @@
       var keyword = (query.keyword || '').toLowerCase();
 
       // 生成 mock payload 事件列表
-      var eventTypes = [1, 2, 3, 3, 3, 4, 5]; // 注册/心跳/工作数据/控制结果/JSON快照
-      var eventTypeNames = { 1: '注册', 2: '心跳', 3: '工作数据', 4: '控制结果', 5: 'JSON快照' };
+      var eventTypes = [1, 2, 3, 6, 7, 4, 5]; // 注册/心跳/工作数据/告警/未知包/控制结果/JSON快照
+      var eventTypeNames = { 1: '注册', 2: '心跳', 3: '工作数据', 4: '控制结果', 5: 'JSON快照', 6: '告警', 7: '未知包' };
       var parseStatuses = [1, 2, 2, 2, 3, 4]; // pending/parsed/failed/partial
       var parseStatusNames = { 1: '待解析', 2: '已解析', 3: '解析失败', 4: '部分解析', 5: '已忽略' };
       var gatewayNames = ['FP_TEST_ADMIN_001', 'FP_TEST_ADMIN_002', 'FP_TEST_ADMIN_003'];

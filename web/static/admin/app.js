@@ -1040,7 +1040,9 @@
         { val: '2', label: '心跳' },
         { val: '3', label: '工作数据' },
         { val: '4', label: '控制结果' },
-        { val: '5', label: 'JSON快照' }
+        { val: '5', label: 'JSON快照' },
+        { val: '6', label: '告警' },
+        { val: '7', label: '未知包' }
       ];
       var parseStatusOptions = [
         { val: '', label: '全部状态' },
@@ -1079,7 +1081,14 @@
             (items.length === 0 ? '<tr><td colspan="11" class="table-empty">暂无数据</td></tr>' :
               items.map(function (item) {
                 var statusCSS = (item.parse_status === 1 ? 'badge-warning' : item.parse_status === 2 ? 'badge-success' : item.parse_status === 3 ? 'badge-danger' : item.parse_status === 4 ? 'badge-info' : 'badge-muted');
-                var eventCSS = (item.event_type === 1 ? 'badge-info' : item.event_type === 2 ? 'badge-muted' : item.event_type === 3 ? 'badge-success' : 'badge-warning');
+                var eventCSS = (
+                  item.event_type === 1 ? 'badge-info' :
+                  item.event_type === 2 ? 'badge-muted' :
+                  item.event_type === 3 ? 'badge-success' :
+                  item.event_type === 6 ? 'badge-danger' :
+                  item.event_type === 7 ? 'badge-muted' :
+                  'badge-warning'
+                );
                 var isMock = !!item.is_mock;
                 var sourceName = item.source_type_name || '--';
                 return '<tr>' +
