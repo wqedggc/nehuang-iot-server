@@ -360,27 +360,29 @@ cloud_gateways
 ### 4.1 Gateway 在线状态 Cycle
 
 ```text
-tcp_gateway.py
-  -> devices.json
-  -> Go Device Adapter
-  -> raw_device_events(event_type=5 json_snapshot)
+Hardware gateway TCP
+  -> Go gateway-adapter
+  -> raw frame journal
+  -> /api/v1/adapter/device-events(register/heartbeat)
   -> cloud_gateways upsert
 ```
 
 写库步骤：
 
-1. Adapter 读取 `devices.json` 数组。
-2. 每条设备快照写入 `raw_device_events.payload_snapshot`。
-3. 按 `gateway_name` 查询或创建 `cloud_gateways`。
-4. 更新 `online_status`、`ip`、`port`、`last_heartbeat_at_ms`、`last_raw_event_id`。
-5. `updated_at` 由 MySQL 自动刷新。
+1. `gateway-adapter` 收到 TCP bytes 后先写 raw frame journal。
+2. 识别注册或心跳后，构造 `/api/v1/adapter/device-events` envelope。
+3. Go HTTP 服务写入 `raw_device_events`。
+4. 按 `gateway_external_id` 查询或创建 `cloud_gateways`。
+5. 更新 `online_status`、`ip`、`port`、`last_heartbeat_at_ms`、`last_raw_event_id`。
+6. `updated_at` 由 MySQL 自动刷新。
 
 ### 4.2 工作包解析 Cycle
 
 ```text
-Gateway work packet
+Hardware work packet
+  -> Go gateway-adapter raw frame journal
   -> raw_device_events(event_type=3 work, parse_status=1 pending)
-  -> Device Adapter parse
+  -> parser / replay
   -> collector_nodes upsert
   -> device_points update
   -> device_realtime_maps update optional
@@ -390,8 +392,8 @@ Gateway work packet
 
 写库步骤：
 
-1. 原始工作包先写 `raw_device_events`，不允许直接丢弃。
-2. Adapter 解析出 `gateway_id + frequency + device_external_id`。
+1. 原始工作包先写 raw frame journal，后续可同步写 `raw_device_events`，不允许直接丢弃。
+2. parser 解析出 `gateway_id + frequency + device_external_id`。
 3. 按 `gateway_id + frequency + device_external_id` 查询或创建 `collector_nodes`。
 4. 按 `node_id + function_type + channel_no` 查询或创建 `device_points`。
 5. 更新 `device_points.real_value/real_temp/value_status/last_report_at_ms`。
@@ -405,19 +407,21 @@ Gateway work packet
 Admin/MiniProgram
   -> permission check
   -> control_commands(command_status=1 created)
-  -> Gateway /send
-  -> control_commands(command_status=2 sent 或 5 failed)
-  -> op_records insert
+  -> gateway-adapter pulls pending command
+  -> hardware send
+  -> control_commands(command_status=2 sent)
+  -> control_results / final status
 ```
 
 写库步骤：
 
 1. 先按 `user_id + point_id` 校验绑定权限；旧数据可兼容 `gateway_id + frequency + device_external_id`。
 2. 创建 `control_commands`，记录 `command_hex` 和目标继电器状态。
-3. 调用 Gateway `/send?did=&cmd=`。
-4. Gateway 调用成功只代表已发送，更新 `command_status=2`。
-5. 手动模式下插入 `op_records`。
-6. 如果 Gateway 调用失败，更新 `command_status=5` 和 `error_message`。
+3. 用户请求立即返回 `command_id + pending`，不等待 MCU 最终 ACK。
+4. Adapter 拉取 pending command 后，根据后续时隙策略或设备取命令策略下发。
+5. 下发成功只代表已发送，更新 `command_status=2`。
+6. 收到 ACK/结果后写 `control_results` 并更新最终状态。
+7. 手动模式下根据业务要求写入 `op_records`。
 
 ### 4.4 控制结果 Cycle
 

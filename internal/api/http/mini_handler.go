@@ -31,6 +31,8 @@ type miniRepository interface {
 	GetMiniDeviceHistory(ctx context.Context, pointID uint64, rangeType string) ([]domain.MiniHistoryPoint, error)
 	// 检查用户是否对某个功能点有 active 绑定关系。
 	CheckBindRelation(ctx context.Context, userID uint64, pointID uint64) (bool, error)
+	// 创建控制命令，实际下发由 Adapter 异步处理。
+	CreateControlCommandForPoint(ctx context.Context, input domain.CreateControlCommandInput) (*domain.ControlCommand, error)
 }
 
 // miniHandler handles all /api/v1/mini/* endpoints.
@@ -553,17 +555,57 @@ func (h *miniHandler) handleControl(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 控制命令占位：后续实现控制链路后再对接 Gateway。
-	actionLabel := map[string]string{"start": "开启", "stop": "停止", "close": "关闭"}
-	writeJSON(w, http.StatusOK, map[string]any{
+	input, label, err := buildMiniControlCommandInput(pointID, claims.UserID, req.Action)
+	if err != nil {
+		writeCode(w, http.StatusBadRequest, 400, err.Error())
+		return
+	}
+	cmd, err := h.repo.CreateControlCommandForPoint(r.Context(), input)
+	if err != nil {
+		writeCode(w, http.StatusInternalServerError, 500, "failed to create control command")
+		return
+	}
+
+	writeJSON(w, http.StatusAccepted, map[string]any{
 		"data": map[string]any{
-			"command_id":   time.Now().UnixMilli(),
+			"command_id":   idStr(cmd.CommandID),
 			"action":       req.Action,
-			"action_label": actionLabel[req.Action],
-			"status":       "created",
-			"message":      "控制命令已接收（控制链路开发中）",
+			"action_label": label,
+			"status":       cmd.CommandStatus.Label(),
+			"message":      "控制命令已创建，等待 Adapter 下发",
 		},
 	})
+}
+
+func buildMiniControlCommandInput(pointID uint64, userID uint64, action string) (domain.CreateControlCommandInput, string, error) {
+	reqBy := userID
+	extra := `{"source":"mini_control"}`
+	input := domain.CreateControlCommandInput{
+		PointID:       pointID,
+		RequestedBy:   &reqBy,
+		CommandSource: domain.CommandSourceMini,
+		Extra:         &extra,
+	}
+	switch strings.TrimSpace(action) {
+	case "start", "open":
+		rel := uint8(1)
+		input.CommandType = domain.CommandTypeRelayOpen
+		input.CommandHex = "F0"
+		input.Rel1TargetStatus = &rel
+		return input, "开启", nil
+	case "close":
+		rel := uint8(1)
+		input.CommandType = domain.CommandTypeRelayClose
+		input.CommandHex = "0F"
+		input.Rel2TargetStatus = &rel
+		return input, "关闭", nil
+	case "stop":
+		input.CommandType = domain.CommandTypeRelayStop
+		input.CommandHex = "00"
+		return input, "停止", nil
+	default:
+		return input, "", fmt.Errorf("action must be start, close, or stop")
+	}
 }
 
 // extractPointID 从路径中提取 {id} 参数。

@@ -54,6 +54,16 @@ func (m *mockMiniRepo) CheckBindRelation(ctx context.Context, userID uint64, poi
 func (m *mockMiniRepo) UpdateMiniProfile(ctx context.Context, userID uint64, updates map[string]string) error {
 	return nil
 }
+func (m *mockMiniRepo) CreateControlCommandForPoint(ctx context.Context, input domain.CreateControlCommandInput) (*domain.ControlCommand, error) {
+	return &domain.ControlCommand{
+		CommandID:     123,
+		PointID:       &input.PointID,
+		CommandSource: input.CommandSource,
+		CommandType:   input.CommandType,
+		CommandHex:    input.CommandHex,
+		CommandStatus: domain.CommandStatusCreated,
+	}, nil
+}
 
 // ─── Scenario 7: Mini login JWT contains aud="mini" ──────────────────────────
 
@@ -115,6 +125,27 @@ func TestMiniLogin_JWTContainsAudMini(t *testing.T) {
 	}
 	if claims.Aud != "mini" {
 		t.Errorf("mini token aud: want 'mini', got '%s'", claims.Aud)
+	}
+}
+
+func TestBuildMiniControlCommandInput(t *testing.T) {
+	tests := []struct {
+		action  string
+		wantHex string
+		wantTyp domain.CommandType
+	}{
+		{"start", "F0", domain.CommandTypeRelayOpen},
+		{"close", "0F", domain.CommandTypeRelayClose},
+		{"stop", "00", domain.CommandTypeRelayStop},
+	}
+	for _, tt := range tests {
+		input, _, err := buildMiniControlCommandInput(99, 3, tt.action)
+		if err != nil {
+			t.Fatalf("buildMiniControlCommandInput(%q): %v", tt.action, err)
+		}
+		if input.CommandHex != tt.wantHex || input.CommandType != tt.wantTyp {
+			t.Fatalf("action %q mapped to hex=%s type=%d", tt.action, input.CommandHex, input.CommandType)
+		}
 	}
 }
 

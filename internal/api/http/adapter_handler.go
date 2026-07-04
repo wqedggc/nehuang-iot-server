@@ -42,6 +42,9 @@ type adapterRepository interface {
 	UpdateRawEventParseMeta(ctx context.Context, rawEventID uint64, eventType domain.RawEventType, eventCount int, parsedCount int, messageID *string) error
 	// FindGatewayByExternalID 按 gateway_external_id 查找云边设备，不存在返回 nil。
 	FindGatewayByExternalID(ctx context.Context, externalID string) (*domain.Gateway, error)
+	ListPendingControlCommands(ctx context.Context, gatewayExternalID string, limit int) ([]domain.ControlCommand, error)
+	MarkControlCommandSent(ctx context.Context, commandID uint64, gatewayResponse *string) error
+	ApplyControlCommandResult(ctx context.Context, input domain.AdapterCommandResultInput) error
 }
 
 // ─── Adapter 请求模型 ───

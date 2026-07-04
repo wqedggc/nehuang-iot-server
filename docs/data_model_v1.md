@@ -305,22 +305,26 @@ WHERE b.user_id = ?
 
 控制接口也必须先按同样口径校验权限，再生成 `control_commands`。
 
-## 6. Gateway 同步口径
+## 6. Gateway / Adapter 同步口径
 
-短期：
+当前正式路径：
 
-- Gateway 继续写 `devices.json`。
-- Go Adapter 定时读取 JSON。
-- 写入 `cloud_gateway` 和 `raw_device_events`。
+```text
+硬件网关 TCP client
+  -> Go gateway-adapter
+  -> raw frame journal
+  -> 已识别 register/heartbeat 转发到 /api/v1/adapter/device-events
+  -> nehuang-server
+  -> MySQL
+```
 
-中期：
+当前原则：
 
-- Gateway 收到注册/心跳/工作包后直接调用 Go Adapter API。
-- `devices.json` 降级为调试缓存。
-
-长期：
-
-- 如果需要，再由 Go 或独立 Gateway 服务接管 TCP；V1 不做这个改造。
+- `devices.json` 只作为旧 Python 网关的历史缓存和联调参考，不再作为当前正式事实来源。
+- Go `gateway-adapter` 收到任何 bytes 后先写 raw frame journal。
+- 已确认的注册/心跳事件由 Adapter 转成 HTTP envelope 发给 Go 服务。
+- 工作包、告警包、控制结果在协议样例未冻结前先保留 raw，不写死字段偏移。
+- 后续 parser 可以从 raw journal 回放验证，再把解析结果写入 `raw_device_events`、`sensor_data`、`device_points` 和 `device_realtime_maps`。
 
 ## 7. 已确认的服务端架构方案
 
@@ -331,8 +335,9 @@ V1 服务端按“设备接入、数据固化、业务 API”分层设计，目�
 ```text
 采集执行器节点
   -> 云边/LoRa 通信接入单元
-  -> TCP Gateway
-  -> Device Adapter
+  -> Go gateway-adapter
+  -> raw frame journal
+  -> Device Event / Parser
   -> raw_device_events
   -> collector_nodes / device_points / sensor_data
   -> MySQL
@@ -341,9 +346,9 @@ V1 服务端按“设备接入、数据固化、业务 API”分层设计，目�
 边界：
 
 - 云边设备和 LoRa 汇聚按一个通信接入单元理解，服务端不拆内部硬件层级。
-- TCP Gateway 保留现有接入职责，负责设备长连接、注册、心跳、工作包接收和命令下发。
-- Device Adapter 负责把 Gateway 输出的数据转换为服务端可识别的数据：`gateway_id + frequency + device_external_id + function_type + channel_no + value/status`。
-- 原始数据优先进入 `raw_device_events`，解析成功后再更新实时表和历史表。
+- Go `gateway-adapter` 负责设备 TCP 连接、注册、心跳、工作包接收和原始包留痕。
+- 协议解析层负责把 raw bytes 转换为服务端可识别的数据：`gateway_id + frequency + device_external_id + function_type + channel_no + value/status`。
+- 原始数据优先进入 raw journal；可识别 envelope 进入 `raw_device_events`，解析成功后再更新实时表和历史表。
 - 业务服务不直接处理 TCP 和十六进制协议。
 
 ### 7.2 客户端业务链路

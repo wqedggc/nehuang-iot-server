@@ -25,6 +25,9 @@ go run ./cmd/server
 |---------|-------------|
 | `go test ./...` | 运行后端测试 |
 | `go build ./cmd/server` | 编译服务端 |
+| `go build ./cmd/gateway-adapter` | 编译硬件 TCP Adapter |
+| `go build ./cmd/gateway-adapter-mock` | 编译硬件 TCP 模拟客户端 |
+| `go build ./cmd/gateway-adapter-replay` | 编译 raw frame 回放工具 |
 | `go build ./cmd/hash_password` | 编译部署脚本使用的密码哈希工具 |
 | `bash -n deploy.sh` | 检查部署脚本语法 |
 | `./deploy.sh` | 加载 `.env`、执行迁移、创建管理员、编译并启动服务 |
@@ -36,10 +39,15 @@ go run ./cmd/server
 - Database：MySQL `nehuang_db`，schema 位于 `schema/mysql/*.sql`。
 - Auth：Admin/Mini 使用不同 JWT audience；Adapter 使用 `X-Adapter-Token`。
 - Device model：`cloud_gateways -> collector_nodes -> device_points` 是主模型，`device_realtime_maps` 只做兼容投影。
+- Gateway Adapter：`cmd/gateway-adapter` 独立接收硬件 TCP，先落 raw frame journal，再转发可识别事件。
 
 ## Docs
 
+- 文档入口：`docs/README.md`
 - 当前 API：`docs/current_api.md`
+- 当前产品现状与 Gap：`docs/current_product_status.md`
+- Gateway Adapter：`docs/gateway_adapter.md`
+- 硬件协议当前摘要：`docs/hardware_protocol_current.md`
 - 部署流程：`docs/deploy_guide.md`
 - 表结构和迁移：`schema/mysql/README.md`
 - 历史产品/架构材料：`docs/` 下旧文档，仅作背景参考，改动前先核对代码事实。

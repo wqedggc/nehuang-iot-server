@@ -80,6 +80,16 @@ func (s *Server) Routes() http.Handler {
 
 	// ─── Adapter API（X-Adapter-Token 认证，不走用户 JWT） ───
 	mux.HandleFunc("/api/v1/adapter/device-events", adh.handleDeviceEvents)
+	mux.HandleFunc("/api/v1/adapter/commands/pending", adh.handlePendingCommands)
+	mux.HandleFunc("/api/v1/adapter/commands/", func(w http.ResponseWriter, r *http.Request) {
+		if hasSuffix(r.URL.Path, "/sent") {
+			adh.handleCommandSent(w, r)
+		} else if hasSuffix(r.URL.Path, "/result") {
+			adh.handleCommandResult(w, r)
+		} else {
+			writeCode(w, http.StatusNotFound, 404, "not found")
+		}
+	})
 
 	// ─── Admin auth — public (Go 1.20 compatible) ───
 	mux.HandleFunc("/api/v1/admin/login", func(w http.ResponseWriter, r *http.Request) {

@@ -14,11 +14,16 @@
 
 ## Adapter
 
+HTTP Adapter API 是 Go `gateway-adapter` 和 Go `nehuang-server` 之间的内部接口。甲方硬件网关第一版不直接调用这些 HTTP 接口，而是作为 TCP client 连接 `gateway-adapter`。硬件 TCP 交互见 `docs/gateway_adapter.md`。
+
 | Method | Path | Auth | Status |
 |--------|------|------|--------|
 | POST | `/api/v1/adapter/device-events` | `X-Adapter-Token` | 正式 |
+| GET | `/api/v1/adapter/commands/pending?gateway_external_id=` | `X-Adapter-Token` | 新增，Adapter 拉取待下发命令 |
+| POST | `/api/v1/adapter/commands/{command_id}/sent` | `X-Adapter-Token` | 新增，Adapter 标记已下发 |
+| POST | `/api/v1/adapter/commands/{command_id}/result` | `X-Adapter-Token` | 新增，Adapter 回写 ACK/成功/失败/超时 |
 
-说明：Adapter 事件入口接收 register、heartbeat、telemetry/work、control_result 等 envelope。当前 control_result 仍不是完整控制闭环。
+说明：Adapter 事件入口接收 register、heartbeat、telemetry/work、control_result 等 envelope。TCP 硬件网关由独立 `gateway-adapter` 接入，先做 raw capture 与 register/heartbeat 转发；工作包解析随硬件协议稳定后补充。
 
 ## Admin
 
@@ -74,7 +79,7 @@
 | GET | `/api/v1/mini/devices` | 正式 |
 | GET | `/api/v1/mini/devices/{point_id}/realtime` | 正式 |
 | GET | `/api/v1/mini/devices/{point_id}/history?range=1d` | 正式；支持 `1d/3d/7d/30d`，兼容 `1h/6h/24h` |
-| POST | `/api/v1/mini/devices/{point_id}/control` | 占位，尚未接完整控制闭环 |
+| POST | `/api/v1/mini/devices/{point_id}/control` | 正式创建异步控制命令，最终下发和 ACK 由 Adapter 完成 |
 
 ## Shared
 

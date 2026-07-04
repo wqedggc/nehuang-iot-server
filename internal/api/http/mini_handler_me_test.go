@@ -65,6 +65,16 @@ func (m *mockMiniRepoExt) GetMiniDeviceHistory(ctx context.Context, pointID uint
 func (m *mockMiniRepoExt) CheckBindRelation(ctx context.Context, userID uint64, pointID uint64) (bool, error) {
 	return false, nil
 }
+func (m *mockMiniRepoExt) CreateControlCommandForPoint(ctx context.Context, input domain.CreateControlCommandInput) (*domain.ControlCommand, error) {
+	return &domain.ControlCommand{
+		CommandID:     123,
+		PointID:       &input.PointID,
+		CommandSource: input.CommandSource,
+		CommandType:   input.CommandType,
+		CommandHex:    input.CommandHex,
+		CommandStatus: domain.CommandStatusCreated,
+	}, nil
+}
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 

@@ -1,174 +1,155 @@
 # 涅凰智农项目上下文入口
 
+> 更新日期：2026-07-05
+
 ## 1. 项目定位
 
-涅凰智农 V1.0 是农业自动化 IoT 云平台。当前目标不是重写硬件、E90 固件或现场协议，而是在已有设备通信能力基础上建设新的云端业务平台。
+涅凰智农 V1.0 是农业自动化 IoT 云平台。当前目标不是重写 MCU、E90/E220 固件或现场温控算法，而是在甲方硬件侧透传能力基础上建设稳定的云端接入、业务数据固化、管理后台和农户端能力。
 
-一期范围：
-
-- 数据库
-- REST API
-- 管理后台接口
-- 微信小程序接口
-- 用户管理
-- 设备管理
-- `devices.json` / 设备数据解析入库
-- 控制中心
-- 权限与日志
-
-一期不做：
-
-- 硬件开发
-- TCP Gateway 重写
-- E90 固件修改
-- 485 协议修改
-- OTA
-- AI 分析
-- 报表中心
-- 告警中心
-- 多租户
-
-## 2. 当前资料路径
-
-甲方/现状资料：
-
-- `/Users/shore/Downloads/涅凰智农IoT平台系统调研报告.md`
-- `/Users/shore/Downloads/nehuang_db.sql`
-- `/Users/shore/Downloads/nehuang-mini_b5LkK.tar.gz`
-- `/Users/shore/Library/Mobile Documents/com~apple~CloudDocs/lot--plat/涅凰智农极简系统构架.pptx`
-- `/Users/shore/Library/Mobile Documents/com~apple~CloudDocs/lot--plat/数据库字段含义汇总表.xlsx`
-- `/Users/shore/Library/Mobile Documents/com~apple~CloudDocs/lot--plat/小程序网页端样式、逻辑图(1).pptx`
-
-本地已解包旧代码：
-
-- `/Users/shore/Knowledge/nehuang-mini-source/nehuang-mini`
-
-新服务端上下文和工程落点：
-
-- `/Users/shore/Knowledge/nehuang-iot-server`
-
-## 3. 旧代码事实
-
-较可信的可运行链路：
+当前正式工程落点：
 
 ```text
-003rukou.py
-  -> tcp_gateway.py
-  -> 01app_core/data_cache_huancun/devices.json
-  -> 01app_core/routes/*
+/Users/shore/Desktop/ShoreOS/services/nehuang-iot-server
 ```
 
-`tcp_gateway.py` 当前实际能力：
+当前服务由两个 Go 进程构成：
 
-- 监听 TCP `8081`。
-- 监听命令下发 `8083`，接口为 `/send?did=&cmd=`。
-- 识别包含 `FP` 的注册包。
-- 维护设备 socket 连接和 35 秒心跳离线判断。
-- 写入 `01app_core/data_cache_huancun/devices.json`。
-- 尝试更新 `cloud_gateway`。
+- `cmd/server`：HTTP API、Admin/Mini 静态页面、MySQL 业务读写。
+- `cmd/gateway-adapter`：硬件 TCP 接入、raw journal、最小报文分类和事件转发。
 
-当前没有完成：
+旧 `tcp_gateway.py` 和 `devices.json` 只作为历史参考和联调对照，不再作为当前正式架构默认路径。
 
-- 工作包解析。
-- 传感器数据入库。
-- `last_data` 更新。
-- 控制命令状态机。
-- 控制结果回传追踪。
-- 微信用户登录。
-- 正式管理员账号体系。
+## 2. 当前资料入口
 
-关键判断：当前“设备到服务端”只打通了在线状态，不是完整采集数据链路。
+当前事实优先级：
 
-## 4. 甲方必须保留的核心模型
+1. 当前代码和 schema。
+2. `docs/current_product_status.md`。
+3. `docs/current_api.md`。
+4. `docs/gateway_adapter.md`。
+5. `docs/hardware_protocol_current.md`。
+6. `docs/architecture_v1.md`。
+7. `docs/data_model_v1.md`。
 
-甲方 Excel 明确要求保留 5 张核心表及字段语义：
+甲方最新硬件文档已整理到：
 
-- `cloud_gateway`：云边 E90 / FP 设备在线状态。
-- `bind_relation`：农户、云边设备、棚号、频点、采集执行器 ID、功能的绑定关系。
-- `device_realtime_map`：采集执行器实时状态、阈值、模式、继电器、轮询命令。
-- `sensor_data`：历史采集曲线。
-- `op_record`：手动操作记录。
+- `docs/hardware_protocol_current.md`
 
-硬件身份已确认：采集执行器的稳定身份为“同一云边/LoRa 通信接入单元下的频点 + 设备 ID”。频点和设备 ID 由硬件侧写入设备，正常使用中不随农户、棚号、安装位置或业务配置变化而变化。服务端完整定位使用 `cloud_gateway + frequency + device_external_id`；农户、棚号、基地、区域、名称、备注和绑定关系都属于服务端业务数据。
+## 3. 当前四层边界
 
-当前服务端抽象已经拆成三层：`cloud_gateways -> collector_nodes -> device_points`。其中 `collector_nodes` 对应采集执行器节点，唯一身份为 `gateway_id + frequency + device_external_id`；`device_points` 对应节点下的温度、墒情、限位、继电器、水泵、风机等功能点。后续 C 端/B 端的一行设备展示、绑定、曲线和控制优先围绕 `point_id` 设计；`device_realtime_maps` 保留为甲方旧字段兼容投影。
+```text
+采集执行器 MCU
+  -> 云边/LoRa/TCP 硬件网关
+  -> Go gateway-adapter
+  -> Go nehuang-server + MySQL + Admin/Mini
+```
 
-硬件容量补充：单个云边/LoRa 通信接入单元实操一般使用 4 个频点，少数型号最多 6 个频点；采集点建议控制在 100 个以下，超过时硬件施工侧应拆分多组云边设备。V1 服务端不做强制拦截，仅作为后台统计和容量提示依据。
+边界说明：
 
-正式 V1 数据模型见：
+- MCU 负责本地温控判断、继电器保护、温度缓存、限位/故障状态。
+- 硬件网关负责 TCP 连接云端和 bytes 透传。
+- `gateway-adapter` 负责 TCP 接入、原始数据留痕、最小分类。
+- `nehuang-server` 负责业务数据、权限、绑定、点位配置、控制命令、Admin/Mini API。
 
-- `schema/mysql/001_nehuang_v1.sql`
-- `schema/mysql/002_device_node_point_model.sql`
-- `docs/table_structure_v1.md`
-- `docs/data_model_v1.md`
+服务端不负责：
 
-注意：旧 Python 里混用了 `farmer/devname` 和 `bind_usr_name/devid` 两套字段。V1 以甲方 Excel 和用户表设计规范为准，最终 DDL 已统一为 snake_case、雪花 ID、`TIMESTAMP(3)`、`TINYINT UNSIGNED` 状态字段、无 JSON 类型。业务语义保留，物理表名和字段名以 `schema/mysql/001_nehuang_v1.sql` 与 `schema/mysql/002_device_node_point_model.sql` 为准。
+- 给 MCU 分配频点和设备 ID。
+- 解决硬件空中撞包本身。
+- 重写 MCU 温控逻辑。
+- 直接读 NTC 温度模块。
 
-## 5. 前端视角约束
+服务端必须负责：
 
-小程序/网页需要两个主要视角。
+- 接收并保留真实 raw 包。
+- 按最终协议解析工作包、告警包、ACK。
+- 把解析结果写入 MySQL。
+- 给 Admin/Mini 提供稳定展示和操作接口。
 
-用户及设置页：
+## 4. 当前模型
 
-- 用户名
-- 我的设备列表
-- 序号
-- 棚号
-- 频点
-- ID
-- 功能
-- 状态
-- 操作
+主模型：
 
-操作页：
+```text
+cloud_gateways
+  -> collector_nodes
+  -> device_points
+```
 
-- 棚号选择
-- 设备序号
-- 功能
-- 最佳范围
-- 单位
-- 实际值
-- 模式
-- 操作
+含义：
 
-温度设备操作是三档：开、停、关。墒情设备操作是两档：开、关。限位设备以状态读取和展示为主。
+- `cloud_gateways`：云边/LoRa/TCP 通信接入设备。
+- `collector_nodes`：采集执行器节点，唯一身份为 `gateway_id + frequency + device_external_id`。
+- `device_points`：节点下的功能点/通道，例如温度、墒情、限位、继电器、水泵、风机。
+- `device_realtime_maps`：甲方旧字段兼容投影，不再作为主抽象。
 
-## 6. V1 架构原则
+用户和设备关系：
 
-必须遵守：
+- Admin 负责绑定农户和功能点。
+- Mini 农户只能查看和控制已绑定的 `point_id`。
+- 当前没有实现后台手动创建硬件主数据，设备主数据仍依赖 Adapter 上报和后续 parser。
 
-- 不修改现场硬件协议。
-- 不修改 E90 固件。
-- 不让业务层依赖 TCP。
-- 不让页面直接读取 JSON。
-- `devices.json` 只作为 Gateway 输出缓存。
-- MySQL 是业务唯一事实来源。
-- 所有客户端通过 REST API 获取数据。
-- 协议解析放在 Device Adapter，不进入业务层。
-- 管理后台优先于微信小程序。
-- 一期不引入额外大功能。
+## 5. 甲方最新硬件口径
 
-架构说明见：
+甲方最新硬件侧逻辑对云端的关键影响：
 
-- `docs/architecture_v1.md`
-- `docs/data_model_v1.md` 的第 7-9 节固化了服务端架构、上线方案和对外沟通口径。
+- MCU 本地替代旧 `jisuan.py`，自动温控逻辑下放到设备端。
+- MCU 每 5 分钟缓存一次温度，4 小时上报 48 组。
+- 工作包包含温度序列、继电器状态、DI 限位/故障状态、长度和 CRC。
+- 单个云边集群最大按 100 台采集执行器规划，每台 2 秒专有时序，满配 200 秒周期。
+- 告警包会重复上报 3 次，云端需要去重。
+- 手动控制暂定 `F0` 开、`0F` 关、`00` 停。
+- CRC 使用 Modbus CRC-16。
+
+详细整理见：
+
+- `docs/hardware_protocol_current.md`
+
+## 6. 当前已实现和未实现
+
+已实现：
+
+- Go HTTP 服务端。
+- Admin/Mini 基础 API。
+- MySQL schema 和 migration runner。
+- 注册/心跳/telemetry JSON envelope 入口。
+- Go TCP `gateway-adapter`。
+- raw frame journal。
+- 本地 mock 发包工具。
+- raw journal replay 工具。
+- Mini 控制请求创建异步 `control_commands`。
+- Adapter 内部 pending/sent/result 命令接口。
+
+未实现：
+
+- 真实工作包 parser。
+- 告警 parser 和去重。
+- 时隙调度。
+- 真实下行 hex。
+- ACK/清缓存解析。
+- 告警通知。
+- 腾讯云正式部署 `gateway-adapter` 的 systemd/deploy 流程。
+- 微信小程序真机端到端验收。
+
+完整现状见：
+
+- `docs/current_product_status.md`
 
 ## 7. 推荐开发顺序
 
-1. 初始化 Go 服务端目录和基础配置。
-2. 接入 MySQL，按顺序执行 `schema/mysql/001_nehuang_v1.sql` 和 `schema/mysql/002_device_node_point_model.sql`。
-3. 实现 `devices.json -> cloud_gateways/raw_device_events` 同步 Adapter。
-4. 实现 Admin API：Gateway 列表、采集器列表、绑定关系、控制命令。
-5. 实现 MiniProgram API：微信登录、我的设备、实时数据、历史数据、控制设备。
-6. 实现 Control Service：命令落库、调用 Gateway、状态更新、超时扫描。
-7. 等工作包协议明确后，实现工作包解析并写入 `collector_nodes/device_points/sensor_data`，必要时同步 `device_realtime_maps` 兼容投影。
+1. 把 `gateway-adapter` 独立部署到云端并开放 TCP 端口。
+2. 让甲方硬件网关连入并发送注册、心跳、工作包样例。
+3. 用 raw journal 保存真实 bytes，用 replay 工具确认分类。
+4. 基于真实样例补工作包/告警包 parser。
+5. 打通一个工作包写入 `sensor_data` 和 realtime。
+6. 打通一个告警包入库和去重。
+7. 打通一个控制命令 pending -> sent -> ack。
+8. 再补 Admin/Mini 的完整控制展示、告警通知和点位配置页面。
 
 ## 8. 新开 Codex 线程时的提示词
 
 可以直接给新线程这句话：
 
 ```text
-请先阅读 /Users/shore/Knowledge/nehuang-iot-server/docs/project_context.md，
-然后继续涅凰智农 IoT 云平台 V1.0 的 Go 服务端开发。
-最终表结构以 schema/mysql/001_nehuang_v1.sql、schema/mysql/002_device_node_point_model.sql 和 docs/table_structure_v1.md 为准。
+请先阅读 /Users/shore/Desktop/ShoreOS/services/nehuang-iot-server/docs/README.md，
+然后继续涅凰智农 IoT 云平台开发。当前事实以 current_product_status.md、current_api.md、gateway_adapter.md、hardware_protocol_current.md、architecture_v1.md 和 schema/mysql 为准。
 ```
