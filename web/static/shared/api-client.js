@@ -165,11 +165,25 @@
     removeBinding: function (id) {
       return request('DELETE', '/api/v1/admin/bindings/' + encodeURIComponent(id));
     },
-    getControlLogs: function () {
-      return request('GET', '/api/v1/admin/control-logs');
+    getControlLogs: function (params) {
+      var qs = [];
+      params = params || {};
+      Object.keys(params).forEach(function (key) {
+        if (params[key] != null && params[key] !== '') {
+          qs.push(key + '=' + encodeURIComponent(params[key]));
+        }
+      });
+      return request('GET', '/api/v1/admin/control-logs' + (qs.length ? '?' + qs.join('&') : ''));
     },
-    getOperationLogs: function () {
-      return request('GET', '/api/v1/admin/operation-logs');
+    getOperationLogs: function (params) {
+      var qs = [];
+      params = params || {};
+      Object.keys(params).forEach(function (key) {
+        if (params[key] != null && params[key] !== '') {
+          qs.push(key + '=' + encodeURIComponent(params[key]));
+        }
+      });
+      return request('GET', '/api/v1/admin/operation-logs' + (qs.length ? '?' + qs.join('&') : ''));
     },
     getFarmers: function (keyword) {
       return request('GET', '/api/v1/admin/farmers' + (keyword ? '?keyword=' + encodeURIComponent(keyword) : ''));

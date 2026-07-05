@@ -595,11 +595,34 @@ tbody tr:last-child td { border-bottom: none; }
 .filter-time-shortcuts {
   display: flex;
   gap: 4px;
+  flex-wrap: wrap;
 }
 .filter-time-label {
   font-size: 12px;
   color: var(--color-text-muted);
   white-space: nowrap;
+}
+.filter-date-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+}
+.filter-date-field input {
+  height: 32px;
+  width: 170px;
+  padding: 0 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-size: 12px;
+}
+.filter-date-field span {
+  color: var(--color-text-muted);
+  font-size: 11px;
 }
 
 /* ---------- 分页 ---------- */
