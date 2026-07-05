@@ -1453,7 +1453,7 @@
               '<td>' + (pointItem.isBound ? '<span class="badge badge-warning">已绑定</span>' : '<span class="badge badge-muted">未绑定</span>') + '</td>' +
               '<td><div class="table-actions">' +
                 '<button class="btn btn-outline btn-sm" onclick="openPointEditModal(\'' + escHtml(pointItem.pointId) + '\')">编辑</button>' +
-                ((pointItem.controllableStatus === 1 || pointItem.controllableStatus === '1') ? '<button class="btn btn-outline btn-sm" onclick="openPointControlModal(\'' + escHtml(pointItem.pointId) + '\')">联调</button>' : '') +
+                '<button class="btn btn-outline btn-sm" onclick="openPointControlModal(\'' + escHtml(pointItem.pointId) + '\')">联调</button>' +
               '</div></td>' +
             '</tr>';
           }).join('');
@@ -1569,17 +1569,15 @@
         '</div>' +
         '<div class="form-group"><label class="form-label">控制命令</label><input class="form-input" id="point-edit-poll-cmd" type="text" value="' + escHtml(point.pollCmd || '') + '"></div>' +
         '<div class="form-group"><label class="form-label">备注</label><input class="form-input" id="point-edit-remark" type="text" value="' + escHtml(point.remark || '') + '"></div>' +
-        ((point.controllableStatus === 1 || point.controllableStatus === '1') ? (
-          '<div class="control-entry">' +
-            '<div class="control-entry-head">' +
-              '<div>' +
-                '<div class="control-entry-title">发送下行 Hex 指令</div>' +
-                '<div class="control-entry-sub">仅对可控功能点开放，command_hex 优先。</div>' +
-              '</div>' +
-              '<button class="btn btn-outline btn-sm" onclick="openPointControlModal(\'' + escHtml(point.pointId) + '\')">打开联调</button>' +
+        '<div class="control-entry">' +
+          '<div class="control-entry-head">' +
+            '<div>' +
+              '<div class="control-entry-title">发送下行 Hex 指令</div>' +
+              '<div class="control-entry-sub">管理员联调入口，command_hex 优先；真实语义以硬件协议为准。</div>' +
             '</div>' +
-          '</div>'
-        ) : '') +
+            '<button class="btn btn-outline btn-sm" onclick="openPointControlModal(\'' + escHtml(point.pointId) + '\')">打开联调</button>' +
+          '</div>' +
+        '</div>' +
       '</div>' +
       '<div class="modal-actions">' +
         '<button class="btn btn-outline" onclick="closeModal()">取消</button>' +
@@ -1648,11 +1646,6 @@
       showToast('未找到可联调的功能点', 'error');
       return;
     }
-    if (!(point.controllableStatus === 1 || point.controllableStatus === '1')) {
-      showToast('该功能点当前不可控', 'error');
-      return;
-    }
-
     var overlay = $('#modal-overlay');
     overlay.style.display = 'flex';
     overlay.innerHTML = '<div class="modal" style="max-width:640px">' +
