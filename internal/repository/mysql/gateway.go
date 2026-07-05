@@ -2,6 +2,7 @@ package mysql
 
 import (
 	"context"
+	"time"
 
 	"nehuang-iot-server/internal/domain"
 )
@@ -16,6 +17,7 @@ SELECT
   gateway_id,
   gateway_external_id,
   gateway_name,
+  access_mode,
   ip,
   port,
   gateway_sn,
@@ -39,6 +41,7 @@ LIMIT ?`, limit)
 			&gateway.GatewayID,
 			&gateway.GatewayExternalID,
 			&gateway.GatewayName,
+			&gateway.AccessMode,
 			&gateway.IP,
 			&gateway.Port,
 			&gateway.GatewaySN,
@@ -50,6 +53,7 @@ LIMIT ?`, limit)
 		); err != nil {
 			return nil, err
 		}
+		gateway.AccessMode = string(domain.NormalizeGatewayAccessMode(gateway.AccessMode))
 		gateways = append(gateways, gateway)
 	}
 	if err := rows.Err(); err != nil {
@@ -57,6 +61,14 @@ LIMIT ?`, limit)
 	}
 
 	return gateways, nil
+}
+
+func (r *Repository) UpdateGatewayAccessMode(ctx context.Context, gatewayID uint64, mode domain.GatewayAccessMode) error {
+	_, err := r.db.ExecContext(ctx, `
+UPDATE cloud_gateways
+SET access_mode = ?, updated_at = ?
+WHERE gateway_id = ?`, string(domain.NormalizeGatewayAccessMode(string(mode))), time.Now(), gatewayID)
+	return err
 }
 
 // Dashboard 统计已迁移至 dashboard_repository.go（独立 SQL 方法），

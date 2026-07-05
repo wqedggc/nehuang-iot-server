@@ -20,10 +20,14 @@ type mockAdminRepo struct {
 	userByUsername                *domain.User
 	userByUsernameErr             error
 	devicePointByID               *domain.DevicePoint
+	collectorNodeByID             *domain.CollectorNode
 	gatewayByID                   *domain.Gateway
 	activeBindingByPoint          *domain.BindRelation
+	activeBindingByNode           *domain.BindRelation
 	activeBindingByGateway        *domain.BindRelation
 	activeBindingByUserAndGateway *domain.BindRelation
+	updatedGatewayAccessModeID    uint64
+	updatedGatewayAccessMode      domain.GatewayAccessMode
 	updateDevicePointErr          error
 	updatedPointID                uint64
 	updatedPointInput             domain.DevicePointUpdateInput
@@ -103,8 +107,13 @@ func (m *mockAdminRepo) FindDevicePointByID(ctx context.Context, pointID uint64)
 func (m *mockAdminRepo) FindGatewayByID(ctx context.Context, gatewayID uint64) (*domain.Gateway, error) {
 	return m.gatewayByID, nil
 }
+func (m *mockAdminRepo) UpdateGatewayAccessMode(ctx context.Context, gatewayID uint64, mode domain.GatewayAccessMode) error {
+	m.updatedGatewayAccessModeID = gatewayID
+	m.updatedGatewayAccessMode = mode
+	return nil
+}
 func (m *mockAdminRepo) FindCollectorNodeByID(ctx context.Context, nodeID uint64) (*domain.CollectorNode, error) {
-	return nil, nil
+	return m.collectorNodeByID, nil
 }
 func (m *mockAdminRepo) FindActiveBindingByUserAndPoint(ctx context.Context, userID uint64, pointID uint64) (*domain.BindRelation, error) {
 	return nil, nil
@@ -114,6 +123,12 @@ func (m *mockAdminRepo) FindActiveBindingByUserAndGateway(ctx context.Context, u
 }
 func (m *mockAdminRepo) FindActiveBindingByGateway(ctx context.Context, gatewayID uint64) (*domain.BindRelation, error) {
 	return m.activeBindingByGateway, nil
+}
+func (m *mockAdminRepo) FindActiveBindingByUserAndNode(ctx context.Context, userID uint64, nodeID uint64) (*domain.BindRelation, error) {
+	return nil, nil
+}
+func (m *mockAdminRepo) FindActiveBindingByNode(ctx context.Context, nodeID uint64) (*domain.BindRelation, error) {
+	return m.activeBindingByNode, nil
 }
 func (m *mockAdminRepo) FindActiveBindingByPoint(ctx context.Context, pointID uint64) (*domain.BindRelation, error) {
 	return m.activeBindingByPoint, nil
@@ -340,6 +355,7 @@ func TestHandleCreateBinding_GatewaySuccess(t *testing.T) {
 			GatewayID:         9001,
 			GatewayExternalID: "GW-9001",
 			GatewayName:       "FP_GW_9001",
+			AccessMode:        string(domain.GatewayAccessModeExclusive),
 		},
 	}
 	handler := &adminHandler{repo: repo}
@@ -385,6 +401,7 @@ func TestHandleCreateBinding_GatewayConflictReturns409(t *testing.T) {
 			GatewayID:         9001,
 			GatewayExternalID: "GW-9001",
 			GatewayName:       "FP_GW_9001",
+			AccessMode:        string(domain.GatewayAccessModeExclusive),
 		},
 		activeBindingByGateway: &domain.BindRelation{
 			BindID:       777,
@@ -408,6 +425,93 @@ func TestHandleCreateBinding_GatewayConflictReturns409(t *testing.T) {
 	}
 	if repo.createdBinding != nil {
 		t.Fatal("conflict should not create binding")
+	}
+}
+
+func TestHandleCreateBinding_SharedGatewayAllowsMultipleBindings(t *testing.T) {
+	displayName := "张三"
+	repo := &mockAdminRepo{
+		userByUsername: &domain.User{
+			UserID:      11,
+			DisplayName: &displayName,
+			Status:      domain.UserStatusActive,
+			Role:        domain.RoleAdmin,
+		},
+		gatewayByID: &domain.Gateway{
+			GatewayID:         9001,
+			GatewayExternalID: "GW-9001",
+			GatewayName:       "FP_GW_9001",
+			AccessMode:        string(domain.GatewayAccessModeShared),
+		},
+		activeBindingByGateway: &domain.BindRelation{
+			BindID:       777,
+			UserID:       func() *uint64 { v := uint64(22); return &v }(),
+			BindUserName: "李四",
+			GatewayID:    9001,
+			BindingType:  string(domain.BindingTypeGateway),
+		},
+	}
+	handler := &adminHandler{repo: repo}
+
+	body := `{"binding_type":"gateway","user_id":"11","gateway_id":"9001"}`
+	req := httptest.NewRequest("POST", "/api/v1/admin/bindings", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.handleCreateBinding(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("shared gateway binding: want 200, got %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if repo.createdBinding == nil || repo.createdBinding.BindingType != string(domain.BindingTypeGateway) {
+		t.Fatalf("shared gateway should create gateway binding, got %#v", repo.createdBinding)
+	}
+}
+
+func TestHandleCreateBinding_CollectorSuccess(t *testing.T) {
+	displayName := "张三"
+	repo := &mockAdminRepo{
+		userByUsername: &domain.User{
+			UserID:      11,
+			DisplayName: &displayName,
+			Status:      domain.UserStatusActive,
+			Role:        domain.RoleAdmin,
+		},
+		gatewayByID: &domain.Gateway{
+			GatewayID:         9001,
+			GatewayExternalID: "GW-9001",
+			GatewayName:       "FP_GW_9001",
+			AccessMode:        string(domain.GatewayAccessModeShared),
+		},
+		collectorNodeByID: &domain.CollectorNode{
+			NodeID:           2001,
+			GatewayID:        9001,
+			Frequency:        2,
+			DeviceExternalID: "1001",
+			NodeName:         "A棚采集执行器",
+			ShedNo:           "A棚",
+		},
+	}
+	handler := &adminHandler{repo: repo}
+
+	body := `{"binding_type":"collector","user_id":"11","node_id":"2001"}`
+	req := httptest.NewRequest("POST", "/api/v1/admin/bindings", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.handleCreateBinding(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("collector binding: want 200, got %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if repo.createdBinding == nil || repo.createdBinding.BindingType != string(domain.BindingTypeCollector) {
+		t.Fatalf("collector binding should be created as collector: %#v", repo.createdBinding)
+	}
+	if repo.createdBinding.NodeID == nil || *repo.createdBinding.NodeID != 2001 {
+		t.Fatalf("collector binding should keep node_id: %#v", repo.createdBinding)
+	}
+	if repo.createdOperation == nil || repo.createdOperation.OpType != domain.OpTypeBind {
+		t.Fatalf("collector binding should create bind operation log, got %#v", repo.createdOperation)
 	}
 }
 
@@ -454,6 +558,34 @@ func TestHandleCreateBinding_PointBindingStillWorks(t *testing.T) {
 	}
 	if repo.createdOperation == nil || repo.createdOperation.OpType != domain.OpTypeBind {
 		t.Fatalf("point binding should create bind operation log, got %#v", repo.createdOperation)
+	}
+}
+
+func TestHandleGatewayUpdate_AccessModeWritesOperationLog(t *testing.T) {
+	repo := &mockAdminRepo{
+		gatewayByID: &domain.Gateway{
+			GatewayID:         9001,
+			GatewayExternalID: "GW-9001",
+			GatewayName:       "FP_GW_9001",
+			AccessMode:        string(domain.GatewayAccessModeShared),
+		},
+	}
+	handler := &adminHandler{repo: repo}
+
+	req := httptest.NewRequest("PATCH", "/api/v1/admin/gateways/9001", strings.NewReader(`{"access_mode":"exclusive"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.handleGatewayUpdate(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("gateway update: want 200, got %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if repo.updatedGatewayAccessModeID != 9001 || repo.updatedGatewayAccessMode != domain.GatewayAccessModeExclusive {
+		t.Fatalf("gateway mode update mismatch: id=%d mode=%s", repo.updatedGatewayAccessModeID, repo.updatedGatewayAccessMode)
+	}
+	if repo.createdOperation == nil || repo.createdOperation.OpType != domain.OpTypeConfig {
+		t.Fatalf("gateway update should create config operation log, got %#v", repo.createdOperation)
 	}
 }
 
@@ -526,7 +658,7 @@ func TestHandleBindings_ReturnsBindingTypeAndCollectorSummary(t *testing.T) {
 				BindUserName:      "李四",
 				PointID:           &pointID,
 				Collector: &domain.BindingCollectorSummary{
-					PointID:          pointID,
+					PointID:          &pointID,
 					FunctionName:     "温度",
 					Frequency:        433,
 					DeviceExternalID: "DEV-1",
@@ -565,7 +697,7 @@ func TestHandleFarmerBindings_ReturnsBindingTypeAndCollectorSummary(t *testing.T
 				BindUserName:      "王五",
 				PointID:           &pointID,
 				Collector: &domain.BindingCollectorSummary{
-					PointID:          pointID,
+					PointID:          &pointID,
 					FunctionName:     "墒情",
 					Frequency:        433,
 					DeviceExternalID: "DEV-2",
@@ -613,15 +745,16 @@ func TestHandleGatewayBindCandidates_ReturnsUnboundGateways(t *testing.T) {
 }
 
 func TestHandleGatewaySeedPoints_Defaults(t *testing.T) {
+	const largeGatewayID = uint64(332018003367432192)
 	repo := &mockAdminRepo{
 		gatewayByID: &domain.Gateway{
-			GatewayID:   9001,
-			GatewayName: "FP_GW_9001",
+			GatewayID:   largeGatewayID,
+			GatewayName: "FP_TEST_ADMIN_002",
 		},
 	}
 	handler := &adminHandler{repo: repo}
 
-	req := httptest.NewRequest("POST", "/api/v1/admin/gateways/9001/seed-points", strings.NewReader(`{"frequency":2,"device_external_id":"1002"}`))
+	req := httptest.NewRequest("POST", "/api/v1/admin/gateways/332018003367432192/seed-points", strings.NewReader(`{"frequency":2,"device_external_id":"1002"}`))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	handler.handleGatewaySeedPoints(rec, req)
@@ -629,8 +762,8 @@ func TestHandleGatewaySeedPoints_Defaults(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("gateway seed: want 200, got %d, body=%s", rec.Code, rec.Body.String())
 	}
-	if repo.seedGatewayID != 9001 {
-		t.Fatalf("gateway id: want 9001, got %d", repo.seedGatewayID)
+	if repo.seedGatewayID != largeGatewayID {
+		t.Fatalf("gateway id: want %d, got %d", largeGatewayID, repo.seedGatewayID)
 	}
 	if repo.seedGatewayInput.Frequency != 2 || repo.seedGatewayInput.DeviceExternalID != "1002" {
 		t.Fatalf("unexpected seed input: %#v", repo.seedGatewayInput)
@@ -640,6 +773,19 @@ func TestHandleGatewaySeedPoints_Defaults(t *testing.T) {
 	}
 	if repo.seedGatewayInput.Points[2].ControllableStatus != 1 {
 		t.Fatalf("pump preset should be controllable")
+	}
+}
+
+func TestBuildAdminControlCommandInputAcceptsStartAlias(t *testing.T) {
+	input, label, err := buildAdminControlCommandInput(1001, 7, "start", "")
+	if err != nil {
+		t.Fatalf("start alias should be accepted: %v", err)
+	}
+	if label != "开启" {
+		t.Fatalf("label: want 开启, got %q", label)
+	}
+	if input.CommandType != domain.CommandTypeRelayOpen || input.CommandHex != "F0" {
+		t.Fatalf("start should map to relay open F0, got type=%d hex=%q", input.CommandType, input.CommandHex)
 	}
 }
 

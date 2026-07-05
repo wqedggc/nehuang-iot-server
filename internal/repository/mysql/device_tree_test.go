@@ -6,11 +6,14 @@ func TestResolveDeviceTreeBoundUserUsesPointBindingFirst(t *testing.T) {
 	pointBound := map[uint64]uint64{
 		1001: 11,
 	}
+	collectorBound := map[uint64]uint64{
+		3001: 33,
+	}
 	gatewayBound := map[uint64]uint64{
 		2001: 22,
 	}
 
-	userID, ok := resolveDeviceTreeBoundUser(pointBound, gatewayBound, 2001, 1001)
+	userID, ok := resolveDeviceTreeBoundUser(pointBound, collectorBound, gatewayBound, 2001, 3001, 1001)
 	if !ok {
 		t.Fatalf("expected point to be bound")
 	}
@@ -19,13 +22,31 @@ func TestResolveDeviceTreeBoundUserUsesPointBindingFirst(t *testing.T) {
 	}
 }
 
-func TestResolveDeviceTreeBoundUserFallsBackToGatewayBinding(t *testing.T) {
-	pointBound := map[uint64]uint64{}
+func TestResolveDeviceTreeBoundUserFallsBackToCollectorBinding(t *testing.T) {
+	collectorBound := map[uint64]uint64{
+		3001: 33,
+	}
 	gatewayBound := map[uint64]uint64{
 		2001: 22,
 	}
 
-	userID, ok := resolveDeviceTreeBoundUser(pointBound, gatewayBound, 2001, 1001)
+	userID, ok := resolveDeviceTreeBoundUser(map[uint64]uint64{}, collectorBound, gatewayBound, 2001, 3001, 1001)
+	if !ok {
+		t.Fatalf("expected point to inherit collector binding")
+	}
+	if userID != 33 {
+		t.Fatalf("expected collector binding user 33, got %d", userID)
+	}
+}
+
+func TestResolveDeviceTreeBoundUserFallsBackToGatewayBinding(t *testing.T) {
+	pointBound := map[uint64]uint64{}
+	collectorBound := map[uint64]uint64{}
+	gatewayBound := map[uint64]uint64{
+		2001: 22,
+	}
+
+	userID, ok := resolveDeviceTreeBoundUser(pointBound, collectorBound, gatewayBound, 2001, 3001, 1001)
 	if !ok {
 		t.Fatalf("expected point to inherit gateway binding")
 	}
@@ -35,11 +56,21 @@ func TestResolveDeviceTreeBoundUserFallsBackToGatewayBinding(t *testing.T) {
 }
 
 func TestResolveDeviceTreeBoundUserUnbound(t *testing.T) {
-	userID, ok := resolveDeviceTreeBoundUser(map[uint64]uint64{}, map[uint64]uint64{}, 2001, 1001)
+	userID, ok := resolveDeviceTreeBoundUser(map[uint64]uint64{}, map[uint64]uint64{}, map[uint64]uint64{}, 2001, 3001, 1001)
 	if ok {
 		t.Fatalf("expected point to be unbound")
 	}
 	if userID != 0 {
 		t.Fatalf("expected zero user id for unbound point, got %d", userID)
+	}
+}
+
+func TestResolveCollectorBoundUserFallsBackToGatewayBinding(t *testing.T) {
+	userID, ok := resolveCollectorBoundUser(map[uint64]uint64{}, map[uint64]uint64{2001: 22}, 2001, 3001)
+	if !ok {
+		t.Fatalf("expected collector to inherit gateway binding")
+	}
+	if userID != 22 {
+		t.Fatalf("expected gateway binding user 22, got %d", userID)
 	}
 }

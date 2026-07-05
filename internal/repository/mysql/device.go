@@ -162,9 +162,11 @@ func (r *Repository) ListPayloadEvents(ctx context.Context, params domain.Payloa
 		args = append(args, *params.End)
 	}
 	if params.Keyword != nil && *params.Keyword != "" {
-		conditions = append(conditions, "(gateway_name LIKE ? OR message_id LIKE ? OR payload_hex LIKE ?)")
-		kw := "%" + *params.Keyword + "%"
-		args = append(args, kw, kw, kw)
+		conditions = append(conditions, "(gateway_name LIKE ? OR message_id LIKE ? OR payload_hex LIKE ? OR payload_hex LIKE ?)")
+		keyword := strings.TrimSpace(*params.Keyword)
+		kw := "%" + keyword + "%"
+		hexKw := "%" + normalizePayloadHexKeyword(keyword) + "%"
+		args = append(args, kw, kw, kw, hexKw)
 	}
 
 	whereClause := ""
@@ -220,6 +222,32 @@ func (r *Repository) ListPayloadEvents(ctx context.Context, params domain.Payloa
 		items = append(items, item)
 	}
 	return items, total, rows.Err()
+}
+
+func normalizePayloadHexKeyword(keyword string) string {
+	keyword = strings.TrimSpace(keyword)
+	if keyword == "" {
+		return ""
+	}
+	var b strings.Builder
+	for _, r := range keyword {
+		switch {
+		case r >= '0' && r <= '9':
+			b.WriteRune(r)
+		case r >= 'a' && r <= 'f':
+			b.WriteRune(r - 'a' + 'A')
+		case r >= 'A' && r <= 'F':
+			b.WriteRune(r)
+		case r == ' ' || r == '\t' || r == '\n' || r == '\r' || r == '-' || r == ':' || r == '_':
+			continue
+		default:
+			return keyword
+		}
+	}
+	if b.Len() == 0 {
+		return keyword
+	}
+	return b.String()
 }
 
 // GetPayloadEventDetail 返回单条 payload 事件的完整详情。
@@ -307,13 +335,13 @@ func (r *Repository) FindGatewayByExternalID(ctx context.Context, externalID str
 	err := r.db.QueryRowContext(ctx, `
 SELECT
   gateway_id, gateway_external_id, gateway_name,
-  ip, port, gateway_sn, online_status, source_type,
+  access_mode, ip, port, gateway_sn, online_status, source_type,
   last_heartbeat_at_ms, created_at, updated_at
 FROM cloud_gateways
 WHERE gateway_external_id = ?
 LIMIT 1`, externalID).Scan(
 		&g.GatewayID, &g.GatewayExternalID, &g.GatewayName,
-		&g.IP, &g.Port, &g.GatewaySN, &g.OnlineStatus, &g.SourceType,
+		&g.AccessMode, &g.IP, &g.Port, &g.GatewaySN, &g.OnlineStatus, &g.SourceType,
 		&g.LastHeartbeatAtMS, &g.CreatedAt, &g.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
@@ -354,12 +382,12 @@ func (r *Repository) UpsertGatewayByExternalID(ctx context.Context, gw *domain.G
 	_, err = r.db.ExecContext(ctx, `
 INSERT INTO cloud_gateways
   (gateway_id, gateway_external_id, gateway_name,
-   ip, port, gateway_sn, online_status, source_type,
+   access_mode, ip, port, gateway_sn, online_status, source_type,
    last_heartbeat_at_ms, first_seen_at_ms, created_at, updated_at)
 VALUES
-  (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		gwID, gw.GatewayExternalID, gw.GatewayName,
-		gw.IP, gw.Port, "", 1, uint8(gw.SourceType),
+		string(domain.GatewayAccessModeShared), gw.IP, gw.Port, "", 1, uint8(gw.SourceType),
 		now, now, now, now,
 	)
 	if err != nil {
@@ -666,7 +694,7 @@ func (r *Repository) GetMiniDeviceDetail(ctx context.Context, pointID uint64) (*
 
 	err := r.db.QueryRowContext(ctx, `
 SELECT
-  dp.point_id, cg.gateway_name, cn.shed_no,
+  dp.point_id, dp.node_id, cn.node_name, cg.gateway_name, cg.access_mode, cn.shed_no,
   cn.frequency, cn.device_external_id,
   dp.function_type, dp.point_name, dp.unit,
   dp.best_min, dp.best_max,
@@ -680,7 +708,7 @@ JOIN collector_nodes cn ON dp.node_id = cn.node_id
 JOIN cloud_gateways cg ON dp.gateway_id = cg.gateway_id
 WHERE dp.point_id = ?
 LIMIT 1`, pointID).Scan(
-		&d.PointID, &d.GatewayName, &d.ShedNo,
+		&d.PointID, &d.NodeID, &d.NodeName, &d.GatewayName, &d.GatewayAccessMode, &d.ShedNo,
 		&d.Frequency, &d.DeviceExternalID,
 		&d.FunctionType, &d.FunctionName, &d.Unit,
 		&bestMin, &bestMax,
@@ -713,6 +741,8 @@ LIMIT 1`, pointID).Scan(
 	}
 	d.ValueStatusLabel = valueStatusLabel(d.ValueStatus)
 	d.RunModeLabel = runModeLabel(d.RunMode)
+	d.GatewayAccessMode = string(domain.NormalizeGatewayAccessMode(d.GatewayAccessMode))
+	d.GatewayAccessModeLabel = domain.GatewayAccessMode(d.GatewayAccessMode).Label()
 
 	return &d, nil
 }
@@ -721,7 +751,7 @@ LIMIT 1`, pointID).Scan(
 func (r *Repository) ListMiniDevices(ctx context.Context, userID uint64) ([]domain.MiniDevice, error) {
 	rows, err := r.db.QueryContext(ctx, `
 SELECT
-  dp.point_id, dp.gateway_id, cg.gateway_name,
+  dp.point_id, dp.node_id, cn.node_name, dp.gateway_id, cg.gateway_name, cg.access_mode,
   cn.shed_no, cn.frequency, cn.device_external_id,
   dp.function_type, dp.point_name,
   dp.real_value, dp.unit,
@@ -737,10 +767,16 @@ WHERE dp.point_status = 1
     )
     OR EXISTS (
       SELECT 1 FROM bind_relations br
-      WHERE br.user_id = ? AND br.gateway_id = dp.gateway_id AND br.point_id IS NULL AND br.bind_status = 1
+      WHERE br.user_id = ? AND br.node_id = dp.node_id AND br.point_id IS NULL AND br.bind_status = 1
+    )
+    OR EXISTS (
+      SELECT 1 FROM bind_relations br
+      WHERE br.user_id = ? AND br.gateway_id = dp.gateway_id
+        AND br.node_id IS NULL AND br.point_id IS NULL
+        AND br.bind_status = 1 AND cg.access_mode = 'exclusive'
     )
   )
-ORDER BY dp.updated_at DESC`, userID, userID)
+ORDER BY cn.node_id ASC, dp.updated_at DESC`, userID, userID, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -752,7 +788,7 @@ ORDER BY dp.updated_at DESC`, userID, userID)
 		var realValue sql.NullFloat64
 		var updatedAt time.Time
 		if err := rows.Scan(
-			&d.PointID, &d.GatewayID, &d.GatewayName,
+			&d.PointID, &d.NodeID, &d.NodeName, &d.GatewayID, &d.GatewayName, &d.GatewayAccessMode,
 			&d.ShedNo, &d.Frequency, &d.DeviceExternalID,
 			&d.FunctionType, &d.FunctionName,
 			&realValue, &d.Unit,
@@ -769,6 +805,8 @@ ORDER BY dp.updated_at DESC`, userID, userID)
 		d.UpdatedAt = updatedAt.UTC().Format("2006-01-02T15:04:05.000Z")
 		d.ValueStatusLabel = valueStatusLabel(d.ValueStatus)
 		d.RunModeLabel = runModeLabel(d.RunMode)
+		d.GatewayAccessMode = string(domain.NormalizeGatewayAccessMode(d.GatewayAccessMode))
+		d.GatewayAccessModeLabel = domain.GatewayAccessMode(d.GatewayAccessMode).Label()
 		devices = append(devices, d)
 	}
 	return devices, rows.Err()
@@ -788,10 +826,17 @@ func (r *Repository) CheckBindRelation(ctx context.Context, userID uint64, point
 		     )
 		     OR EXISTS (
 		       SELECT 1 FROM bind_relations br
-		       WHERE br.user_id = ? AND br.gateway_id = dp.gateway_id AND br.point_id IS NULL AND br.bind_status = 1
+		       WHERE br.user_id = ? AND br.node_id = dp.node_id AND br.point_id IS NULL AND br.bind_status = 1
+		     )
+		     OR EXISTS (
+		       SELECT 1 FROM bind_relations br
+		       JOIN cloud_gateways cg ON cg.gateway_id = dp.gateway_id
+		       WHERE br.user_id = ? AND br.gateway_id = dp.gateway_id
+		         AND br.node_id IS NULL AND br.point_id IS NULL
+		         AND br.bind_status = 1 AND cg.access_mode = 'exclusive'
 		     )
 		   )`,
-		pointID, userID, userID,
+		pointID, userID, userID, userID,
 	).Scan(&count)
 	return count > 0, err
 }
@@ -972,7 +1017,7 @@ func scanBindingRelationRow(row bindingRowScanner) (domain.BindRelation, error) 
 		sUserID, sRealtimeID, sNodeID, sPointID, sCreatedBy sql.NullInt64
 		sUnboundAtMS                                        sql.NullTime
 		sExtra                                              sql.NullString
-		sPointName, sCollectorShedNo                        sql.NullString
+		sPointName, sCollectorShedNo, sCollectorNodeName    sql.NullString
 		sCollectorNodeID                                    sql.NullInt64
 		sChannelNo                                          sql.NullInt64
 	)
@@ -992,7 +1037,7 @@ func scanBindingRelationRow(row bindingRowScanner) (domain.BindRelation, error) 
 		&sCreatedBy,
 		&sExtra,
 		&b.CreatedAt, &b.UpdatedAt,
-		&sPointName, &sChannelNo, &sCollectorShedNo, &sCollectorNodeID,
+		&sPointName, &sChannelNo, &sCollectorShedNo, &sCollectorNodeID, &sCollectorNodeName,
 	); err != nil {
 		return domain.BindRelation{}, err
 	}
@@ -1012,6 +1057,8 @@ func scanBindingRelationRow(row bindingRowScanner) (domain.BindRelation, error) 
 		pid := uint64(sPointID.Int64)
 		b.PointID = &pid
 		b.BindingType = string(domain.BindingTypePoint)
+	} else if sNodeID.Valid {
+		b.BindingType = string(domain.BindingTypeCollector)
 	} else {
 		b.BindingType = string(domain.BindingTypeGateway)
 	}
@@ -1025,14 +1072,16 @@ func scanBindingRelationRow(row bindingRowScanner) (domain.BindRelation, error) 
 	if sExtra.Valid {
 		b.Extra = &sExtra.String
 	}
-	if sPointID.Valid {
+	if sNodeID.Valid {
 		var collectorNodeID uint64
 		if sCollectorNodeID.Valid {
 			collectorNodeID = uint64(sCollectorNodeID.Int64)
+		} else {
+			collectorNodeID = uint64(sNodeID.Int64)
 		}
 		collector := &domain.BindingCollectorSummary{
-			PointID:          uint64(sPointID.Int64),
 			NodeID:           collectorNodeID,
+			NodeName:         sCollectorNodeName.String,
 			PointName:        sPointName.String,
 			FunctionType:     b.FunctionType,
 			FunctionName:     b.FunctionType.FunctionTypeName(),
@@ -1040,6 +1089,10 @@ func scanBindingRelationRow(row bindingRowScanner) (domain.BindRelation, error) 
 			ShedNo:           b.ShedNo,
 			Frequency:        b.Frequency,
 			DeviceExternalID: b.DeviceExternalID,
+		}
+		if sPointID.Valid {
+			pointID := uint64(sPointID.Int64)
+			collector.PointID = &pointID
 		}
 		if collector.ShedNo == "" && sCollectorShedNo.Valid {
 			collector.ShedNo = sCollectorShedNo.String
@@ -1057,11 +1110,11 @@ SELECT
   br.shed_no, br.frequency, br.device_external_id, br.function_type,
   br.bind_status, br.bound_at_ms, br.unbound_at_ms, br.created_by,
   br.extra, br.created_at, br.updated_at,
-  dp.point_name, dp.channel_no, cn.shed_no, cn.node_id
+  dp.point_name, dp.channel_no, cn.shed_no, cn.node_id, cn.node_name
 FROM bind_relations br
 JOIN cloud_gateways cg ON cg.gateway_id = br.gateway_id
 LEFT JOIN device_points dp ON dp.point_id = br.point_id
-LEFT JOIN collector_nodes cn ON cn.node_id = dp.node_id`
+LEFT JOIN collector_nodes cn ON cn.node_id = COALESCE(br.node_id, dp.node_id)`
 
 // ListBindings 返回所有 active 绑定关系列表。
 func (r *Repository) ListBindings(ctx context.Context) ([]domain.BindRelation, error) {
@@ -1169,7 +1222,7 @@ LIMIT 1`, pointID).Scan(
 func (r *Repository) GetDeviceTree(ctx context.Context) ([]domain.DeviceTreeNode, error) {
 	// 1. 查询所有 active gateways。
 	gwRows, err := r.db.QueryContext(ctx, `
-SELECT gateway_id, gateway_name, online_status
+SELECT gateway_id, gateway_name, access_mode, online_status
 FROM cloud_gateways
 ORDER BY gateway_id ASC`)
 	if err != nil {
@@ -1178,16 +1231,18 @@ ORDER BY gateway_id ASC`)
 	defer gwRows.Close()
 
 	type gwRow struct {
-		ID     uint64
-		Name   string
-		Status uint8
+		ID         uint64
+		Name       string
+		AccessMode string
+		Status     uint8
 	}
 	var gateways []gwRow
 	for gwRows.Next() {
 		var g gwRow
-		if err := gwRows.Scan(&g.ID, &g.Name, &g.Status); err != nil {
+		if err := gwRows.Scan(&g.ID, &g.Name, &g.AccessMode, &g.Status); err != nil {
 			return nil, err
 		}
+		g.AccessMode = string(domain.NormalizeGatewayAccessMode(g.AccessMode))
 		gateways = append(gateways, g)
 	}
 	if err := gwRows.Err(); err != nil {
@@ -1199,7 +1254,7 @@ ORDER BY gateway_id ASC`)
 
 	// 2. 查询所有 active collector_nodes。
 	colRows, err := r.db.QueryContext(ctx, `
-SELECT node_id, gateway_id, frequency, device_external_id
+SELECT node_id, gateway_id, node_name, shed_no, frequency, device_external_id
 FROM collector_nodes
 WHERE node_status = 1
 ORDER BY gateway_id ASC, node_id ASC`)
@@ -1211,13 +1266,15 @@ ORDER BY gateway_id ASC, node_id ASC`)
 	type colRow struct {
 		NodeID    uint64
 		GatewayID uint64
+		NodeName  string
+		ShedNo    string
 		Frequency int
 		DevExtID  string
 	}
 	var collectors []colRow
 	for colRows.Next() {
 		var c colRow
-		if err := colRows.Scan(&c.NodeID, &c.GatewayID, &c.Frequency, &c.DevExtID); err != nil {
+		if err := colRows.Scan(&c.NodeID, &c.GatewayID, &c.NodeName, &c.ShedNo, &c.Frequency, &c.DevExtID); err != nil {
 			return nil, err
 		}
 		collectors = append(collectors, c)
@@ -1290,29 +1347,39 @@ ORDER BY dp.node_id ASC, dp.channel_no ASC`)
 		return nil, err
 	}
 
-	// 4. 查询所有 active 绑定关系，建立 point_id/gateway_id → user_id 映射。
+	// 4. 查询所有 active 绑定关系，建立 point/node/exclusive gateway → user_id 映射。
 	bindRows, err := r.db.QueryContext(ctx, `
-SELECT gateway_id, point_id, user_id
-FROM bind_relations
-WHERE bind_status = 1`)
+SELECT br.gateway_id, br.node_id, br.point_id, br.user_id, cg.access_mode
+FROM bind_relations br
+JOIN cloud_gateways cg ON cg.gateway_id = br.gateway_id
+WHERE br.bind_status = 1`)
 	if err != nil {
 		return nil, err
 	}
 	defer bindRows.Close()
 
-	pointBoundMap := make(map[uint64]uint64)   // point_id → user_id
-	gatewayBoundMap := make(map[uint64]uint64) // gateway_id → user_id
+	pointBoundMap := make(map[uint64]uint64)     // point_id → user_id
+	collectorBoundMap := make(map[uint64]uint64) // node_id → user_id
+	gatewayBoundMap := make(map[uint64]uint64)   // exclusive gateway_id → user_id
 	for bindRows.Next() {
 		var gatewayID, uid uint64
+		var nodeID sql.NullInt64
 		var pointID sql.NullInt64
-		if err := bindRows.Scan(&gatewayID, &pointID, &uid); err != nil {
+		var accessMode string
+		if err := bindRows.Scan(&gatewayID, &nodeID, &pointID, &uid, &accessMode); err != nil {
 			return nil, err
 		}
 		if pointID.Valid {
 			pointBoundMap[uint64(pointID.Int64)] = uid
 			continue
 		}
-		gatewayBoundMap[gatewayID] = uid
+		if nodeID.Valid {
+			collectorBoundMap[uint64(nodeID.Int64)] = uid
+			continue
+		}
+		if domain.NormalizeGatewayAccessMode(accessMode) == domain.GatewayAccessModeExclusive {
+			gatewayBoundMap[gatewayID] = uid
+		}
 	}
 	if err := bindRows.Err(); err != nil {
 		return nil, err
@@ -1351,20 +1418,31 @@ WHERE bind_status = 1`)
 	tree := make([]domain.DeviceTreeNode, 0, len(gateways))
 	for _, g := range gateways {
 		node := domain.DeviceTreeNode{
-			GatewayID:   g.ID,
-			GatewayName: g.Name,
-			Status:      g.Status,
-			Collectors:  make([]domain.DeviceTreeCollector, 0),
+			GatewayID:       g.ID,
+			GatewayName:     g.Name,
+			AccessMode:      g.AccessMode,
+			AccessModeLabel: domain.GatewayAccessMode(g.AccessMode).Label(),
+			Status:          g.Status,
+			Collectors:      make([]domain.DeviceTreeCollector, 0),
 		}
 		for _, c := range colByGW[g.ID] {
+			collectorBoundUserID, collectorIsBound := resolveCollectorBoundUser(collectorBoundMap, gatewayBoundMap, g.ID, c.NodeID)
+			var collectorBoundUserIDPtr *uint64
+			if collectorIsBound {
+				collectorBoundUserIDPtr = &collectorBoundUserID
+			}
 			col := domain.DeviceTreeCollector{
 				NodeID:           c.NodeID,
+				NodeName:         c.NodeName,
+				ShedNo:           c.ShedNo,
 				DeviceExternalID: c.DevExtID,
 				Frequency:        c.Frequency,
+				IsBound:          collectorIsBound,
+				BoundUserID:      collectorBoundUserIDPtr,
 				Points:           make([]domain.DeviceTreePoint, 0),
 			}
 			for _, p := range ptByNode[c.NodeID] {
-				boundUserID, isBound := resolveDeviceTreeBoundUser(pointBoundMap, gatewayBoundMap, g.ID, p.PointID)
+				boundUserID, isBound := resolveDeviceTreeBoundUser(pointBoundMap, collectorBoundMap, gatewayBoundMap, g.ID, p.NodeID, p.PointID)
 				var boundUserIDPtr *uint64
 				if isBound {
 					boundUserIDPtr = &boundUserID
@@ -1397,8 +1475,21 @@ WHERE bind_status = 1`)
 	return tree, nil
 }
 
-func resolveDeviceTreeBoundUser(pointBoundMap map[uint64]uint64, gatewayBoundMap map[uint64]uint64, gatewayID uint64, pointID uint64) (uint64, bool) {
+func resolveDeviceTreeBoundUser(pointBoundMap map[uint64]uint64, collectorBoundMap map[uint64]uint64, gatewayBoundMap map[uint64]uint64, gatewayID uint64, nodeID uint64, pointID uint64) (uint64, bool) {
 	if userID, ok := pointBoundMap[pointID]; ok {
+		return userID, true
+	}
+	if userID, ok := collectorBoundMap[nodeID]; ok {
+		return userID, true
+	}
+	if userID, ok := gatewayBoundMap[gatewayID]; ok {
+		return userID, true
+	}
+	return 0, false
+}
+
+func resolveCollectorBoundUser(collectorBoundMap map[uint64]uint64, gatewayBoundMap map[uint64]uint64, gatewayID uint64, nodeID uint64) (uint64, bool) {
+	if userID, ok := collectorBoundMap[nodeID]; ok {
 		return userID, true
 	}
 	if userID, ok := gatewayBoundMap[gatewayID]; ok {
@@ -1448,11 +1539,11 @@ LIMIT 1`, bindID)
 func (r *Repository) FindGatewayByID(ctx context.Context, gatewayID uint64) (*domain.Gateway, error) {
 	var g domain.Gateway
 	err := r.db.QueryRowContext(ctx, `
-SELECT gateway_id, gateway_external_id, gateway_name, ip, port, gateway_sn, online_status, source_type, last_heartbeat_at_ms, created_at, updated_at
+SELECT gateway_id, gateway_external_id, gateway_name, access_mode, ip, port, gateway_sn, online_status, source_type, last_heartbeat_at_ms, created_at, updated_at
 FROM cloud_gateways
 WHERE gateway_id = ?
 LIMIT 1`, gatewayID).Scan(
-		&g.GatewayID, &g.GatewayExternalID, &g.GatewayName, &g.IP, &g.Port, &g.GatewaySN,
+		&g.GatewayID, &g.GatewayExternalID, &g.GatewayName, &g.AccessMode, &g.IP, &g.Port, &g.GatewaySN,
 		&g.OnlineStatus, &g.SourceType, &g.LastHeartbeatAtMS, &g.CreatedAt, &g.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
@@ -1461,6 +1552,7 @@ LIMIT 1`, gatewayID).Scan(
 	if err != nil {
 		return nil, err
 	}
+	g.AccessMode = string(domain.NormalizeGatewayAccessMode(g.AccessMode))
 	return &g, nil
 }
 
@@ -1510,6 +1602,7 @@ LIMIT 1`, nodeID).Scan(
 func (r *Repository) FindActiveBindingByUserAndGateway(ctx context.Context, userID uint64, gatewayID uint64) (*domain.BindRelation, error) {
 	row := r.db.QueryRowContext(ctx, bindingSelectColumns+`
 WHERE br.user_id = ? AND br.gateway_id = ? AND br.bind_status = 1 AND br.point_id IS NULL
+  AND br.node_id IS NULL
 LIMIT 1`, userID, gatewayID)
 	b, err := scanBindingRelationRow(row)
 	if err == sql.ErrNoRows {
@@ -1525,6 +1618,7 @@ LIMIT 1`, userID, gatewayID)
 func (r *Repository) FindActiveBindingByGateway(ctx context.Context, gatewayID uint64) (*domain.BindRelation, error) {
 	row := r.db.QueryRowContext(ctx, bindingSelectColumns+`
 WHERE br.gateway_id = ? AND br.bind_status = 1 AND br.point_id IS NULL
+  AND br.node_id IS NULL
 LIMIT 1`, gatewayID)
 	b, err := scanBindingRelationRow(row)
 	if err == sql.ErrNoRows {
@@ -1536,22 +1630,48 @@ LIMIT 1`, gatewayID)
 	return &b, nil
 }
 
-// ListGatewayBindCandidates 返回尚未被 active 绑定的 gateway 候选列表。
+// FindActiveBindingByUserAndNode 检查是否已存在用户对某个采集执行器的 active 绑定。
+func (r *Repository) FindActiveBindingByUserAndNode(ctx context.Context, userID uint64, nodeID uint64) (*domain.BindRelation, error) {
+	row := r.db.QueryRowContext(ctx, bindingSelectColumns+`
+WHERE br.user_id = ? AND br.node_id = ? AND br.point_id IS NULL AND br.bind_status = 1
+LIMIT 1`, userID, nodeID)
+	b, err := scanBindingRelationRow(row)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &b, nil
+}
+
+// FindActiveBindingByNode 按 node_id 查询 active 采集执行器绑定。
+func (r *Repository) FindActiveBindingByNode(ctx context.Context, nodeID uint64) (*domain.BindRelation, error) {
+	row := r.db.QueryRowContext(ctx, bindingSelectColumns+`
+WHERE br.node_id = ? AND br.point_id IS NULL AND br.bind_status = 1
+LIMIT 1`, nodeID)
+	b, err := scanBindingRelationRow(row)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &b, nil
+}
+
+// ListGatewayBindCandidates 返回可绑定 gateway 候选列表。
 func (r *Repository) ListGatewayBindCandidates(ctx context.Context, keyword string) ([]domain.GatewayBindCandidate, error) {
 	query := `
-SELECT g.gateway_id, g.gateway_name, g.gateway_external_id, g.online_status, g.last_heartbeat_at_ms
-FROM cloud_gateways g
-LEFT JOIN bind_relations br ON br.gateway_id = g.gateway_id AND br.bind_status = 1 AND br.point_id IS NULL`
+SELECT g.gateway_id, g.gateway_name, g.gateway_external_id, g.access_mode, g.online_status, g.last_heartbeat_at_ms
+FROM cloud_gateways g`
 	var args []any
 	keyword = strings.TrimSpace(keyword)
 	if keyword != "" {
 		like := "%" + keyword + "%"
 		query += `
-WHERE br.bind_id IS NULL AND (g.gateway_name LIKE ? OR g.gateway_external_id LIKE ?)`
+WHERE g.gateway_name LIKE ? OR g.gateway_external_id LIKE ?`
 		args = append(args, like, like)
-	} else {
-		query += `
-WHERE br.bind_id IS NULL`
 	}
 	query += `
 ORDER BY g.updated_at DESC
@@ -1567,9 +1687,11 @@ LIMIT 100`
 	for rows.Next() {
 		var item domain.GatewayBindCandidate
 		var lastHeartbeat time.Time
-		if err := rows.Scan(&item.GatewayID, &item.GatewayName, &item.GatewayExternalID, &item.OnlineStatus, &lastHeartbeat); err != nil {
+		if err := rows.Scan(&item.GatewayID, &item.GatewayName, &item.GatewayExternalID, &item.AccessMode, &item.OnlineStatus, &lastHeartbeat); err != nil {
 			return nil, err
 		}
+		item.AccessMode = string(domain.NormalizeGatewayAccessMode(item.AccessMode))
+		item.AccessModeLabel = domain.GatewayAccessMode(item.AccessMode).Label()
 		item.LastHeartbeatAtMS = lastHeartbeat.UTC().Format("2006-01-02T15:04:05.000Z")
 		items = append(items, item)
 	}
@@ -1584,6 +1706,8 @@ func (r *Repository) CreateBinding(ctx context.Context, b *domain.BindRelation) 
 	if b.BindingType == "" {
 		if b.PointID != nil {
 			b.BindingType = string(domain.BindingTypePoint)
+		} else if b.NodeID != nil {
+			b.BindingType = string(domain.BindingTypeCollector)
 		} else {
 			b.BindingType = string(domain.BindingTypeGateway)
 		}
@@ -1600,28 +1724,31 @@ func (r *Repository) CreateBinding(ctx context.Context, b *domain.BindRelation) 
 	pid := nullableUint64(b.PointID)
 	cbid := nullableUint64(b.CreatedBy)
 
-	if b.PointID == nil {
+	if b.PointID == nil && b.NodeID == nil {
 		tx, err := r.db.BeginTx(ctx, nil)
 		if err != nil {
 			return err
 		}
 		defer tx.Rollback()
 
-		if _, err := tx.ExecContext(ctx, `SELECT gateway_id FROM cloud_gateways WHERE gateway_id = ? FOR UPDATE`, b.GatewayID); err != nil {
+		var gatewayAccessMode string
+		if err := tx.QueryRowContext(ctx, `SELECT access_mode FROM cloud_gateways WHERE gateway_id = ? FOR UPDATE`, b.GatewayID).Scan(&gatewayAccessMode); err != nil {
 			return err
 		}
-		var existingBindID uint64
-		var existingUserID sql.NullInt64
-		err = tx.QueryRowContext(ctx, `
+		if domain.NormalizeGatewayAccessMode(gatewayAccessMode) == domain.GatewayAccessModeExclusive {
+			var existingBindID uint64
+			var existingUserID sql.NullInt64
+			err = tx.QueryRowContext(ctx, `
 SELECT bind_id, user_id
 FROM bind_relations
-WHERE gateway_id = ? AND bind_status = 1 AND point_id IS NULL
+WHERE gateway_id = ? AND bind_status = 1 AND node_id IS NULL AND point_id IS NULL
 LIMIT 1 FOR UPDATE`, b.GatewayID).Scan(&existingBindID, &existingUserID)
-		if err != nil && err != sql.ErrNoRows {
-			return err
-		}
-		if err == nil {
-			return domain.ErrBindingConflict
+			if err != nil && err != sql.ErrNoRows {
+				return err
+			}
+			if err == nil {
+				return domain.ErrBindingConflict
+			}
 		}
 
 		_, err = tx.ExecContext(ctx, `
@@ -2101,7 +2228,11 @@ func (r *Repository) SearchDevicePoints(ctx context.Context, keyword string, bin
 FROM device_points dp
 JOIN cloud_gateways cg ON dp.gateway_id = cg.gateway_id
 JOIN collector_nodes cn ON dp.node_id = cn.node_id
-LEFT JOIN bind_relations br ON dp.point_id = br.point_id AND br.bind_status = 1
+LEFT JOIN bind_relations br ON br.bind_status = 1 AND (
+  br.point_id = dp.point_id
+  OR (br.point_id IS NULL AND br.node_id = dp.node_id)
+  OR (br.point_id IS NULL AND br.node_id IS NULL AND br.gateway_id = dp.gateway_id AND cg.access_mode = 'exclusive')
+)
 WHERE dp.point_status = 1` + whereClause + `
 ORDER BY dp.gateway_id, cn.frequency, dp.channel_no
 LIMIT 50`

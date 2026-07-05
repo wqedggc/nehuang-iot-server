@@ -4,7 +4,7 @@
 
 ## 1. 项目定位
 
-涅凰智农 V1.0 是农业自动化 IoT 云平台。当前目标不是重写 MCU、E90/E220 固件或现场温控算法，而是在甲方硬件侧透传能力基础上建设稳定的云端接入、业务数据固化、管理后台和农户端能力。
+涅凰智农 V1.0 是农业自动化 IoT 云平台。当前目标不是重写 MCU、E90/E220 固件或现场温控算法，而是在硬件端透传能力基础上建设稳定的云端接入、业务数据固化、管理后台和农户端能力。
 
 当前正式工程落点：
 
@@ -31,7 +31,7 @@
 6. `docs/architecture_v1.md`。
 7. `docs/data_model_v1.md`。
 
-甲方最新硬件文档已整理到：
+硬件端最新文档已整理到：
 
 - `docs/hardware_protocol_current.md`
 
@@ -80,7 +80,7 @@ cloud_gateways
 - `cloud_gateways`：云边/LoRa/TCP 通信接入设备。
 - `collector_nodes`：采集执行器节点，唯一身份为 `gateway_id + frequency + device_external_id`。
 - `device_points`：节点下的功能点/通道，例如温度、墒情、限位、继电器、水泵、风机。
-- `device_realtime_maps`：甲方旧字段兼容投影，不再作为主抽象。
+- `device_realtime_maps`：既有旧字段兼容投影，不再作为主抽象。
 
 用户和设备关系：
 
@@ -88,9 +88,9 @@ cloud_gateways
 - Mini 农户只能查看和控制已绑定的 `point_id`。
 - 当前没有实现后台手动创建硬件主数据，设备主数据仍依赖 Adapter 上报和后续 parser。
 
-## 5. 甲方最新硬件口径
+## 5. 硬件端最新口径
 
-甲方最新硬件侧逻辑对云端的关键影响：
+硬件端最新逻辑对云端的关键影响：
 
 - MCU 本地替代旧 `jisuan.py`，自动温控逻辑下放到设备端。
 - MCU 每 5 分钟缓存一次温度，4 小时上报 48 组。
@@ -137,7 +137,7 @@ cloud_gateways
 ## 7. 推荐开发顺序
 
 1. 把 `gateway-adapter` 独立部署到云端并开放 TCP 端口。
-2. 让甲方硬件网关连入并发送注册、心跳、工作包样例。
+2. 让硬件网关连入并发送注册、心跳、工作包样例。
 3. 用 raw journal 保存真实 bytes，用 replay 工具确认分类。
 4. 基于真实样例补工作包/告警包 parser。
 5. 打通一个工作包写入 `sensor_data` 和 realtime。

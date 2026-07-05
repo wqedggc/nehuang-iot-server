@@ -17,6 +17,7 @@ type Config struct {
 	JWT          JWTConfig
 	Wechat       WechatConfig
 	OfflineScan  OfflineScanConfig
+	CommandTTL   CommandTTLConfig
 	AdapterToken string // Adapter API 认证 token，从环境变量 NEHUANG_ADAPTER_TOKEN 读取
 }
 
@@ -55,6 +56,13 @@ type OfflineScanConfig struct {
 	IntervalSeconds  int
 }
 
+// CommandTTLConfig controls background timeout correction for control commands.
+type CommandTTLConfig struct {
+	Enabled         bool
+	TTLSeconds      int
+	IntervalSeconds int
+}
+
 // Load reads configuration from environment variables and the MySQL defaults file.
 func Load() (Config, error) {
 	cfg := Config{
@@ -73,6 +81,11 @@ func Load() (Config, error) {
 			Enabled:          envBool("NEHUANG_OFFLINE_SCAN_ENABLED", true),
 			ThresholdSeconds: envInt("NEHUANG_OFFLINE_THRESHOLD_SECONDS", 35),
 			IntervalSeconds:  envInt("NEHUANG_OFFLINE_SCAN_INTERVAL_SECONDS", 10),
+		},
+		CommandTTL: CommandTTLConfig{
+			Enabled:         envBool("NEHUANG_CONTROL_TIMEOUT_SCAN_ENABLED", true),
+			TTLSeconds:      envInt("NEHUANG_CONTROL_COMMAND_TTL_SECONDS", 300),
+			IntervalSeconds: envInt("NEHUANG_CONTROL_TIMEOUT_SCAN_INTERVAL_SECONDS", 30),
 		},
 		// Adapter API 认证 token，服务端和 Mock 脚本共用。
 		AdapterToken: envDefault("NEHUANG_ADAPTER_TOKEN", "nehuang-adapter-dev-token"),

@@ -55,6 +55,34 @@
     return d && d.point_id != null ? String(d.point_id) : '';
   }
 
+  function toText(value) {
+    if (value == null) return '';
+    return String(value);
+  }
+
+  function groupDevicesByCollector(devices) {
+    var map = {};
+    var groups = [];
+    devices.forEach(function (device) {
+      var nodeID = toText(device.node_id || device.nodeId || '');
+      var fallbackKey = 'point-' + devicePointID(device);
+      var key = nodeID || fallbackKey;
+      if (!map[key]) {
+        map[key] = {
+          key: key,
+          nodeId: nodeID,
+          nodeName: toText(device.node_name || device.nodeName || ''),
+          gatewayName: toText(device.gateway_name || device.gatewayName || ''),
+          gatewayAccessModeLabel: toText(device.gateway_access_mode_label || device.gatewayAccessModeLabel || ''),
+          items: []
+        };
+        groups.push(map[key]);
+      }
+      map[key].items.push(device);
+    });
+    return groups;
+  }
+
   // ============================================================
   // 导航
   // ============================================================
@@ -188,32 +216,48 @@
       }
 
       var devices = res.data;
-      var html = '<div class="page-header"><h2>我的设备</h2><span class="device-count">共 ' + devices.length + ' 台</span></div>';
+      var groups = groupDevicesByCollector(devices);
+      var html = '<div class="page-header"><h2>我的设备</h2><span class="device-count">共 ' + devices.length + ' 个功能点</span></div>';
       html += '<div class="device-list">';
-      devices.forEach(function (d) {
-        var pointID = devicePointID(d);
-        var status = valueStatusClass(d.value_status);
-        var statusClass = 'status-' + status;
-        var statusTextClass = 'status-text-' + status;
-        var title = escHtml(d.shed_no || '未设置棚号') + ' · 频点' + escHtml(d.freq);
-        var deviceNo = '设备ID ' + escHtml(d.devid || '--');
-        html += '<div class="device-card ' + statusClass + '" onclick="navigate(\'device/' + pointID + '\')">' +
-          '<div class="device-card-header">' +
-            '<span class="device-card-title">' + title + '</span>' +
-            '<span class="device-card-func">' + escHtml(d.func_name) + '</span>' +
-          '</div>' +
-          '<div class="device-card-body">' +
-            '<span class="device-card-value">' + (d.real_value != null ? d.real_value : '--') + '</span>' +
-            '<span class="device-card-unit">' + escHtml(d.unit) + '</span>' +
-          '</div>' +
-          '<div class="device-card-meta">' +
-            '<span class="device-card-status">' +
-              '<span class="status-dot"></span>' +
-              '<span class="' + statusTextClass + '">' + escHtml(d.value_status_label || '--') + '</span>' +
-            '</span>' +
-            '<span>' + deviceNo + ' · ' + formatTime(d.updated_at) + '</span>' +
-          '</div>' +
-        '</div>';
+      groups.forEach(function (group) {
+        html += '<div style="margin-bottom:14px">' +
+          '<div style="display:flex;justify-content:space-between;align-items:flex-end;margin:6px 0 8px;padding:0 2px">' +
+            '<div>' +
+              '<div style="font-size:15px;font-weight:700;color:var(--color-text)">' + escHtml(group.nodeName || '采集执行器') + '</div>' +
+              '<div style="font-size:11px;color:var(--color-text-muted);margin-top:3px">' +
+                '接入网关：' + escHtml(group.gatewayName || '--') +
+                (group.gatewayAccessModeLabel ? ' · ' + escHtml(group.gatewayAccessModeLabel) : '') +
+                (group.nodeId ? ' · ID ' + escHtml(group.nodeId) : '') +
+              '</div>' +
+            '</div>' +
+            '<span style="font-size:12px;color:var(--color-text-muted)">功能点 ' + group.items.length + '</span>' +
+          '</div>';
+        group.items.forEach(function (d) {
+          var pointID = devicePointID(d);
+          var status = valueStatusClass(d.value_status);
+          var statusClass = 'status-' + status;
+          var statusTextClass = 'status-text-' + status;
+          var title = escHtml(d.shed_no || '未设置棚号') + ' · 频点' + escHtml(d.freq);
+          var deviceNo = 'DevID ' + escHtml(d.devid || '--');
+          html += '<div class="device-card ' + statusClass + '" onclick="navigate(\'device/' + pointID + '\')">' +
+            '<div class="device-card-header">' +
+              '<span class="device-card-title">' + title + '</span>' +
+              '<span class="device-card-func">' + escHtml(d.func_name) + '</span>' +
+            '</div>' +
+            '<div class="device-card-body">' +
+              '<span class="device-card-value">' + (d.real_value != null ? escHtml(d.real_value) : '--') + '</span>' +
+              '<span class="device-card-unit">' + escHtml(d.unit) + '</span>' +
+            '</div>' +
+            '<div class="device-card-meta">' +
+              '<span class="device-card-status">' +
+                '<span class="status-dot"></span>' +
+                '<span class="' + statusTextClass + '">' + escHtml(d.value_status_label || '--') + '</span>' +
+              '</span>' +
+              '<span>' + deviceNo + ' · ' + formatTime(d.updated_at) + '</span>' +
+            '</div>' +
+          '</div>';
+        });
+        html += '</div>';
       });
       html += '</div>';
 

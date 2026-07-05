@@ -159,6 +159,7 @@
   }
 
   function normalizeGateway(gateway) {
+    var accessMode = normalizeGatewayAccessMode(gateway && (gateway.access_mode || gateway.accessMode));
     return {
       gatewayId: getGatewayId(gateway),
       gatewayName: getGatewayName(gateway),
@@ -166,20 +167,40 @@
       port: gateway.port != null ? gateway.port : '',
       status: toNum(gateway.status) || 0,
       online: gateway.online === true || gateway.online === 1 || gateway.online === '1',
+      accessMode: accessMode,
+      accessModeLabel: gatewayAccessModeLabel(accessMode),
       collectors: gateway.collectors || []
     };
+  }
+
+  function normalizeGatewayAccessMode(mode) {
+    var raw = toText(mode || '').trim().toLowerCase();
+    return raw === 'exclusive' ? 'exclusive' : 'shared';
+  }
+
+  function gatewayAccessModeLabel(mode) {
+    return normalizeGatewayAccessMode(mode) === 'exclusive' ? '独享' : '共享';
+  }
+
+  function gatewayAccessModeBadgeClass(mode) {
+    return normalizeGatewayAccessMode(mode) === 'exclusive' ? 'badge-info' : 'badge-warning';
   }
 
   function normalizeBindingType(binding) {
     if (!binding) return 'point';
     var raw = (binding.binding_type || binding.bindingType || binding.bind_type || '').toLowerCase();
-    if (raw === 'gateway' || raw === 'point') return raw;
-    if (binding.point_id || binding.node_id || binding.function_type || binding.frequency || binding.device_external_id || binding.func || binding.bound_to_point) return 'point';
+    if (raw === 'gateway' || raw === 'point' || raw === 'collector') return raw;
+    if (binding.node_id || binding.nodeId) {
+      if (!(binding.point_id || binding.pointId)) return 'collector';
+    }
+    if (binding.point_id || binding.function_type || binding.frequency || binding.device_external_id || binding.func || binding.bound_to_point) return 'point';
     return 'gateway';
   }
 
   function bindingTypeLabel(bindingType) {
-    return bindingType === 'gateway' ? '设备网关' : '功能点';
+    if (bindingType === 'gateway') return '设备网关';
+    if (bindingType === 'collector') return '采集执行器';
+    return '功能点';
   }
 
   function resolvePayloadEventCategory(item) {
@@ -420,12 +441,15 @@
 
   function normalizeGatewayForDisplay(gateway) {
     if (!gateway) return {};
+    var accessMode = normalizeGatewayAccessMode(gateway.access_mode || gateway.accessMode);
     return {
       gatewayId: toText(gateway.gateway_id || gateway.gatewayId || gateway.id || gateway.ID || gateway.gateway_id_str || '').trim(),
       gatewayName: toText(gateway.gateway_name || gateway.dev_name || gateway.name || '').trim(),
       ip: toText(gateway.ip || gateway.host || ''),
       port: toText(gateway.port || ''),
       online: gateway.online === true || gateway.online === 1 || gateway.online === '1',
+      accessMode: accessMode,
+      accessModeLabel: gateway.access_mode_label || gateway.accessModeLabel || gatewayAccessModeLabel(accessMode),
       note: toText(gateway.remark || gateway.note || ''),
       collectors: gateway.collectors || [],
       collectorCount: toNum(gateway.collector_count || gateway.collectorCount),
@@ -437,11 +461,13 @@
     if (!collector) return {};
     return {
       collectorId: toText(collector.collector_id || collector.collectorId || collector.id || collector.node_id || collector.nodeId || '').trim(),
-      collectorName: toText(collector.collector_name || collector.name || collector.devid || collector.device_name || '').trim(),
+      collectorName: toText(collector.collector_name || collector.collectorName || collector.node_name || collector.nodeName || collector.name || collector.devid || collector.device_name || '').trim(),
       shedNo: toText(collector.shed_no || collector.shedNo || '').trim(),
       frequency: toNum(collector.frequency),
       deviceExternalId: toText(collector.device_external_id || collector.devid || '').trim(),
       statusLabel: toText(collector.status_label || collector.statusLabel || ''),
+      isBound: !!(collector.is_bound || collector.isBound || collector.bound_user_id || collector.boundUserID),
+      boundUserID: toText(collector.bound_user_id || collector.boundUserID || ''),
       points: (collector.points || []).map(normalizePointForDisplay)
     };
   }
@@ -452,6 +478,10 @@
       if (!state.selectedGatewayId) return null;
       var payload = { binding_type: 'gateway', user_id: state.userId, gateway_id: state.selectedGatewayId };
       return payload;
+    }
+    if (state.bindingType === 'collector') {
+      if (!state.selectedNodeId) return null;
+      return { binding_type: 'collector', user_id: state.userId, node_id: state.selectedNodeId };
     }
     if (!state.selectedPointId) return null;
     return { binding_type: 'point', user_id: state.userId, point_id: state.selectedPointId };
@@ -536,14 +566,22 @@
   function normalizeCollectorForDisplayCollector(gatewayId, collector) {
     if (!collector) return {};
     var normalized = normalizeCollectorForDisplay(collector);
+    var gateway = getGatewayItemFromPageData(gatewayId) || {};
     if (!normalized.gatewayId) normalized.gatewayId = gatewayId;
+    if (!normalized.gatewayName) normalized.gatewayName = gateway.gatewayName || getGatewayName(gateway);
+    if (!normalized.gatewayAccessMode) normalized.gatewayAccessMode = gateway.accessMode || 'shared';
+    if (!normalized.gatewayAccessModeLabel) normalized.gatewayAccessModeLabel = gateway.accessModeLabel || gatewayAccessModeLabel(gateway.accessMode);
     return normalized;
   }
 
   function normalizeGatewayForTree(gateway) {
     var normalized = normalizeGatewayForDisplay(gateway);
     var collectors = (gateway.collectors || gateway.collector_list || []).map(function (c) {
-      return normalizeCollectorForDisplayCollector(normalized.gatewayId, c);
+      var collector = normalizeCollectorForDisplayCollector(normalized.gatewayId, c);
+      collector.gatewayName = normalized.gatewayName;
+      collector.gatewayAccessMode = normalized.accessMode;
+      collector.gatewayAccessModeLabel = normalized.accessModeLabel;
+      return collector;
     });
     normalized.collectors = collectors;
     normalized.collectorCount = collectors.length;
@@ -571,11 +609,32 @@
       ip: normalized.ip,
       port: normalized.port,
       online: normalized.online,
+      accessMode: normalized.accessMode,
+      accessModeLabel: normalized.accessModeLabel,
       collectorCount: normalized.collectorCount,
       pointCount: normalized.pointCount,
       note: normalized.note,
       points: points,
       raw: item
+    };
+  }
+
+  function normalizeBindingCandidateCollector(gateway, collector) {
+    var gw = normalizeGatewayForDisplay(gateway || {});
+    var col = normalizeCollectorForDisplay(collector || {});
+    return {
+      candidateType: 'collector',
+      nodeId: col.collectorId,
+      nodeName: col.collectorName,
+      gatewayId: col.gatewayId || gw.gatewayId,
+      gatewayName: col.gatewayName || gw.gatewayName,
+      gatewayAccessMode: gw.accessMode,
+      gatewayAccessModeLabel: gw.accessModeLabel,
+      shedNo: col.shedNo,
+      frequency: col.frequency,
+      deviceExternalId: col.deviceExternalId,
+      isBound: col.isBound,
+      raw: collector
     };
   }
 
@@ -613,6 +672,35 @@
     if (Array.isArray(res.items)) return res.items.map(normalizeBindingCandidatePoint);
     if (Array.isArray(res)) return res.map(normalizeBindingCandidatePoint);
     return [];
+  }
+
+  function getCollectorCandidateListFromTreeResponse(res, keyword) {
+    var gateways = [];
+    if (Array.isArray(res && res.data)) gateways = res.data;
+    else if (res && res.data && Array.isArray(res.data.items)) gateways = res.data.items;
+    else if (Array.isArray(res && res.items)) gateways = res.items;
+    else if (Array.isArray(res)) gateways = res;
+
+    var needle = toText(keyword || '').trim().toLowerCase();
+    var out = [];
+    gateways.forEach(function (gateway) {
+      var collectors = gateway.collectors || gateway.collector_list || [];
+      collectors.forEach(function (collector) {
+        var item = normalizeBindingCandidateCollector(gateway, collector);
+        var haystack = [
+          item.nodeName,
+          item.nodeId,
+          item.gatewayName,
+          item.gatewayId,
+          item.shedNo,
+          item.frequency,
+          item.deviceExternalId,
+          item.gatewayAccessModeLabel
+        ].join(' ').toLowerCase();
+        if (!needle || haystack.indexOf(needle) !== -1) out.push(item);
+      });
+    });
+    return out;
   }
 
   function normalizePointForDisplay(point) {
@@ -653,7 +741,10 @@
       gatewayId: getGatewayId(binding),
       pointId: toText(binding.point_id || binding.pointId || ''),
       nodeId: toText(binding.node_id || binding.nodeId || ''),
+      nodeName: toText(binding.node_name || binding.nodeName || ''),
       gatewayName: getGatewayName(binding),
+      gatewayAccessMode: normalizeGatewayAccessMode(binding.gateway_access_mode || binding.gatewayAccessMode || binding.access_mode || binding.accessMode),
+      gatewayAccessModeLabel: binding.gateway_access_mode_label || binding.gatewayAccessModeLabel || binding.access_mode_label || binding.accessModeLabel || gatewayAccessModeLabel(binding.gateway_access_mode || binding.gatewayAccessMode || binding.access_mode || binding.accessMode),
       frequency: toNum(binding.frequency || binding.freq || binding.frequencyHz),
       deviceExternalId: toText(binding.device_external_id || binding.devid || ''),
       functionType: toNum(binding.function_type || binding.functionType || binding.func || ''),
@@ -699,7 +790,7 @@
   }
 
   function goFarmerDetail(userId) {
-    location.hash = 'farmer-detail?user_id=' + userId;
+    location.hash = 'farmer-detail?user_id=' + encodeURIComponent(toText(userId));
   }
 
   // ============================================================
@@ -1037,7 +1128,7 @@
       html += '<div class="table-section">' +
         '<div class="table-header">' +
           '<h3>已绑定设备 (' + bindings.length + ')</h3>' +
-          '<button class="btn btn-primary btn-sm" id="btn-bind-device" onclick="openBindDeviceModal(\'' + userId + '\')">+ 绑定网关</button>' +
+          '<button class="btn btn-primary btn-sm" id="btn-bind-device" onclick="openBindDeviceModal(\'' + userId + '\')">+ 新增绑定</button>' +
         '</div>' +
         '<div class="table-wrap"><table><thead><tr>' +
           '<th>绑定类型</th><th>绑定对象</th><th>关联功能点</th><th>网关ID</th><th>绑定时间</th><th>操作</th>' +
@@ -1047,14 +1138,17 @@
         var target = '--';
         var pointInfo = '--';
         if (b.bindingType === 'gateway') {
+          target = escHtml(b.gatewayName || '--') + ' <span class="badge ' + gatewayAccessModeBadgeClass(b.gatewayAccessMode) + '">' + escHtml(b.gatewayAccessModeLabel || gatewayAccessModeLabel(b.gatewayAccessMode)) + '</span>';
+        } else if (b.bindingType === 'collector') {
           target = escHtml(b.gatewayName || '--');
+          pointInfo = escHtml((b.nodeName || '采集执行器') + (b.nodeId ? ' (' + b.nodeId + ')' : '')) + (b.frequency ? ' · 频点' + b.frequency : '') + (b.deviceExternalId ? ' · DevID ' + escHtml(b.deviceExternalId) : '');
         } else {
           target = escHtml(b.gatewayName || '--');
           pointInfo = escHtml((b.pointName || '--') + (b.pointId ? ' (' + b.pointId + ')' : '')) + (b.frequency ? ' · 频点' + b.frequency : '');
         }
 
         html += '<tr>' +
-          '<td><span class="badge ' + (b.bindingType === 'gateway' ? 'badge-info' : 'badge-muted') + '">' + escHtml(b.bindingTypeLabel) + '</span></td>' +
+          '<td><span class="badge ' + (b.bindingType === 'gateway' ? 'badge-info' : b.bindingType === 'collector' ? 'badge-warning' : 'badge-muted') + '">' + escHtml(b.bindingTypeLabel) + '</span></td>' +
           '<td>' + target + '</td>' +
           '<td>' + pointInfo + '</td>' +
           '<td>' + escHtml((b.gatewayId || '--')) + '</td>' +
@@ -1066,7 +1160,7 @@
       html += '</tbody></table></div></div>';
 
       if (bindings.length === 0) {
-        html += '<div class="empty-state"><p>暂无绑定关系</p><p style="font-size:12px;color:var(--color-text-muted)">点击"绑定网关"为该农户添加绑定</p></div>';
+        html += '<div class="empty-state"><p>暂无绑定关系</p><p style="font-size:12px;color:var(--color-text-muted)">点击“新增绑定”为该农户添加设备网关、采集执行器或功能点。</p></div>';
       }
 
       container.innerHTML = html;
@@ -1085,6 +1179,7 @@
       userId: toText(userId),
       bindingType: 'gateway',
       selectedGatewayId: '',
+      selectedNodeId: '',
       selectedPointId: '',
       fallbackPointMode: false
     };
@@ -1099,6 +1194,7 @@
           '<label class="form-label">绑定类型</label>' +
           '<select class="form-select" id="bind-device-type">' +
             '<option value="gateway" selected>设备网关</option>' +
+            '<option value="collector">采集执行器</option>' +
             '<option value="point">功能点（兼容旧版）</option>' +
           '</select>' +
         '</div>' +
@@ -1128,6 +1224,7 @@
     typeEl.onchange = function () {
       bindingDialogState.bindingType = this.value;
       bindingDialogState.selectedGatewayId = '';
+      bindingDialogState.selectedNodeId = '';
       bindingDialogState.selectedPointId = '';
       $('#bind-device-selected').style.display = 'none';
       $('#bind-selected-name').textContent = '';
@@ -1191,6 +1288,20 @@
         }
       }
 
+      if (type === 'collector') {
+        try {
+          var treeRes = await NHApi.getDeviceTree();
+          candidates = getCollectorCandidateListFromTreeResponse(treeRes || {}, keyword);
+          if (candidates.length === 0) {
+            listEl.innerHTML = '<div class="empty-state"><p>没有可绑定的采集执行器</p><p style="font-size:12px;color:var(--color-text-muted)">请先在设备网关详情中添加采集执行器。</p></div>';
+            return;
+          }
+        } catch (e) {
+          listEl.innerHTML = '<div class="error-state"><p>加载候选失败</p></div>';
+          return;
+        }
+      }
+
       var html = '';
       if (type === 'gateway') {
         candidates.forEach(function (g) {
@@ -1202,6 +1313,22 @@
             '</div>' +
             '<div style="font-size:12px;color:var(--color-text-muted);margin-top:4px">网关ID：' + escHtml(g.gatewayId || '--') + ' · IP：' + escHtml(g.ip || '--') + (g.port ? (' : ' + escHtml(g.port)) : '') + '</div>' +
             '<div style="font-size:12px;color:var(--color-text-muted);margin-top:4px">采集执行器：' + (g.collectorCount != null ? g.collectorCount : '--') + ' · 功能点：' + (g.pointCount != null ? g.pointCount : '--') + '</div>' +
+          '</div>';
+        });
+      } else if (type === 'collector') {
+        candidates.forEach(function (c) {
+          var isSelected = bindingDialogState.selectedNodeId === c.nodeId;
+          html += '<div class="bind-candidate-item' + (isSelected ? ' selected' : '') + '" data-node-id="' + escHtml(c.nodeId) + '" data-type="collector" data-gateway-name="' + escHtml(c.gatewayName || '') + '">' +
+            '<div style="display:flex;justify-content:space-between;align-items:center">' +
+              '<div style="font-weight:600">' + escHtml(c.nodeName || '采集执行器') + '</div>' +
+              '<span class="badge ' + gatewayAccessModeBadgeClass(c.gatewayAccessMode) + '">' + escHtml(c.gatewayAccessModeLabel || '共享') + '</span>' +
+            '</div>' +
+            '<div style="font-size:12px;color:var(--color-text-muted);margin-top:4px">' +
+              '网关：' + escHtml(c.gatewayName || '--') + ' · 网关ID：' + escHtml(c.gatewayId || '--') +
+            '</div>' +
+            '<div style="font-size:12px;color:var(--color-text-muted);margin-top:2px">' +
+              '棚号：' + escHtml(c.shedNo || '--') + ' · 频点：' + escHtml(toText(c.frequency || '--')) + ' · DevID：' + escHtml(c.deviceExternalId || '--') +
+            '</div>' +
           '</div>';
         });
       } else {
@@ -1226,13 +1353,23 @@
           if (this.dataset.type === 'gateway') {
             bindingDialogState.bindingType = 'gateway';
             bindingDialogState.selectedGatewayId = this.dataset.gatewayId;
+            bindingDialogState.selectedNodeId = '';
             bindingDialogState.selectedPointId = '';
             var gatewayText = (this.querySelector('div') && this.querySelector('div').textContent) || '';
             $('#bind-selected-name').textContent = gatewayText + '（设备网关）';
+          } else if (this.dataset.type === 'collector') {
+            bindingDialogState.bindingType = 'collector';
+            bindingDialogState.selectedNodeId = this.dataset.nodeId;
+            bindingDialogState.selectedGatewayId = '';
+            bindingDialogState.selectedPointId = '';
+            var collectorText = (this.querySelector('div') && this.querySelector('div').textContent) || '';
+            var collectorGateway = this.dataset.gatewayName;
+            $('#bind-selected-name').textContent = collectorText + (collectorGateway ? ('（' + collectorGateway + '）') : '');
           } else {
             bindingDialogState.bindingType = 'point';
             bindingDialogState.selectedPointId = this.dataset.pointId;
             bindingDialogState.selectedGatewayId = '';
+            bindingDialogState.selectedNodeId = '';
             var selectedText = this.dataset.gatewayName;
             var firstLine = (this.querySelector('div') && this.querySelector('div').textContent) || '';
             $('#bind-selected-name').textContent = (firstLine || '') + (selectedText ? ('（' + selectedText + '）') : '');
@@ -1289,7 +1426,7 @@
   }
 
   async function doUpdateFarmer() {
-    var userId = parseInt($('#edit-farmer-id').value);
+    var userId = toText($('#edit-farmer-id').value).trim();
     if (!userId) { showToast('用户 ID 无效', 'error'); return; }
 
     var data = {
@@ -1354,6 +1491,8 @@
           ip: base.ip || toText(gw.ip),
           port: base.port || toText(gw.port),
           online: !!(base.online || node.online || gw.online || gw.online_status === 1),
+          accessMode: base.accessMode || node.accessMode || 'shared',
+          accessModeLabel: base.accessModeLabel || node.accessModeLabel || gatewayAccessModeLabel(base.accessMode || node.accessMode),
           note: base.note || toText(gw.remark || gw.note || ''),
           collectors: node.collectors || [],
           collectorCount: toNum(node.collectorCount != null ? node.collectorCount : gw.collector_count),
@@ -1389,14 +1528,14 @@
           '</div>' +
         '</div>' +
         '<div class="table-wrap"><table><thead><tr>' +
-          '<th>网关ID</th><th>网关名称</th><th>IP</th><th>端口</th><th>在线</th><th>采集执行器</th><th>功能点</th><th>操作</th>' +
+          '<th>网关ID</th><th>网关名称</th><th>模式</th><th>IP</th><th>端口</th><th>在线</th><th>采集执行器</th><th>功能点</th><th>操作</th>' +
         '</tr></thead><tbody id="gateway-list-tbody"></tbody></table></div>' +
       '</div>' +
       '<div class="table-section" style="margin-top:16px">' +
         '<div class="table-header">' +
           '<h3 id="gateway-detail-title">设备详情</h3>' +
           '<div class="table-header-right">' +
-            '<button class="btn btn-primary btn-sm" onclick="openGatewaySeedModal(window.__adminSelectedGatewayId || \'\')">+ 联调点位</button>' +
+            '<button class="btn btn-primary btn-sm" onclick="openGatewaySeedModal(window.__adminSelectedGatewayId || \'\')">+ 添加采集执行器</button>' +
             '<input class="table-search" id="gateway-point-search" style="width:240px" type="text" placeholder="搜索采集执行器/功能点...">' +
           '</div>' +
         '</div>' +
@@ -1419,7 +1558,7 @@
         });
 
         if (rows.length === 0) {
-          listTbody.innerHTML = '<tr><td colspan="8" class="table-empty">未找到匹配的设备网关</td></tr>';
+          listTbody.innerHTML = '<tr><td colspan="9" class="table-empty">未找到匹配的设备网关</td></tr>';
           return;
         }
 
@@ -1428,6 +1567,7 @@
           return '<tr class="' + (isSelected ? 'selected-gateway-row' : '') + '">' +
             '<td style="font-family:monospace;font-size:12px">' + escHtml(gw.gatewayId || '--') + '</td>' +
             '<td>' + escHtml(gw.gatewayName || '--') + '</td>' +
+            '<td><span class="badge ' + gatewayAccessModeBadgeClass(gw.accessMode) + '">' + escHtml(gw.accessModeLabel || gatewayAccessModeLabel(gw.accessMode)) + '</span></td>' +
             '<td>' + escHtml(gw.ip || '--') + '</td>' +
             '<td>' + escHtml(toText(gw.port) || '--') + '</td>' +
             '<td><span class="badge ' + (gw.online ? 'badge-success' : 'badge-muted') + '">' + (gw.online ? '在线' : '离线') + '</span></td>' +
@@ -1458,7 +1598,18 @@
         var keyword = (gatewayDetailState.keyword || '').trim().toLowerCase();
         var collectors = gateway.collectors || [];
         if (collectors.length === 0) {
-          detailWrap.innerHTML = '<div class="empty-state"><p>该网关暂无采集执行器与功能点</p><p style="font-size:12px;color:var(--color-text-muted);margin-top:6px">当前只完成设备网关注册；真实工作包解析或联调点位写入后，才会在这里和农户端展示具体设备。</p><button class="btn btn-primary btn-sm" style="margin-top:12px" onclick="openGatewaySeedModal(\'' + escHtml(gateway.gatewayId) + '\')">+ 添加联调点位</button></div>';
+          detailWrap.innerHTML =
+            '<div class="info-card" style="margin:18px 0 12px">' +
+              '<div class="info-grid">' +
+                '<div class="info-item"><label>网关ID</label><span style="font-family:monospace;font-size:12px">' + escHtml(gateway.gatewayId || '--') + '</span></div>' +
+                '<div class="info-item"><label>网关名称</label><span>' + escHtml(gateway.gatewayName || '--') + '</span></div>' +
+                '<div class="info-item"><label>使用模式</label><span><span class="badge ' + gatewayAccessModeBadgeClass(gateway.accessMode) + '">' + escHtml(gateway.accessModeLabel || gatewayAccessModeLabel(gateway.accessMode)) + '</span> <button class="btn btn-outline btn-sm" style="margin-left:8px" onclick="openGatewayAccessModeModal(\'' + escHtml(gateway.gatewayId) + '\')">修改</button></span></div>' +
+                '<div class="info-item"><label>在线</label><span><span class="badge ' + (gateway.online ? 'badge-success' : 'badge-muted') + '">' + (gateway.online ? '在线' : '离线') + '</span></span></div>' +
+                '<div class="info-item"><label>采集执行器</label><span>0 个</span></div>' +
+                '<div class="info-item"><label>功能点</label><span>0 个</span></div>' +
+              '</div>' +
+            '</div>' +
+            '<div class="empty-state"><p>该网关暂无采集执行器与功能点</p><p style="font-size:12px;color:var(--color-text-muted);margin-top:6px">当前只完成设备网关注册；真实工作包解析或管理端建档后，才会在这里和农户端展示具体设备。</p><button class="btn btn-primary btn-sm" style="margin-top:12px" onclick="openGatewaySeedModal(\'' + escHtml(gateway.gatewayId) + '\')">+ 添加采集执行器</button></div>';
           return;
         }
 
@@ -1521,6 +1672,7 @@
             '<div class="info-grid">' +
               '<div class="info-item"><label>网关ID</label><span style="font-family:monospace;font-size:12px">' + escHtml(gateway.gatewayId || '--') + '</span></div>' +
               '<div class="info-item"><label>网关名称</label><span>' + escHtml(gateway.gatewayName || '--') + '</span></div>' +
+              '<div class="info-item"><label>使用模式</label><span><span class="badge ' + gatewayAccessModeBadgeClass(gateway.accessMode) + '">' + escHtml(gateway.accessModeLabel || gatewayAccessModeLabel(gateway.accessMode)) + '</span> <button class="btn btn-outline btn-sm" style="margin-left:8px" onclick="openGatewayAccessModeModal(\'' + escHtml(gateway.gatewayId) + '\')">修改</button></span></div>' +
               '<div class="info-item"><label>在线</label><span><span class="badge ' + (gateway.online ? 'badge-success' : 'badge-muted') + '">' + (gateway.online ? '在线' : '离线') + '</span></span></div>' +
               '<div class="info-item"><label>采集执行器</label><span>' + collectors.length + ' 个</span></div>' +
               '<div class="info-item"><label>功能点</label><span>' + pointsTotal + ' 个</span></div>' +
@@ -1558,6 +1710,60 @@
     return null;
   }
 
+  function openGatewayAccessModeModal(gatewayId) {
+    gatewayId = toText(gatewayId).trim();
+    var gateway = getGatewayItemFromPageData(gatewayId);
+    if (!gateway) {
+      showToast('请先选择一个设备网关', 'error');
+      return;
+    }
+    var mode = normalizeGatewayAccessMode(gateway.accessMode);
+    var overlay = $('#modal-overlay');
+    overlay.style.display = 'flex';
+    overlay.innerHTML = '<div class="modal" style="max-width:520px">' +
+      '<div class="modal-header">' +
+        '<h3>修改设备网关模式</h3>' +
+        '<button class="modal-close" onclick="closeModal()">×</button>' +
+      '</div>' +
+      '<div class="modal-body">' +
+        '<div class="info-card control-point-card">' +
+          '<div class="info-grid">' +
+            '<div class="info-item"><label>设备网关</label><span>' + escHtml(gateway.gatewayName || '--') + '</span></div>' +
+            '<div class="info-item"><label>网关ID</label><span style="font-family:monospace;font-size:12px">' + escHtml(gateway.gatewayId || '--') + '</span></div>' +
+          '</div>' +
+        '</div>' +
+        '<div class="form-group">' +
+          '<label class="form-label">使用模式</label>' +
+          '<select class="form-select" id="gateway-access-mode">' +
+            '<option value="shared"' + (mode === 'shared' ? ' selected' : '') + '>共享</option>' +
+            '<option value="exclusive"' + (mode === 'exclusive' ? ' selected' : '') + '>独享</option>' +
+          '</select>' +
+          '<p class="form-hint">共享网关只作为通信入口，农户需要单独授权采集执行器；独享网关绑定农户后可展开该网关下全部设备。</p>' +
+        '</div>' +
+      '</div>' +
+      '<div class="modal-actions">' +
+        '<button class="btn btn-outline" onclick="closeModal()">取消</button>' +
+        '<button class="btn btn-primary" onclick="submitGatewayAccessMode(\'' + escHtml(gateway.gatewayId) + '\')">保存</button>' +
+      '</div>' +
+    '</div>';
+  }
+
+  async function submitGatewayAccessMode(gatewayId) {
+    var mode = normalizeGatewayAccessMode($('#gateway-access-mode').value);
+    var btn = $('#modal-overlay .modal-actions .btn-primary');
+    if (btn) btn.disabled = true;
+    try {
+      await NHApi.updateGateway(gatewayId, { access_mode: mode });
+      showToast('设备网关模式已更新', 'success');
+      closeModal();
+      renderPage();
+    } catch (e) {
+      showToast((e && e.message) || '保存失败', 'error');
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  }
+
   function openGatewaySeedModal(gatewayId) {
     gatewayId = toText(gatewayId).trim();
     var gateway = getGatewayItemFromPageData(gatewayId);
@@ -1569,7 +1775,7 @@
     overlay.style.display = 'flex';
     overlay.innerHTML = '<div class="modal" style="max-width:640px">' +
       '<div class="modal-header">' +
-        '<h3>添加联调点位</h3>' +
+        '<h3>添加采集执行器</h3>' +
         '<button class="modal-close" onclick="closeModal()">×</button>' +
       '</div>' +
       '<div class="modal-body">' +
@@ -1580,7 +1786,7 @@
           '</div>' +
         '</div>' +
         '<div class="form-row">' +
-          '<div class="form-group"><label class="form-label">采样频点</label><input class="form-input" id="seed-frequency" type="number" min="1" step="1" value="1"></div>' +
+          '<div class="form-group"><label class="form-label">频点</label><input class="form-input" id="seed-frequency" type="number" min="1" step="1" value="1"></div>' +
           '<div class="form-group"><label class="form-label">DevID</label><input class="form-input" id="seed-device-external-id" type="text" value="1001" placeholder="采集执行器设备ID"></div>' +
         '</div>' +
         '<div class="form-row">' +
@@ -1588,11 +1794,11 @@
           '<div class="form-group"><label class="form-label">采集执行器名称</label><input class="form-input" id="seed-node-name" type="text" value="联调采集执行器 1001"></div>' +
         '</div>' +
         '<div class="form-group"><label class="form-label">备注</label><input class="form-input" id="seed-remark" type="text" value="后台联调生成"></div>' +
-        '<div class="hint-text">将创建或更新 4 个默认功能点：联调温度、联调墒情、联调水泵、联调风机。真实硬件工作包解析确认后，可由上报链路自动创建或更新。</div>' +
+        '<div class="hint-text">将创建或更新 4 个默认功能点：温度、墒情、水泵、风机。真实硬件工作包解析确认后，可由上报链路自动创建或更新。</div>' +
       '</div>' +
       '<div class="modal-actions">' +
         '<button class="btn btn-outline" onclick="closeModal()">取消</button>' +
-        '<button class="btn btn-primary" onclick="submitGatewaySeedPoints(\'' + escHtml(gateway.gatewayId) + '\')">创建联调点位</button>' +
+        '<button class="btn btn-primary" onclick="submitGatewaySeedPoints(\'' + escHtml(gateway.gatewayId) + '\')">创建采集执行器</button>' +
       '</div>' +
     '</div>';
     var devidInput = $('#seed-device-external-id');
@@ -1622,7 +1828,7 @@
     var btn = $('#modal-overlay .modal-actions .btn-primary');
     if (btn) btn.disabled = true;
     try {
-      var res = await NHApi.seedGatewayPoints(gatewayId, {
+      var res = await NHApi.createGatewayCollector(gatewayId, {
         frequency: frequency,
         device_external_id: deviceExternalId,
         node_name: nodeName,
@@ -1630,14 +1836,14 @@
         remark: remark
       });
       if (res && res.data) {
-        showToast('联调点位已创建：新增 ' + (res.data.created_points || 0) + '，更新 ' + (res.data.updated_points || 0), 'success');
+        showToast('采集执行器已创建：新增 ' + (res.data.created_points || 0) + '，更新 ' + (res.data.updated_points || 0), 'success');
         closeModal();
         renderPage();
         return;
       }
-      showToast((res && res.message) || '创建联调点位失败', 'error');
+      showToast((res && res.message) || '创建采集执行器失败', 'error');
     } catch (e) {
-      showToast((e && e.message) || '创建联调点位失败', 'error');
+      showToast((e && e.message) || '创建采集执行器失败', 'error');
     } finally {
       if (btn) btn.disabled = false;
     }
@@ -1867,10 +2073,11 @@
         '</div>' +
         '<div class="filter-bar" style="display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap">' +
           '<input type="text" class="table-search" id="bind-filter-farmer" placeholder="按农户筛选..." style="width:180px">' +
-          '<input type="text" class="table-search" id="bind-filter-device" placeholder="按绑定对象筛选（网关/功能点）..." style="width:240px">' +
+          '<input type="text" class="table-search" id="bind-filter-device" placeholder="按绑定对象筛选（网关/采集执行器/功能点）..." style="width:280px">' +
           '<select class="form-input" id="bind-filter-type" style="width:140px">' +
             '<option value="">全部绑定类型</option>' +
             '<option value="gateway">设备网关</option>' +
+            '<option value="collector">采集执行器</option>' +
             '<option value="point">功能点</option>' +
           '</select>' +
           '<select class="form-input" id="bind-filter-status" style="width:140px">' +
@@ -1900,6 +2107,8 @@
           if (deviceKeyword) {
             var deviceStr = [
               b.gatewayName || b.gateway_name || '--',
+              b.nodeName || b.node_name || '',
+              b.nodeId || b.node_id || '',
               b.pointName || b.func_name || b.function_name || '',
               b.deviceExternalId || b.device_external_id || '',
               b.shedNo || b.shed_no || '',
@@ -1919,9 +2128,15 @@
           var statusLabel = status === 1 ? '<span class="badge badge-success">有效</span>' : '<span class="badge">已解绑</span>';
           var bindingObject = '--';
           var deviceLine = '--';
-          var bindingTypeLabel = b.bindingType === 'gateway' ? '设备网关' : '功能点';
+          var typeLabel = bindingTypeLabel(b.bindingType);
           if (b.bindingType === 'gateway') {
-            bindingObject = escHtml((b.gatewayName || '--') + (b.gatewayId ? ('（' + b.gatewayId + '）') : ''));
+            bindingObject = escHtml((b.gatewayName || '--') + (b.gatewayId ? ('（' + b.gatewayId + '）') : '')) + ' <span class="badge ' + gatewayAccessModeBadgeClass(b.gatewayAccessMode) + '">' + escHtml(b.gatewayAccessModeLabel || gatewayAccessModeLabel(b.gatewayAccessMode)) + '</span>';
+          } else if (b.bindingType === 'collector') {
+            bindingObject = escHtml((b.nodeName || '采集执行器') + (b.nodeId ? ('（' + b.nodeId + '）') : ''));
+            deviceLine = escHtml('网关：' + (b.gatewayName || '--'));
+            if (b.deviceExternalId || b.device_external_id) deviceLine += ' · DevID：' + escHtml(b.deviceExternalId || b.device_external_id);
+            if (b.shedNo || b.shed_no) deviceLine += ' · 棚号：' + escHtml(b.shedNo || b.shed_no);
+            if (b.frequency || b.freq) deviceLine += ' · 频点：' + escHtml(b.frequency || b.freq);
           } else {
             bindingObject = escHtml(b.pointName || b.point_id || '--');
             if (b.pointId || b.point_id) {
@@ -1952,7 +2167,7 @@
           return '<tr>' +
             '<td>' + b.bindId + '</td>' +
             '<td>' + escHtml(b.userName || b.bind_user_name || b.bind_usr_name || '--') + '</td>' +
-            '<td><span class="badge ' + (b.bindingType === 'gateway' ? 'badge-info' : 'badge-muted') + '">' + bindingTypeLabel + '</span></td>' +
+            '<td><span class="badge ' + (b.bindingType === 'gateway' ? 'badge-info' : b.bindingType === 'collector' ? 'badge-warning' : 'badge-muted') + '">' + typeLabel + '</span></td>' +
             '<td>' + bindingObject + '</td>' +
             '<td>' + (deviceLine === '--' ? '--' : deviceLine) + '</td>' +
             '<td>' + statusLabel + '</td>' +
@@ -2032,6 +2247,7 @@
       userId: '',
       bindingType: 'gateway',
       selectedGatewayId: '',
+      selectedNodeId: '',
       selectedPointId: '',
       fallbackPointMode: false
     };
@@ -2050,6 +2266,7 @@
           '<label class="form-label">绑定类型</label>' +
           '<select class="form-select" id="bind-add-type">' +
             '<option value="gateway" selected>设备网关</option>' +
+            '<option value="collector">采集执行器</option>' +
             '<option value="point">功能点（兼容旧版）</option>' +
           '</select>' +
         '</div>' +
@@ -2094,11 +2311,11 @@
     function syncUser() {
       bindingDialogState.userId = toText(selectEl.value);
       var btn = $('#btn-confirm-binding-add');
-      if (btn) btn.disabled = !(bindingDialogState.userId && (bindingDialogState.selectedGatewayId || bindingDialogState.selectedPointId));
+      if (btn) btn.disabled = !(bindingDialogState.userId && (bindingDialogState.selectedGatewayId || bindingDialogState.selectedNodeId || bindingDialogState.selectedPointId));
     }
     function syncButtonState() {
       var btn = $('#btn-confirm-binding-add');
-      if (btn) btn.disabled = !(bindingDialogState.userId && (bindingDialogState.selectedGatewayId || bindingDialogState.selectedPointId));
+      if (btn) btn.disabled = !(bindingDialogState.userId && (bindingDialogState.selectedGatewayId || bindingDialogState.selectedNodeId || bindingDialogState.selectedPointId));
     }
 
     selectEl.onchange = function () {
@@ -2108,6 +2325,7 @@
     typeEl.onchange = function () {
       bindingDialogState.bindingType = this.value;
       bindingDialogState.selectedGatewayId = '';
+      bindingDialogState.selectedNodeId = '';
       bindingDialogState.selectedPointId = '';
       selectedWrap.style.display = 'none';
       selectedName.textContent = '';
@@ -2167,6 +2385,20 @@
         }
       }
 
+      if (type === 'collector') {
+        try {
+          var treeRes = await NHApi.getDeviceTree();
+          candidates = getCollectorCandidateListFromTreeResponse(treeRes || {}, keyword);
+          if (candidates.length === 0) {
+            listEl.innerHTML = '<div class="empty-state"><p>没有可绑定的采集执行器</p><p style="font-size:12px;color:var(--color-text-muted)">请先在设备网关详情中添加采集执行器。</p></div>';
+            return;
+          }
+        } catch (e) {
+          listEl.innerHTML = '<div class="error-state"><p>加载候选失败</p></div>';
+          return;
+        }
+      }
+
       var html = '';
       if (type === 'gateway') {
         candidates.forEach(function (g) {
@@ -2178,6 +2410,22 @@
             '</div>' +
             '<div style="font-size:12px;color:var(--color-text-muted);margin-top:4px">网关ID：' + escHtml(g.gatewayId || '--') + ' · IP：' + escHtml(g.ip || '--') + (g.port ? (' : ' + escHtml(g.port)) : '') + '</div>' +
             '<div style="font-size:12px;color:var(--color-text-muted);margin-top:4px">采集执行器：' + (g.collectorCount != null ? g.collectorCount : '--') + ' · 功能点：' + (g.pointCount != null ? g.pointCount : '--') + '</div>' +
+          '</div>';
+        });
+      } else if (type === 'collector') {
+        candidates.forEach(function (c) {
+          var isSelected = bindingDialogState.selectedNodeId === c.nodeId;
+          html += '<div class="bind-candidate-item' + (isSelected ? ' selected' : '') + '" data-node-id="' + escHtml(c.nodeId) + '" data-type="collector" data-gateway-name="' + escHtml(c.gatewayName || '') + '">' +
+            '<div style="display:flex;justify-content:space-between;align-items:center">' +
+              '<div style="font-weight:600">' + escHtml(c.nodeName || '采集执行器') + '</div>' +
+              '<span class="badge ' + gatewayAccessModeBadgeClass(c.gatewayAccessMode) + '">' + escHtml(c.gatewayAccessModeLabel || '共享') + '</span>' +
+            '</div>' +
+            '<div style="font-size:12px;color:var(--color-text-muted);margin-top:4px">' +
+              '网关：' + escHtml(c.gatewayName || '--') + ' · 网关ID：' + escHtml(c.gatewayId || '--') +
+            '</div>' +
+            '<div style="font-size:12px;color:var(--color-text-muted);margin-top:2px">' +
+              '棚号：' + escHtml(c.shedNo || '--') + ' · 频点：' + escHtml(toText(c.frequency || '--')) + ' · DevID：' + escHtml(c.deviceExternalId || '--') +
+            '</div>' +
           '</div>';
         });
       } else {
@@ -2201,13 +2449,23 @@
           if (this.dataset.type === 'gateway') {
             bindingDialogState.bindingType = 'gateway';
             bindingDialogState.selectedGatewayId = this.dataset.gatewayId;
+            bindingDialogState.selectedNodeId = '';
             bindingDialogState.selectedPointId = '';
             var gatewayLine = (this.querySelector('div') && this.querySelector('div').textContent) || '';
             selectedName.textContent = gatewayLine + '（设备网关）';
+          } else if (this.dataset.type === 'collector') {
+            bindingDialogState.bindingType = 'collector';
+            bindingDialogState.selectedNodeId = this.dataset.nodeId;
+            bindingDialogState.selectedGatewayId = '';
+            bindingDialogState.selectedPointId = '';
+            var cText = (this.querySelector('div') && this.querySelector('div').textContent) || '';
+            var cGateway = this.dataset.gatewayName ? ('（' + this.dataset.gatewayName + '）') : '';
+            selectedName.textContent = cText + cGateway;
           } else {
             bindingDialogState.bindingType = 'point';
             bindingDialogState.selectedPointId = this.dataset.pointId;
             bindingDialogState.selectedGatewayId = '';
+            bindingDialogState.selectedNodeId = '';
             var pText = (this.querySelector('div') && this.querySelector('div').textContent) || '';
             var gName = this.dataset.gatewayName ? ('（' + this.dataset.gatewayName + '）') : '';
             selectedName.textContent = pText + gName;
@@ -2426,7 +2684,40 @@
   }
 
   // ---------- 原始报文排查 ----------
-  var payloadState = { page: 1, size: 20, event_type: null, parse_status: null, start: null, end: null, keyword: null };
+  function formatDateTimeLocal(date) {
+    function pad(n) { return String(n).padStart(2, '0'); }
+    return date.getFullYear() + '-' +
+      pad(date.getMonth() + 1) + '-' +
+      pad(date.getDate()) + 'T' +
+      pad(date.getHours()) + ':' +
+      pad(date.getMinutes());
+  }
+
+  function createDefaultPayloadState() {
+    var end = new Date();
+    var start = new Date(end.getTime() - 24 * 60 * 60 * 1000);
+    return {
+      page: 1,
+      size: 20,
+      event_type: null,
+      parse_status: null,
+      start: formatDateTimeLocal(start),
+      end: formatDateTimeLocal(end),
+      keyword: null
+    };
+  }
+
+  function payloadDateTimeQueryValue(value) {
+    var text = toText(value).trim();
+    if (!text) return null;
+    text = text.replace('T', ' ');
+    if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(text)) {
+      text += ':00';
+    }
+    return text;
+  }
+
+  var payloadState = createDefaultPayloadState();
 
   async function renderPayloadEvents(container) {
     container.innerHTML = '<div class="loading-state"><div class="loading-spinner"></div><p>加载原始报文...</p></div>';
@@ -2438,8 +2729,8 @@
       params.event_type = eventTypeForServer;
     }
     if (payloadState.parse_status != null) params.parse_status = payloadState.parse_status;
-    if (payloadState.start) params.start = payloadState.start;
-    if (payloadState.end) params.end = payloadState.end;
+    if (payloadState.start) params.start = payloadDateTimeQueryValue(payloadState.start);
+    if (payloadState.end) params.end = payloadDateTimeQueryValue(payloadState.end);
     if (payloadState.keyword) params.keyword = payloadState.keyword;
 
     try {
@@ -2495,8 +2786,9 @@
           '</select>' +
           '<input type="datetime-local" class="form-input" id="pe-filter-start" style="width:180px;height:32px;font-size:13px" value="' + (payloadState.start || '') + '" placeholder="开始时间">' +
           '<input type="datetime-local" class="form-input" id="pe-filter-end" style="width:180px;height:32px;font-size:13px" value="' + (payloadState.end || '') + '" placeholder="结束时间">' +
-          '<input type="text" class="table-search" id="pe-filter-keyword" style="width:180px;height:32px" value="' + escHtml(payloadState.keyword || '') + '" placeholder="搜索网关/消息ID/Hex">' +
+          '<input type="text" class="table-search" id="pe-filter-keyword" style="width:200px;height:32px" value="' + escHtml(payloadState.keyword || '') + '" placeholder="搜索设备网关/消息ID/Hex...">' +
           '<button class="btn btn-outline btn-sm" onclick="payloadResetFilters()">重置</button>' +
+          '<button class="btn btn-outline btn-sm" onclick="payloadClearTimeRange()">清空时间</button>' +
         '</div>' +
         '<div class="table-wrap"><table>' +
           '<thead><tr>' +
@@ -2568,7 +2860,14 @@
   }
 
   function payloadResetFilters() {
-    payloadState = { page: 1, size: 20, event_type: null, parse_status: null, start: null, end: null, keyword: null };
+    payloadState = createDefaultPayloadState();
+    renderPage();
+  }
+
+  function payloadClearTimeRange() {
+    payloadState.start = null;
+    payloadState.end = null;
+    payloadState.page = 1;
     renderPage();
   }
 
@@ -2794,11 +3093,14 @@
   window.doBindFromAddModal = doBindFromAddModal;
   window.switchDashboardRange = switchDashboardRange;
   window.payloadResetFilters = payloadResetFilters;
+  window.payloadClearTimeRange = payloadClearTimeRange;
   window.payloadGoPage = payloadGoPage;
   window.payloadCopySnapshot = payloadCopySnapshot;
   window.payloadViewDetail = payloadViewDetail;
   window.openPointEditModal = openPointEditModal;
   window.openPointControlModal = openPointControlModal;
+  window.openGatewayAccessModeModal = openGatewayAccessModeModal;
+  window.submitGatewayAccessMode = submitGatewayAccessMode;
   window.openGatewaySeedModal = openGatewaySeedModal;
   window.submitGatewaySeedPoints = submitGatewaySeedPoints;
   window.savePointConfig = savePointConfig;

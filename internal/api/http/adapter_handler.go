@@ -124,6 +124,7 @@ func (h *adapterHandler) handleRawFrames(w http.ResponseWriter, r *http.Request)
 		writeCode(w, http.StatusBadRequest, 400, "invalid payload_hex")
 		return
 	}
+	envelope.GatewayName = strings.TrimSpace(envelope.GatewayName)
 	if envelope.GatewayName == "" {
 		trimmed := bytes.TrimSpace(payload)
 		if bytes.HasPrefix(trimmed, []byte("FP_")) {
@@ -267,7 +268,6 @@ func (h *adapterHandler) handleDeviceEvents(w http.ResponseWriter, r *http.Reque
 
 	// 6. 逐条处理 events[]。
 	parseFailed := false
-	partialFailed := false
 	var parseError string
 	parsedCount := 0
 	totalCount := len(envelope.Events)
@@ -401,9 +401,6 @@ func (h *adapterHandler) handleDeviceEvents(w http.ResponseWriter, r *http.Reque
 			finalStatus = domain.ParseStatusFailed
 			finalError = strPtr(parseError)
 		}
-	} else if partialFailed {
-		finalStatus = domain.ParseStatusPartial
-		finalError = strPtr(parseError)
 	} else {
 		finalStatus = domain.ParseStatusParsed
 	}

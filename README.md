@@ -2,7 +2,7 @@
 
 这是涅凰智农 IoT 平台的 Go 服务端仓库，包含 REST API、MySQL 数据访问、嵌入式 Admin/C 端 H5 页面和 Adapter 设备事件入口。
 
-私有项目背景、甲方资料、产品判断和长期复盘不在本代码仓维护；当前代码事实以本 README、`docs/current_api.md` 和 `schema/mysql/README.md` 为准。
+私有项目背景、业务资料、产品判断和长期复盘不在本代码仓维护；当前代码事实以本 README、`docs/current_api.md` 和 `schema/mysql/README.md` 为准。
 
 ## Quick Start
 

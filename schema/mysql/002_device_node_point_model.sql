@@ -47,7 +47,7 @@ CREATE TABLE IF NOT EXISTS device_points (
   best_min FLOAT DEFAULT NULL COMMENT '适宜数值下限',
   best_max FLOAT DEFAULT NULL COMMENT '适宜数值上限',
   real_value FLOAT DEFAULT NULL COMMENT '通用实时值',
-  real_temp FLOAT NOT NULL DEFAULT 0 COMMENT '甲方温度字段语义保留：温度实时值',
+  real_temp FLOAT NOT NULL DEFAULT 0 COMMENT '既有温度字段语义保留：温度实时值',
   value_status TINYINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '数值状态：0=unknown 1=normal 2=low 3=high 4=open 5=closed 6=offline',
   run_mode TINYINT UNSIGNED NOT NULL DEFAULT 1 COMMENT '运行模式：1=auto 2=manu',
   controllable_status TINYINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '是否可控：0=否 1=是',

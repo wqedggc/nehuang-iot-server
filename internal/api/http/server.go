@@ -125,8 +125,6 @@ func (s *Server) Routes() http.Handler {
 		authMiddleware(secret, adminRoles(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.Method == http.MethodDelete {
 				ah.handleUnbind(w, r)
-			} else if r.Method == http.MethodPost {
-				ah.handleCreateBinding(w, r)
 			} else {
 				writeCode(w, http.StatusMethodNotAllowed, 405, "method not allowed")
 			}
@@ -143,6 +141,10 @@ func (s *Server) Routes() http.Handler {
 		authMiddleware(secret, adminRoles(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.Method == http.MethodPost && hasSuffix(r.URL.Path, "/seed-points") {
 				ah.handleGatewaySeedPoints(w, r)
+			} else if r.Method == http.MethodPost && hasSuffix(r.URL.Path, "/collectors") {
+				ah.handleGatewaySeedPoints(w, r)
+			} else if r.Method == http.MethodPatch {
+				ah.handleGatewayUpdate(w, r)
 			} else {
 				writeCode(w, http.StatusMethodNotAllowed, 405, "method not allowed")
 			}

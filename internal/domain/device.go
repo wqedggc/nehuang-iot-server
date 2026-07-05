@@ -229,7 +229,7 @@ type DevicePoint struct {
 	BestMin            *float64
 	BestMax            *float64
 	RealValue          *float64
-	RealTemp           float64 // 甲方温度字段语义保留
+	RealTemp           float64 // 既有温度字段语义保留
 	ValueStatus        ValueStatus
 	RunMode            RunMode
 	ControllableStatus uint8
@@ -415,8 +415,9 @@ type BindRelation struct {
 
 // BindingCollectorSummary 是绑定列表中点位摘要的响应视图。
 type BindingCollectorSummary struct {
-	PointID          uint64       `json:"point_id,string"`
+	PointID          *uint64      `json:"point_id,string,omitempty"`
 	NodeID           uint64       `json:"node_id,string"`
+	NodeName         string       `json:"node_name,omitempty"`
 	PointName        string       `json:"point_name"`
 	FunctionType     FunctionType `json:"function_type"`
 	FunctionName     string       `json:"func_name"`
@@ -430,8 +431,9 @@ type BindingCollectorSummary struct {
 type BindingType string
 
 const (
-	BindingTypeGateway BindingType = "gateway"
-	BindingTypePoint   BindingType = "point"
+	BindingTypeGateway   BindingType = "gateway"
+	BindingTypeCollector BindingType = "collector"
+	BindingTypePoint     BindingType = "point"
 )
 
 // GatewayBindCandidate 是管理端网关级绑定弹窗的候选项。
@@ -439,6 +441,8 @@ type GatewayBindCandidate struct {
 	GatewayID         uint64 `json:"gateway_id,string"`
 	GatewayName       string `json:"gateway_name"`
 	GatewayExternalID string `json:"gateway_external_id"`
+	AccessMode        string `json:"access_mode"`
+	AccessModeLabel   string `json:"access_mode_label"`
 	OnlineStatus      uint8  `json:"online_status"`
 	LastHeartbeatAtMS string `json:"last_heartbeat_at_ms"`
 }
@@ -512,46 +516,54 @@ type ControlLogSummary struct {
 
 // MiniDevice 是 C 端"我的设备"列表的聚合视图，将 bind_relations 与 device_points 合并。
 type MiniDevice struct {
-	PointID          uint64   `json:"point_id,string"`
-	GatewayID        uint64   `json:"gateway_id,string"`
-	GatewayName      string   `json:"gateway_name"`
-	ShedNo           string   `json:"shed_no"`
-	Frequency        int      `json:"freq"`
-	DeviceExternalID string   `json:"devid"`
-	FunctionType     uint8    `json:"func"`
-	FunctionName     string   `json:"func_name"`
-	RealValue        *float64 `json:"real_value"`
-	Unit             string   `json:"unit"`
-	ValueStatus      uint8    `json:"value_status"`
-	ValueStatusLabel string   `json:"value_status_label"`
-	RunMode          uint8    `json:"run_mode"`
-	RunModeLabel     string   `json:"run_mode_label"`
-	UpdatedAt        string   `json:"updated_at"`
+	PointID                uint64   `json:"point_id,string"`
+	NodeID                 uint64   `json:"node_id,string"`
+	NodeName               string   `json:"node_name"`
+	GatewayID              uint64   `json:"gateway_id,string"`
+	GatewayName            string   `json:"gateway_name"`
+	GatewayAccessMode      string   `json:"gateway_access_mode"`
+	GatewayAccessModeLabel string   `json:"gateway_access_mode_label"`
+	ShedNo                 string   `json:"shed_no"`
+	Frequency              int      `json:"freq"`
+	DeviceExternalID       string   `json:"devid"`
+	FunctionType           uint8    `json:"func"`
+	FunctionName           string   `json:"func_name"`
+	RealValue              *float64 `json:"real_value"`
+	Unit                   string   `json:"unit"`
+	ValueStatus            uint8    `json:"value_status"`
+	ValueStatusLabel       string   `json:"value_status_label"`
+	RunMode                uint8    `json:"run_mode"`
+	RunModeLabel           string   `json:"run_mode_label"`
+	UpdatedAt              string   `json:"updated_at"`
 }
 
 // MiniDeviceDetail C 端设备详情（实时数据）。
 type MiniDeviceDetail struct {
-	PointID          uint64   `json:"point_id,string"`
-	GatewayName      string   `json:"gateway_name"`
-	ShedNo           string   `json:"shed_no"`
-	Frequency        int      `json:"freq"`
-	DeviceExternalID string   `json:"devid"`
-	FunctionType     uint8    `json:"func"`
-	FunctionName     string   `json:"func_name"`
-	Unit             string   `json:"unit"`
-	BestMin          *float64 `json:"best_min"`
-	BestMax          *float64 `json:"best_max"`
-	RealValue        *float64 `json:"real_value"`
-	RealTemp         float64  `json:"real_temp"`
-	ValueStatus      uint8    `json:"value_status"`
-	ValueStatusLabel string   `json:"value_status_label"`
-	RunMode          uint8    `json:"run_mode"`
-	RunModeLabel     string   `json:"run_mode_label"`
-	Rel1Status       uint8    `json:"rel1"`
-	Rel2Status       uint8    `json:"rel2"`
-	OperationState   uint8    `json:"operation_state"`
-	PollInterval     int      `json:"poll_interval"`
-	UpdatedAt        string   `json:"updated_at"`
+	PointID                uint64   `json:"point_id,string"`
+	NodeID                 uint64   `json:"node_id,string"`
+	NodeName               string   `json:"node_name"`
+	GatewayName            string   `json:"gateway_name"`
+	GatewayAccessMode      string   `json:"gateway_access_mode"`
+	GatewayAccessModeLabel string   `json:"gateway_access_mode_label"`
+	ShedNo                 string   `json:"shed_no"`
+	Frequency              int      `json:"freq"`
+	DeviceExternalID       string   `json:"devid"`
+	FunctionType           uint8    `json:"func"`
+	FunctionName           string   `json:"func_name"`
+	Unit                   string   `json:"unit"`
+	BestMin                *float64 `json:"best_min"`
+	BestMax                *float64 `json:"best_max"`
+	RealValue              *float64 `json:"real_value"`
+	RealTemp               float64  `json:"real_temp"`
+	ValueStatus            uint8    `json:"value_status"`
+	ValueStatusLabel       string   `json:"value_status_label"`
+	RunMode                uint8    `json:"run_mode"`
+	RunModeLabel           string   `json:"run_mode_label"`
+	Rel1Status             uint8    `json:"rel1"`
+	Rel2Status             uint8    `json:"rel2"`
+	OperationState         uint8    `json:"operation_state"`
+	PollInterval           int      `json:"poll_interval"`
+	UpdatedAt              string   `json:"updated_at"`
 }
 
 // MiniHistoryPoint 历史曲线数据点。
@@ -574,17 +586,23 @@ type MiniDeviceHistory struct {
 
 // DeviceTreeNode 是设备树的顶层节点，对应一个 cloud_gateway。
 type DeviceTreeNode struct {
-	GatewayID   uint64                `json:"gateway_id,string"`
-	GatewayName string                `json:"gateway_name"`
-	Status      uint8                 `json:"status"`
-	Collectors  []DeviceTreeCollector `json:"collectors"`
+	GatewayID       uint64                `json:"gateway_id,string"`
+	GatewayName     string                `json:"gateway_name"`
+	AccessMode      string                `json:"access_mode"`
+	AccessModeLabel string                `json:"access_mode_label"`
+	Status          uint8                 `json:"status"`
+	Collectors      []DeviceTreeCollector `json:"collectors"`
 }
 
 // DeviceTreeCollector 是设备树的第二层，对应一个 collector_node。
 type DeviceTreeCollector struct {
 	NodeID           uint64            `json:"node_id,string"`
+	NodeName         string            `json:"node_name"`
+	ShedNo           string            `json:"shed_no"`
 	DeviceExternalID string            `json:"device_external_id"`
 	Frequency        int               `json:"frequency"`
+	IsBound          bool              `json:"is_bound"`
+	BoundUserID      *uint64           `json:"bound_user_id,string,omitempty"`
 	Points           []DeviceTreePoint `json:"points"`
 }
 

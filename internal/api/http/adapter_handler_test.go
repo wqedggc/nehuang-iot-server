@@ -120,6 +120,28 @@ func TestHandleRawFramesStoresRawPayloadAndParsesRegister(t *testing.T) {
 	}
 }
 
+func TestHandleRawFramesTrimsEnvelopeGatewayName(t *testing.T) {
+	repo := &mockAdapterRepo{}
+	handler := &adapterHandler{repo: repo, adapterToken: "test-token"}
+	body := `{"protocol_version":"nehuang-gateway-adapter-v1","source_type":"gateway_adapter","message_id":"conn-1-2","connection_id":"conn-1","gateway_name":" FP_TEST_ADMIN_001\n","remote_ip":"127.0.0.1","remote_port":63254,"direction":"inbound","payload_hex":"6B656570616C697665","received_at":"2026-07-04T18:08:05.79022Z","raw_seq":2}`
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/adapter/raw-frames", strings.NewReader(body))
+	req.Header.Set("X-Adapter-Token", "test-token")
+	rec := httptest.NewRecorder()
+
+	handler.handleRawFrames(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("handleRawFrames: want 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if len(repo.insertedRawEvents) != 1 {
+		t.Fatalf("InsertRawEvent calls: want 1, got %d", len(repo.insertedRawEvents))
+	}
+	if repo.insertedRawEvents[0].GatewayName == nil || *repo.insertedRawEvents[0].GatewayName != "FP_TEST_ADMIN_001" {
+		t.Fatalf("gateway_name should be trimmed, got %#v", repo.insertedRawEvents[0].GatewayName)
+	}
+}
+
 func TestHandleRawFramesKeepsUnknownPayloadPending(t *testing.T) {
 	repo := &mockAdapterRepo{}
 	handler := &adapterHandler{repo: repo, adapterToken: "test-token"}

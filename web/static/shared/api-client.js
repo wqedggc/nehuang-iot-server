@@ -195,8 +195,14 @@
     updateDevicePoint: function (pointID, data) {
       return request('PATCH', '/api/v1/admin/device-points/' + encodeURIComponent(pointID), data);
     },
+    updateGateway: function (gatewayID, data) {
+      return request('PATCH', '/api/v1/admin/gateways/' + encodeURIComponent(gatewayID), data);
+    },
+    createGatewayCollector: function (gatewayID, data) {
+      return request('POST', '/api/v1/admin/gateways/' + encodeURIComponent(gatewayID) + '/collectors', data);
+    },
     seedGatewayPoints: function (gatewayID, data) {
-      return request('POST', '/api/v1/admin/gateways/' + encodeURIComponent(gatewayID) + '/seed-points', data);
+      return request('POST', '/api/v1/admin/gateways/' + encodeURIComponent(gatewayID) + '/collectors', data);
     },
     getPayloadEvents: function (params) {
       var qs = [];

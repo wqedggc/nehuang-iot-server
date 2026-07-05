@@ -1,8 +1,152 @@
 # Gateway Adapter
 
-本文记录当前 Go `gateway-adapter` 的工程边界。硬件协议仍以甲方最终文档和真实 raw 包为准。
+本文记录硬件端如何接入云端 `gateway-adapter`，以及云端 Adapter 的内部运行方式。硬件协议仍以硬件端最终文档和真实 raw 包为准。
 
-硬件报文、时隙、CRC、ACK/清缓存语义的当前摘要见 `docs/hardware_protocol_current.md`。本文只写 Adapter 如何运行、如何收包、如何留痕、如何联调。
+硬件端联调只需要阅读“硬件端联调指南”。`gateway-adapter-mock`、raw journal、replay、运行命令属于云端内部自测和排障工具，硬件端不需要理解或运行。
+
+硬件报文、时隙、CRC、ACK/清缓存语义的当前摘要见 `docs/hardware_protocol_current.md`。
+
+## 硬件端联调指南
+
+本节可直接给硬件端作为第一轮联调说明。当前云端对硬件端暴露的是 **TCP 字节流入口**，不是 HTTP JSON 接口。
+
+### 1. 双方分工
+
+硬件端负责：
+
+- 作为 TCP client 主动连接云端 `43.143.208.153:8081`。
+- 在 TCP 连接上直接写入真实硬件原始 bytes。
+- 首包或上线阶段发送可识别的设备网关名称，建议使用 `FP_` 开头，例如 `FP_NB114`。
+- 按约定发送心跳包，保持设备网关在线状态。
+- 发送真实工作包、告警包、ACK 包样例，并说明每个包的预期语义。
+- 保持 TCP 连接，用于接收云端写回的下行 `command_hex`。
+
+云端负责：
+
+- 提供 TCP 接入地址并接收所有原始 bytes。
+- 把收到的原始包展示在管理后台“原始报文排查”。
+- 识别注册和心跳，刷新设备网关在线状态。
+- 在协议未冻结前，不误解析工作包和告警包，只做 raw 留痕。
+- 管理农户、设备网关绑定、联调点位和自定义 Hex 下行命令。
+- 在 Admin/Mini 创建控制命令后，把 `command_hex` 写回硬件端当前 TCP 连接。
+
+云端不会要求硬件端：
+
+- 调用 HTTP API。
+- 组装 JSON。
+- 理解或运行 `gateway-adapter-mock`。
+- 理解 Go 服务、数据库、raw journal 文件或 replay 工具。
+
+### 2. 连接地址
+
+联调环境：
+
+```text
+TCP Host: 43.143.208.153
+TCP Port: 8081
+```
+
+硬件网关需要作为 TCP client 主动连接该地址。云端不会主动去连接硬件网关。
+
+### 3. 硬件端最小动作
+
+连接建立后，硬件端直接向 TCP socket 写入原始 bytes。云端不要求硬件端组 JSON，也不要求硬件端调用 HTTP。
+
+第一轮建议按以下顺序测试：
+
+1. 注册包：发送一个以 `FP_` 开头的 ASCII 名称，例如 `FP_NB114`。
+2. 心跳包：发送 `keepalive` 或 `keepalive message`。
+3. 真实工作包：发送 MCU 透传出来的原始二进制包。
+4. 真实告警包：发送 MCU 透传出来的原始告警包。
+5. 等待下行：保持 TCP 连接不断开，云端在 Admin 创建下行命令后会把 `command_hex` 写回同一条 TCP 连接。
+
+注意：
+
+- `FP_` 前缀用于云端识别设备网关名称；不带 `FP_` 的公网扫描包会进入原始报文排查，但不会被当作正式设备网关注册。
+- 心跳包会刷新设备网关在线时间；当前离线扫描默认 35 秒未上报后标记离线。
+- 工作包、告警包当前先进入原始报文排查，不承诺立刻解析成温度、告警或曲线。
+
+### 4. 平台侧查看位置
+
+硬件端发包后，在管理后台查看：
+
+```text
+Admin: http://43.143.208.153:8080/admin/
+页面：原始报文排查
+```
+
+应能看到：
+
+- 来源 IP 和端口。
+- 设备网关名称，注册成功后显示 `FP_xxx`。
+- 事件类型：注册、心跳、工作数据、告警或未知包。
+- 原始 Hex 和 payload 快照。
+- 解析状态：注册/心跳可解析，工作/告警/未知包在协议未冻结前保持待解析。
+- 平台原始报文排查建议默认取最近 24 小时，支持按网关、`message_id`、`payload_hex` 过滤定位。
+
+如果硬件端发了包但平台没有显示，优先排查：
+
+1. TCP 是否连到 `43.143.208.153:8081`，不是 HTTP `8080`。
+2. 防火墙/安全组是否允许硬件端出口访问 `8081`。
+3. 硬件端是否真的写入了 bytes，而不是只建立连接。
+4. 注册包是否以 `FP_` 开头；不以 `FP_` 开头的包不会显示为正式设备网关。
+
+### 5. 从注册到 C 端展示的临时流程
+
+真实工作包 parser 未冻结前，平台提供一个联调辅助流程，用来先跑通“设备展示、绑定、C 端查看、下行命令”：
+
+1. 硬件端发送 `FP_xxx` 注册包。
+2. Admin 进入“设备管理”，看到设备网关。
+3. Admin 选中设备网关，点击“添加联调点位”。
+4. 平台在该设备网关下创建一个采集执行器和默认 4 个功能点。
+5. Admin 在“用户管理”或“绑定管理”把农户绑定到该设备网关。
+6. 农户端进入“我的设备”，可看到该设备网关下的功能点。
+7. Admin 或农户端对可控功能点发送自定义 Hex 指令。
+8. Adapter 把该 `command_hex` 写回硬件端当前 TCP 连接。
+
+这个流程只用于联调平台能力，不代表真实硬件工作包字段已经冻结。
+
+### 6. 下行命令联调
+
+当前下行按异步命令模型执行：
+
+```text
+Admin/Mini 创建控制命令
+  -> Server 写 control_commands(pending)
+  -> gateway-adapter 按 gateway_external_id 拉取 pending command
+  -> gateway-adapter 将 command_hex 写回当前 TCP 连接
+  -> Server 标记 sent
+```
+
+联调阶段推荐由 Admin 手动输入自定义 `command_hex`，不要提前把未确认协议写死成业务按钮。硬件端收到后，请记录实际收到的 hex，并返回真实 ACK 样例给云端确认。
+
+当前已经可验证：
+
+- 云端能创建 pending 命令。
+- Adapter 能拉取 pending 命令。
+- Adapter 能把 `command_hex` 写回当前 TCP 连接。
+- 控制日志能看到 pending/sent 状态。
+
+当前不能承诺：
+
+- MCU 是否执行成功。
+- ACK 是否能解析成 succeeded/failed。
+- 清缓存命令是否正确。
+- 下行 6 字节时间字段的最终格式（保留 2026-07-05 TDMA 口径，不实现到生产逻辑，仅记录当前状态）。
+
+### 7. 硬件端需要回传给云端的联调材料
+
+每次联调失败或字段不匹配时，请硬件端提供：
+
+- 发送时间。
+- 设备网关名称，例如 `FP_NB114`。
+- 原始上行 hex。
+- 串口调试助手截图或日志。
+- 如果收到云端下行，提供收到的下行 hex。
+- 如果 MCU 有 ACK，提供 ACK 原始 hex。
+- 说明该包预期语义：注册、心跳、工作数据、告警、读取结果、ACK 或清缓存确认。
+
+云端会以管理后台原始报文排查和 Adapter 收包日志为准做对照。
 
 ## 职责
 
@@ -22,7 +166,9 @@
 - debug/protocol log：通过 `NEHUANG_GATEWAY_DEBUG=true` 开启，记录协议分类和 CRC 等调试字段。
 - command log：结构化 JSON，记录 pending 拉取、TCP 写回、`sent` 回调和失败原因。
 
-## 命令
+## 云端内部运行命令
+
+本节只给云端开发和运维使用，硬件端不需要阅读。
 
 ```bash
 go build ./cmd/gateway-adapter
@@ -48,27 +194,21 @@ go run ./cmd/gateway-adapter
 | `NEHUANG_GATEWAY_COMMAND_POLL_LIMIT` | `20` | 每次拉取命令数量上限 |
 | `NEHUANG_GATEWAY_COMMAND_WRITE_TIMEOUT_SECONDS` | `5` | 写回 TCP 连接的超时时间 |
 
-模拟硬件网关发包：
-
-```bash
-go run ./cmd/gateway-adapter-mock -addr 127.0.0.1:8081 -frame all
-```
-
 回放 raw journal：
 
 ```bash
 go run ./cmd/gateway-adapter-replay -raw-log data/gateway-adapter/raw-frames/raw-frames-YYYYMMDD.jsonl
 ```
 
-## 硬件侧交互口径
+## 云端内部实现口径
 
-当前第一版 Adapter 对甲方暴露的是 **TCP 字节流入口**，不是 HTTP JSON 接口。
+当前第一版 Adapter 对外暴露的是 **TCP 字节流入口**，不是 HTTP JSON 接口。
 
 ```text
 硬件网关 TCP client -> gateway-adapter TCP listener -> raw journal -> /api/v1/adapter/raw-frames -> Go 服务解析
 ```
 
-甲方需要做的事情：
+硬件端需要做的事情：
 
 1. 硬件网关作为 TCP client 连接云端 `IP:PORT`，例如 `43.143.208.153:8081`。
 2. 连接建立后，直接向 socket 写入原始 bytes。可以是 ASCII 注册包，也可以是 MCU 透传出来的二进制包。
@@ -87,14 +227,14 @@ go run ./cmd/gateway-adapter-replay -raw-log data/gateway-adapter/raw-frames/raw
 | 报文 | 示例 | Adapter 行为 |
 |------|------|--------------|
 | 注册 | ASCII `FP_TEST_ADMIN_001\n` | Adapter 上报 raw；Go 服务解析为 `register` 并刷新 gateway |
-| 心跳 | ASCII `HEARTBEAT\n`、`HB`、`PING`、`HEART` | Adapter 上报 raw；Go 服务第一版解析 `HEARTBEAT` 并刷新 gateway |
+| 心跳 | ASCII `keepalive`、`keepalive message`、`HEARTBEAT\n`、`HB`、`PING`、`HEART` | Adapter 上报 raw；Go 服务解析为 `heartbeat` 并刷新 gateway |
 | 工作包 | 二进制 `AA AA ... CRC_LO CRC_HI` | Adapter 上报 raw；Go 服务保持 pending，字段解析等真实样例确认后补 |
 | 告警包 | 二进制 `AA AA ... FF FF ... CRC_LO CRC_HI` | Adapter 上报 raw；Go 服务保持 pending，去重和告警入库等真实样例确认后补 |
 | 未知包 | 任意无法识别 bytes | Adapter 上报 raw，不中断连接 |
 
-### 本地模拟报文
+### 云端内部调试工具：gateway-adapter-mock
 
-`gateway-adapter-mock` 是硬件 TCP client 的本地替身，用于演示“甲方怎么发、我们怎么收”。
+`gateway-adapter-mock` 是云端开发自测工具，用来在没有真实硬件时模拟 TCP client。硬件端联调时不需要使用该工具，直接用真实硬件网关连接 TCP 地址即可。
 
 `gateway-adapter-mock` 的 `-frame` 支持逗号分隔组合（例如：`register`、`heartbeat`、`heartbeat-message`、`modbus-read`、`work`、`alarm`、`unknown`）。
 
@@ -160,21 +300,23 @@ go run ./cmd/gateway-adapter-mock -addr 127.0.0.1:8081 -wait-downlink -wait-time
 
 该模式会先发送注册和心跳，使 Adapter 能识别设备网关；随后阻塞读取 TCP 下行 bytes，并把收到的命令打印为 hex。
 
-mock 循环联调口径：
+已可执行的 mock 循环联调口径：
 
-- 注册一次后进入 keepalive 轮询，默认发送间隔 10 秒。
+- 注册一次后可进入 keepalive 轮询：`-frame heartbeat -repeat N -delay 10s`。
 - 可选触发 `work`、`alarm`、`unknown`、`modbus-read` 包。
 - 支持 `-wait-downlink` 在超时前持续等待并输出下行 command hex。
+- `-loop` 为下轮规划项，当前采用 `-repeat/-delay` 实现持续性联调。
 
 ```bash
-# 注册一次后保持 keepalive 轮询，并等待下行
+# 持续 keepalive + 等待下行（可用于联调）
 go run ./cmd/gateway-adapter-mock \
   -addr 43.143.208.153:8081 \
   -gateway FP_TEST_ADMIN_002 \
-  -loop \
-  -heartbeat-interval 10s \
-  -work-interval 60s \
-  -wait-downlink
+  -frame heartbeat \
+  -repeat 200 \
+  -delay 10s \
+  -wait-downlink \
+  -wait-timeout 120s
 ```
 
 ## 如何看日志

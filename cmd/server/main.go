@@ -43,6 +43,19 @@ func main() {
 			cfg.OfflineScan.ThresholdSeconds, cfg.OfflineScan.IntervalSeconds)
 	}
 
+	controlTimeoutCtx, stopControlTimeoutScanner := context.WithCancel(context.Background())
+	defer stopControlTimeoutScanner()
+	if cfg.CommandTTL.Enabled {
+		scanner := service.NewControlTimeoutScanner(
+			repo,
+			time.Duration(cfg.CommandTTL.TTLSeconds)*time.Second,
+			time.Duration(cfg.CommandTTL.IntervalSeconds)*time.Second,
+		)
+		go scanner.Run(controlTimeoutCtx)
+		log.Printf("control timeout scanner enabled ttl=%ds interval=%ds",
+			cfg.CommandTTL.TTLSeconds, cfg.CommandTTL.IntervalSeconds)
+	}
+
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
 		Handler:           handler.Routes(),
@@ -68,6 +81,7 @@ func main() {
 	}
 
 	stopOfflineScanner()
+	stopControlTimeoutScanner()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

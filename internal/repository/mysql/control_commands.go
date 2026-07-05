@@ -146,6 +146,28 @@ WHERE command_id = ? AND command_status = ?`,
 	return nil
 }
 
+func (r *Repository) MarkControlCommandsTimeout(ctx context.Context, cutoff time.Time) (int64, error) {
+	now := time.Now()
+	res, err := r.db.ExecContext(ctx, `
+UPDATE control_commands
+SET command_status = ?, finished_at_ms = COALESCE(finished_at_ms, ?),
+    error_message = COALESCE(error_message, ?), updated_at = ?
+WHERE (
+    command_status = ? AND requested_at_ms < ?
+  ) OR (
+    command_status = ? AND COALESCE(sent_at_ms, requested_at_ms) < ?
+  )`,
+		uint8(domain.CommandStatusTimeout), now,
+		"control command timed out before hardware acknowledgement", now,
+		uint8(domain.CommandStatusCreated), cutoff,
+		uint8(domain.CommandStatusSent), cutoff,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 func (r *Repository) ApplyControlCommandResult(ctx context.Context, input domain.AdapterCommandResultInput) error {
 	if input.CommandID == 0 {
 		return fmt.Errorf("command_id is required")

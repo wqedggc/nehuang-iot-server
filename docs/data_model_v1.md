@@ -4,12 +4,12 @@
 
 ## 1. 建模原则
 
-甲方给的字段表不是最终平台模型，但它定义了验收必须保留的业务字段。V1 采用“保留核心表 + 扩展平台表”的方式。
+既有验收字段表不是最终平台模型，但它定义了验收必须保留的业务字段。V1 采用“保留核心表 + 扩展平台表”的方式。
 
 保留：
 
 - 表名保留：`cloud_gateway`、`bind_relation`、`device_realtime_map`、`sensor_data`、`op_record`。
-- 字段名保留：甲方字段表中的字段不删除、不改名。
+- 字段名保留：既有验收字段表中的字段不删除、不改名。
 - 业务含义保留：`cloud_gateway + freq + devid` 是定位采集执行器的核心组合。
 
 扩展：
@@ -49,6 +49,7 @@ erDiagram
 - 在同一个云边/LoRa 通信接入单元下，`freq + devid` 必须唯一；如果出现重复，上报和控制会发生错乱。
 - 不同云边设备下允许出现相同的 `freq + devid`，因为服务端以 `cloud_gateway + freq + devid` 作为完整身份。
 - 频点范围按硬件口径为 `1~127`，设备 ID 范围为 `0~65535`。旧页面存在 `0~127` 下拉，V1 先按硬件最终协议和实际数据为准。
+- 云边网关新增共享口径字段：`access_mode`，取值 `shared` / `exclusive`。
 
 服务端职责：
 
@@ -72,7 +73,7 @@ cloud_gateways
 - `cloud_gateways`：云边/LoRa 通信接入单元。注册包里的 `FP_` 标识进入这里。
 - `collector_nodes`：采集执行器节点。唯一身份是 `gateway_id + frequency + device_external_id`。
 - `device_points`：采集执行器节点下的功能点/通道，例如温度、墒情、限位、继电器、水泵、风机。
-- `device_realtime_maps`：保留甲方旧字段和验收语义，后续作为兼容投影，不再作为主抽象。
+- `device_realtime_maps`：保留既有旧字段和验收语义，后续作为兼容投影，不再作为主抽象。
 
 对页面和接口的影响：
 
@@ -104,7 +105,7 @@ cloud_gateways
 - 不改变硬件主身份：完整身份仍然是 `gateway_id + frequency + device_external_id`。
 - 当前已经新增 `collector_nodes` 和 `device_points`，用于避免节点和功能点混用。
 - `device_realtime_maps` 保留为兼容投影，不再承担唯一主模型。
-- 后续如果甲方要后台容量提示，可以按 `gateway_id` 聚合统计频点数、节点数和功能点数。
+- 后续如果业务需求要求后台容量提示，可以按 `gateway_id` 聚合统计频点数、节点数和功能点数。
 
 ## 3. 表职责
 
@@ -137,6 +138,13 @@ cloud_gateways
 
 `dev_sn` 当前旧 Gateway 无法提供，V1 暂时允许空字符串，等心跳协议明确后再写真实硬件序列号。
 
+补充口径：
+
+- `access_mode`：`shared`（共享）/`exclusive`（独享）；
+  - `exclusive`：网关绑定可按网关上下文展开全部采集执行器。
+  - `shared`：共享网关绑定下必须按采集执行器授权过滤，不默认展开全部点位。
+- `collector_nodes` 在协议字段未冻结前，不默认由工作包自动同步创建；先支持网关上下文下的手工建档。
+
 ### 3.2 `collector_nodes`
 
 表示 E220/485/TTL 后端挂载的采集执行器节点。
@@ -155,6 +163,7 @@ gateway_id + frequency + device_external_id
 - `device_external_id`：硬件写入的设备 ID。
 - `shed_no/base_name/area_name`：用户或管理员用来落位和区分片区的业务标签。
 - `online_status/last_report_at_ms`：节点级在线和上报状态。
+- 建档口径：当前以网关上下文手工建档为主（`frequency + device_external_id`），协议冻结前不自动跟随工作包同步。
 
 ### 3.3 `device_points`
 
@@ -176,15 +185,15 @@ gateway_id + frequency + device_external_id
 
 兼容说明：
 
-`real_temp` 是甲方字段名，必须保留。为了支持墒情、限位等非温度数据，V1 新增 `real_value` 作为通用值；温度场景下两个字段保持一致。
+`real_temp` 是既有验收字段名，必须保留。为了支持墒情、限位等非温度数据，V1 新增 `real_value` 作为通用值；温度场景下两个字段保持一致。
 
 ### 3.4 `device_realtime_map`
 
-表示甲方旧字段兼容投影。
+表示既有旧字段兼容投影。
 
 用途：
 
-- 保留甲方字段含义，方便验收和兼容旧页面概念。
+- 保留既有验收字段含义，方便验收和兼容旧页面概念。
 - 可由 `device_points` 同步生成或更新。
 - 新服务端业务主流程不直接依赖它。
 
@@ -192,13 +201,14 @@ gateway_id + frequency + device_external_id
 
 表示农户与设备的可见/可操作关系。
 
-甲方逻辑中，用户不是只绑定 Gateway，而是绑定到：
+业务需求中，用户不是只绑定 Gateway，而是绑定到：
 
 ```text
 农户 + 云边设备 + 采集执行器节点 + 功能点
 ```
 
 这决定了 C 端查询设备时不能只按 `dev_name` 过滤，必须按 `user_id` 查绑定关系，再联合 `device_points` 和 `collector_nodes` 获取实时状态和业务位置。
+共享网关场景下，查询需基于绑定到 `collector`/`point` 的最小授权边界，不应依赖网关绑定自动全部展开。
 
 ### 3.6 `sensor_data`
 
@@ -263,10 +273,10 @@ V1 不直接做报表中心，但可以保留按月汇总和清理 30 天前数�
 
 旧代码里同时出现了两套字段：
 
-- 甲方/当前 SQL：`bind_usr_name`、`devid`
+- 业务需求/当前 SQL：`bind_usr_name`、`devid`
 - 历史 Python：`farmer`、`devname`
 
-V1 以甲方字段表为准：
+V1 以既有验收字段表为准：
 
 - 农户名称使用 `bind_usr_name`。
 - 云边设备使用 `cloud_gateway.id/dev_name`。
@@ -302,6 +312,8 @@ WHERE b.user_id = ?
   AND p.point_status = 1
   AND n.node_status = 1;
 ```
+
+共享网关场景下，不应把 `access_mode=shared` 的网关下全部功能点一并返回。
 
 控制接口也必须先按同样口径校验权限，再生成 `control_commands`。
 
@@ -375,7 +387,7 @@ MySQL 是业务唯一事实来源：
 - `cloud_gateways` 记录云边接入设备在线状态。
 - `collector_nodes` 记录采集执行器节点身份和业务落位。
 - `device_points` 记录功能点实时状态、阈值、模式、继电器和轮询配置。
-- `device_realtime_maps` 作为甲方旧字段兼容投影。
+- `device_realtime_maps` 作为既有旧字段兼容投影。
 - `sensor_data` 记录按功能点沉淀的历史曲线。
 - `raw_device_events` 记录原始设备输入，便于追溯和重放解析。
 - `control_commands/control_results` 记录控制闭环。
@@ -383,7 +395,7 @@ MySQL 是业务唯一事实来源：
 
 ## 8. 已确认的上线与迭代方案
 
-甲方关注后续新增功能时设备数据是否会丢、服务是否会整体不可用。V1 的回答口径如下。
+业务需求关注后续新增功能时设备数据是否会丢、服务是否会整体不可用。V1 的回答口径如下。
 
 ### 8.1 分层保障思路
 
@@ -444,7 +456,7 @@ Nginx
 - 接口向后兼容。
 - 异常可回滚、可恢复、可追溯。
 
-后续如果设备规模扩大或甲方要求更高可用性，再升级为多机部署、独立负载均衡、数据库备份/主从和 Gateway 高可用。
+后续如果设备规模扩大或业务需求要求更高可用性，再升级为多机部署、独立负载均衡、数据库备份/主从和 Gateway 高可用。
 
 ### 8.4 小程序迭代兼容
 
@@ -455,7 +467,7 @@ Nginx
 - 服务端保留旧接口兼容，避免新页面发布影响已有用户。
 - 新增曲线模块、配置模块、控制模块时，优先新增 API 或新增字段，不直接破坏旧响应结构。
 
-## 9. 与甲方沟通的固定口径
+## 9. 与业务需求沟通的固定口径
 
 可以按以下方式对外说明：
 

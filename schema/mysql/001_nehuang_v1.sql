@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS cloud_gateways (
   gateway_id BIGINT UNSIGNED NOT NULL COMMENT '云边设备雪花ID',
   gateway_external_id VARCHAR(64) NOT NULL COMMENT '设备短ID，去除FP_前缀',
   gateway_name VARCHAR(64) NOT NULL COMMENT '设备名称，包含FP_前缀',
+  access_mode VARCHAR(16) NOT NULL DEFAULT 'shared' COMMENT '使用模式：shared=共享 exclusive=独享',
   ip VARCHAR(64) NOT NULL DEFAULT '' COMMENT '设备上线公网IP地址',
   port INT NOT NULL DEFAULT 40000 COMMENT '设备接入端口号',
   gateway_sn VARCHAR(64) NOT NULL DEFAULT '' COMMENT '设备硬件序列号',
@@ -50,6 +51,7 @@ CREATE TABLE IF NOT EXISTS cloud_gateways (
   PRIMARY KEY (gateway_id),
   UNIQUE KEY uk_cloud_gateways_name (gateway_name),
   UNIQUE KEY uk_cloud_gateways_external_id (gateway_external_id),
+  KEY idx_cloud_gateways_access_mode (access_mode),
   KEY idx_cloud_gateways_online (online_status, last_heartbeat_at_ms),
   KEY idx_updated_at (updated_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='云边采集数据汇总表';
@@ -67,7 +69,7 @@ CREATE TABLE IF NOT EXISTS device_realtime_maps (
   best_max FLOAT DEFAULT NULL COMMENT '适宜数值上限',
   unit VARCHAR(16) NOT NULL DEFAULT '' COMMENT '数值单位',
   real_value FLOAT DEFAULT NULL COMMENT '通用实时值',
-  real_temp FLOAT NOT NULL DEFAULT 0 COMMENT '甲方温度字段语义保留：温度实时值',
+  real_temp FLOAT NOT NULL DEFAULT 0 COMMENT '既有温度字段语义保留：温度实时值',
   value_status TINYINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '数值状态：0=unknown 1=normal 2=low 3=high 4=open 5=closed',
   run_mode TINYINT UNSIGNED NOT NULL DEFAULT 1 COMMENT '运行模式：1=auto 2=manu',
   rel1_status TINYINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '继电器1状态：0=关 1=开',
@@ -122,7 +124,7 @@ CREATE TABLE IF NOT EXISTS sensor_data (
   device_external_id VARCHAR(64) NOT NULL COMMENT '智农采集执行器设备ID',
   sampled_at_ms TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT '设备记录曲线上的时点信息',
   real_value FLOAT DEFAULT NULL COMMENT '通用采集值',
-  real_temp FLOAT NOT NULL DEFAULT 0 COMMENT '甲方温度字段语义保留：温度采集值',
+  real_temp FLOAT NOT NULL DEFAULT 0 COMMENT '既有温度字段语义保留：温度采集值',
   function_type TINYINT UNSIGNED NOT NULL COMMENT '功能类型：1=温度 2=墒情 3=限位',
   unit VARCHAR(16) NOT NULL DEFAULT '' COMMENT '单位',
   poll_interval INT NOT NULL DEFAULT 300 COMMENT '轮询采集周期，单位秒',

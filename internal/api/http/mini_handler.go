@@ -604,7 +604,7 @@ func buildMiniControlCommandInput(pointID uint64, userID uint64, action string) 
 		input.CommandHex = "00"
 		return input, "停止", nil
 	default:
-		return input, "", fmt.Errorf("action must be start, close, or stop")
+		return input, "", fmt.Errorf("action must be start, open, close, or stop")
 	}
 }
 

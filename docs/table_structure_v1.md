@@ -24,7 +24,7 @@
 | `cloud_gateways` | 云边采集数据汇总表，对应 E90 / FP 设备 |
 | `collector_nodes` | 采集执行器节点表，对应 `gateway_id + frequency + device_external_id` |
 | `device_points` | 采集执行器功能点表，对应节点下的温度、墒情、限位、继电器、水泵、风机等点位 |
-| `device_realtime_maps` | 甲方旧实时状态字段兼容表，后续作为实时状态投影 |
+| `device_realtime_maps` | 既有旧实时状态字段兼容表，后续作为实时状态投影 |
 | `bind_relations` | 农户与功能点绑定关系表 |
 | `sensor_data` | 功能点时序曲线表 |
 | `op_records` | 操作记录表 |
@@ -46,7 +46,7 @@ cloud_gateways
 - `cloud_gateways`：云边/LoRa 通信接入单元，注册包中的 `FP_` 标识进入这里。
 - `collector_nodes`：采集执行器节点，硬件稳定身份为 `gateway_id + frequency + device_external_id`。
 - `device_points`：节点下的功能点/通道，例如温度、墒情、限位、继电器、水泵、风机。
-- `device_realtime_maps`：保留甲方旧字段和验收语义，作为兼容投影表；新业务查询、绑定、控制优先使用 `point_id`。
+- `device_realtime_maps`：保留既有旧字段和验收语义，作为兼容投影表；新业务查询、绑定、控制优先使用 `point_id`。
 
 ## 3. 字段说明表
 ### 3.1 `users`
@@ -136,7 +136,7 @@ cloud_gateways
 | `best_min` | `FLOAT DEFAULT NULL` | 是 | 适宜数值下限 |
 | `best_max` | `FLOAT DEFAULT NULL` | 是 | 适宜数值上限 |
 | `real_value` | `FLOAT DEFAULT NULL` | 是 | 通用实时值 |
-| `real_temp` | `FLOAT NOT NULL DEFAULT 0` | 否 | 甲方温度字段语义保留：温度实时值 |
+| `real_temp` | `FLOAT NOT NULL DEFAULT 0` | 否 | 既有温度字段语义保留：温度实时值 |
 | `value_status` | `TINYINT UNSIGNED NOT NULL DEFAULT 0` | 否 | 数值状态：0=unknown 1=normal 2=low 3=high 4=open 5=closed 6=offline |
 | `run_mode` | `TINYINT UNSIGNED NOT NULL DEFAULT 1` | 否 | 运行模式：1=auto 2=manu |
 | `controllable_status` | `TINYINT UNSIGNED NOT NULL DEFAULT 0` | 否 | 是否可控：0=否 1=是 |
@@ -155,7 +155,7 @@ cloud_gateways
 
 ### 3.5 `device_realtime_maps`
 
-智农采集执行器-云边设备映射对照表。当前保留为兼容投影表，承接甲方已有字段语义；新代码优先以 `device_points` 为实时状态主表。
+智农采集执行器-云边设备映射对照表。当前保留为兼容投影表，承接既有字段语义；新代码优先以 `device_points` 为实时状态主表。
 
 身份规则：同一云边设备下 `frequency + device_external_id` 必须唯一。该组合来自硬件写入的固定频点和设备 ID；`shed_no`、农户、名称、备注等只属于业务配置，不参与硬件身份。
 
@@ -174,7 +174,7 @@ cloud_gateways
 | `best_max` | `FLOAT DEFAULT NULL` | 是 | 适宜数值上限 |
 | `unit` | `VARCHAR(16) NOT NULL DEFAULT ''` | 否 | 数值单位 |
 | `real_value` | `FLOAT DEFAULT NULL` | 是 | 通用实时值 |
-| `real_temp` | `FLOAT NOT NULL DEFAULT 0` | 否 | 甲方温度字段语义保留：温度实时值 |
+| `real_temp` | `FLOAT NOT NULL DEFAULT 0` | 否 | 既有温度字段语义保留：温度实时值 |
 | `value_status` | `TINYINT UNSIGNED NOT NULL DEFAULT 0` | 否 | 数值状态：0=unknown 1=normal 2=low 3=high 4=open 5=closed |
 | `run_mode` | `TINYINT UNSIGNED NOT NULL DEFAULT 1` | 否 | 运行模式：1=auto 2=manu |
 | `rel1_status` | `TINYINT UNSIGNED NOT NULL DEFAULT 0` | 否 | 继电器1状态：0=关 1=开 |
@@ -228,7 +228,7 @@ cloud_gateways
 | `device_external_id` | `VARCHAR(64) NOT NULL` | 否 | 智农采集执行器设备ID |
 | `sampled_at_ms` | `TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)` | 否 | 设备记录曲线上的时点信息 |
 | `real_value` | `FLOAT DEFAULT NULL` | 是 | 通用采集值 |
-| `real_temp` | `FLOAT NOT NULL DEFAULT 0` | 否 | 甲方温度字段语义保留：温度采集值 |
+| `real_temp` | `FLOAT NOT NULL DEFAULT 0` | 否 | 既有温度字段语义保留：温度采集值 |
 | `function_type` | `TINYINT UNSIGNED NOT NULL` | 否 | 功能类型：1=温度 2=墒情 3=限位 |
 | `unit` | `VARCHAR(16) NOT NULL DEFAULT ''` | 否 | 单位 |
 | `poll_interval` | `INT NOT NULL DEFAULT 300` | 否 | 轮询采集周期，单位秒 |
