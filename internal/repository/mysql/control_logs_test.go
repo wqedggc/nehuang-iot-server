@@ -50,6 +50,20 @@ func TestBuildOperationLogFilterClauses(t *testing.T) {
 	}
 }
 
+func TestOperationLogCountQueryUsesFromClauseOnly(t *testing.T) {
+	whereClause, _ := buildOperationLogFilterQuery(domain.OperationLogQuery{})
+	totalQuery := "SELECT COUNT(*) " + operationLogFromClause + whereClause
+	if strings.Contains(totalQuery, "SELECT\n  op.op_id") {
+		t.Fatalf("operation log count query must not embed list SELECT: %s", totalQuery)
+	}
+	if !strings.Contains(totalQuery, "FROM op_records op") {
+		t.Fatalf("operation log count query must include op_records FROM clause: %s", totalQuery)
+	}
+	if strings.Count(totalQuery, "SELECT") != 1 {
+		t.Fatalf("operation log count query should contain exactly one SELECT: %s", totalQuery)
+	}
+}
+
 func TestBuildControlLogFilterClauses(t *testing.T) {
 	start := "2026-07-01 00:00:00"
 	kw := "8001"

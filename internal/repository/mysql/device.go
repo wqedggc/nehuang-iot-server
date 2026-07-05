@@ -1885,7 +1885,8 @@ ORDER BY cc.requested_at_ms DESC
 LIMIT ?`
 )
 
-const listOperationLogsQuery = `
+const (
+	operationLogSelectClause = `
 SELECT
   op.op_id, op.gateway_id, COALESCE(cg.gateway_name, ''),
   op.realtime_id, op.node_id, op.point_id,
@@ -1894,10 +1895,15 @@ SELECT
   op.frequency, op.device_external_id,
   op.run_mode, op.rel1_status, op.rel2_status,
   op.op_type, COALESCE(op.op_content, ''),
-  op.command_id, op.operated_at_ms, op.created_at
+  op.command_id, op.operated_at_ms, op.created_at`
+
+	operationLogFromClause = `
 FROM op_records op
 LEFT JOIN cloud_gateways cg ON op.gateway_id = cg.gateway_id
 LEFT JOIN users u ON op.user_id = u.user_id`
+
+	listOperationLogsQuery = operationLogSelectClause + operationLogFromClause
+)
 
 func buildOperationLogFilterQuery(params domain.OperationLogQuery) (string, []interface{}) {
 	conditions := make([]string, 0)
@@ -2097,7 +2103,7 @@ func (r *Repository) ListOperationLogs(ctx context.Context, params domain.Operat
 ORDER BY op.operated_at_ms DESC`
 	listArgs := append([]interface{}{}, args...)
 	if params.Paginated {
-		totalQuery := "SELECT COUNT(*) " + listOperationLogsQuery + whereClause
+		totalQuery := "SELECT COUNT(*) " + operationLogFromClause + whereClause
 		var total int
 		err := r.db.QueryRowContext(ctx, totalQuery, args...).Scan(&total)
 		if err != nil {
