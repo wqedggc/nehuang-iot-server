@@ -263,6 +263,10 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("/admin/", servePrefixed("static"))
 	mux.Handle("/mini/", servePrefixed("static"))
 	mux.Handle("/shared/", servePrefixed("static"))
+	mux.Handle("/version.js", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.URL.Path = "static/version.js"
+		fileServer.ServeHTTP(w, r)
+	}))
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
 			http.NotFound(w, r)
