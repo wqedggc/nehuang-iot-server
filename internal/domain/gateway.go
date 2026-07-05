@@ -3,7 +3,7 @@ package domain
 import "time"
 
 type Gateway struct {
-	GatewayID         uint64    `json:"gateway_id"`
+	GatewayID         uint64    `json:"gateway_id,string"`
 	GatewayExternalID string    `json:"gateway_external_id"`
 	GatewayName       string    `json:"gateway_name"`
 	IP                string    `json:"ip"`
