@@ -116,6 +116,97 @@
     return params.get(name);
   }
 
+  function normalizeHelpSection(section) {
+    var value = toText(section || '').toLowerCase();
+    if (value === 'admin' || value === 'manager') return 'admin';
+    if (value === 'mini' || value === 'c' || value === 'user' || value === 'c端') return 'mini';
+    if (value === 'hardware' || value === 'adapter') return 'hardware';
+    if (value === 'flow' || value === 'diagram') return 'flow';
+    if (value === 'checklist' || value === 'verify') return 'checklist';
+    return 'mini';
+  }
+
+  function helpTab(section, label, activeSection) {
+    return '<button class="help-tab ' + (section === activeSection ? 'active' : '') + '" onclick="navigate(\'help-center?section=' + section + '\')">' + escHtml(label) + '</button>';
+  }
+
+  function helpList(items) {
+    var html = '<ol class="help-list">';
+    items.forEach(function (item) {
+      html += '<li>' + item + '</li>';
+    });
+    return html + '</ol>';
+  }
+
+  function renderDataFlowDiagram() {
+    var nodes = [
+      { title: '采集执行器 / MCU', sub: '传感器、继电器、告警源' },
+      { title: '设备网关', sub: '透传、聚合、维持硬件侧时序' },
+      { title: '云端接入层', sub: 'TCP 接入、原始报文留痕、下行写回' },
+      { title: '业务平台', sub: '管理端 / C 端展示、绑定、控制日志' }
+    ];
+    var html = '<div class="help-flow-board">';
+    nodes.forEach(function (node, idx) {
+      html += '<div class="help-flow-node"><div class="help-flow-index">' + (idx + 1) + '</div><div class="help-flow-title">' + escHtml(node.title) + '</div><div class="help-flow-sub">' + escHtml(node.sub) + '</div></div>';
+      if (idx < nodes.length - 1) html += '<div class="help-flow-arrow">→</div>';
+    });
+    html += '</div>';
+    html += '<div class="help-flow-note">上行按 1 → 2 → 3 → 4 进入平台；下行控制按 4 → 3 → 2 → 1 返回硬件。接入层只保证收发与留痕，业务解释以平台解析结果为准。</div>';
+    return html;
+  }
+
+  function renderPacketMatrix() {
+    var rows = [
+      ['注册包', '设备网关 → 云端接入层 → 业务平台', '上电、重连或联调初始化时发送', '识别设备网关身份，建立或更新在线基础信息。'],
+      ['心跳包', '设备网关 → 云端接入层 → 业务平台', '按硬件侧配置周期发送；联调时可用 keepalive', '刷新最后上报时间；离线判断以平台口径为准。'],
+      ['工作数据包', '采集执行器 → 设备网关 → 云端接入层 → 业务平台', '标准周期包；甲方最新口径倾向 2 小时或按最终文档确认', '先完整保存原始报文；字段冻结后再投影到业务数据。'],
+      ['告警包', '采集执行器 → 设备网关 → 云端接入层 → 业务平台', '出现异常时主动上报，是否重复发送按硬件最终规则', '优先留痕与展示类型；去重和告警等级按最终样例补齐。'],
+      ['未知包', '设备网关或采集执行器 → 云端接入层 → 业务平台', '任意联调阶段都可能出现', '不丢弃；进入原始报文排查，等待补解析规则。'],
+      ['下行控制包', '管理端 / C 端 → 业务平台 → 云端接入层 → 设备网关 → 采集执行器', '用户点击控制或联调人员手动输入 Hex 时触发', '先生成 pending，接入层写回 TCP 后变 sent；未收到明确 ACK 前不自动判成功。'],
+      ['时间同步字段', '业务平台 → 云端接入层 → 设备网关；上行包反向带回设备时点', '按甲方最新方案在地址后、正式内容前预留 6 字节时分秒', '用于硬件侧 TDMA 时间对齐；本阶段作为协议预留与联调核对项。']
+    ];
+    var html = '<div class="help-packet-table"><div class="help-packet-row help-packet-head"><div>报文</div><div>方向</div><div>触发/周期</div><div>平台处理</div></div>';
+    rows.forEach(function (row) {
+      html += '<div class="help-packet-row">';
+      row.forEach(function (cell) { html += '<div>' + escHtml(cell) + '</div>'; });
+      html += '</div>';
+    });
+    return html + '</div>';
+  }
+
+  function renderTimeline() {
+    var items = [
+      ['1. 注册', '设备网关先让平台知道“我是谁”，后台才能显示并绑定给农户。'],
+      ['2. 心跳', '注册后持续上报 keepalive，平台用它刷新在线状态。'],
+      ['3. 业务包', '工作数据、告警、未知包都先进入原始报文排查，确认字段后再解析成业务数据。'],
+      ['4. 绑定与查看', '管理员把设备网关绑定给农户，C 端看到该网关下授权的采集执行器和功能点。'],
+      ['5. 下行控制', '管理员或 C 端创建控制命令，接入层在设备连接存在时写回 TCP。'],
+      ['6. 状态回填', '控制日志展示 pending / sent / timeout 等状态；真实 ACK 语义等硬件样例确认。']
+    ];
+    var html = '<div class="help-timeline">';
+    items.forEach(function (item) {
+      html += '<div class="help-timeline-item"><div class="help-timeline-dot"></div><div><div class="help-timeline-title">' + escHtml(item[0]) + '</div><div class="help-timeline-body">' + escHtml(item[1]) + '</div></div></div>';
+    });
+    return html + '</div>';
+  }
+
+  function renderValidationChecklist() {
+    var items = [
+      ['登录', '管理员账号能进入管理端；C 端农户账号能进入我的设备。'],
+      ['跳转', '管理端侧边栏可进入帮助中心；C 端设置页可进入使用说明；各帮助目录点击后高亮并滚动到对应章节。'],
+      ['搜索', '原始报文排查可按设备网关、消息 ID、原始 Hex 片段搜索，默认最近 24 小时。'],
+      ['滚动', '帮助页、原始报文详情、设备详情在桌面和手机宽度下均可滚动，不遮挡按钮。'],
+      ['绑定', '管理员绑定设备网关给农户后，C 端设备列表能展开到采集执行器和功能点。'],
+      ['联调报文', '注册、心跳、工作数据、告警、未知包都能在原始报文排查中看到类型或待解析状态。'],
+      ['下行命令', '手动 Hex 控制创建后进入控制日志；设备连接存在时状态至少能到 sent，否则按 TTL 超时。']
+    ];
+    var html = '<div class="help-checklist">';
+    items.forEach(function (item) {
+      html += '<div class="help-check-item"><span class="help-check-box">□</span><div><div class="help-check-title">' + escHtml(item[0]) + '</div><div class="help-check-body">' + escHtml(item[1]) + '</div></div></div>';
+    });
+    return html + '</div>';
+  }
+
   // ============================================================
   // 页面渲染
   // ============================================================
@@ -562,19 +653,23 @@
 
   // ---------- 使用说明 ----------
   function renderHelpCenter(container) {
-    var section = getHashParam('section') || 'mini';
-    var sectionHint = section === 'mini' || section === 'c' || section === 'c端' ? 'C 端' : 'C 端';
+    var activeSection = normalizeHelpSection(getHashParam('section'));
 
     container.innerHTML = '<div class="page-header"><h2>使用说明</h2><span class="table-count">管理员 / C 端 / 硬件联调</span></div>' +
-      '<div class="settings-section">' +
-        '<div style="padding:14px 16px;border-bottom:1px solid var(--color-border);font-weight:600;color:var(--color-text)">当前查看：' + escHtml(sectionHint) + '</div>' +
+      '<div class="help-tabs">' +
+        helpTab('mini', 'C 端', activeSection) +
+        helpTab('flow', '流程图', activeSection) +
+        helpTab('admin', '管理员', activeSection) +
+        helpTab('hardware', '硬件联调', activeSection) +
+        helpTab('checklist', '验证清单', activeSection) +
+      '</div>' +
+      '<div class="settings-section help-section" id="help-mini">' +
+        '<div style="padding:14px 16px;border-bottom:1px solid var(--color-border);font-weight:600;color:var(--color-text)">C 端使用说明</div>' +
         '<div style="padding:12px 16px;color:var(--color-text);font-size:13px;line-height:1.7">' +
           '<p style="margin-top:0">本页只描述“怎么用”，不展示实现代码、服务地址、数据库字段和密钥。</p>' +
           '<p>核心术语：<strong>设备网关</strong> / <strong>采集执行器</strong> / <strong>功能点</strong> / <strong>原始报文</strong>。</p>' +
           '<p>路径建议：设置页 → 使用说明，出现问题后先核对“设备网关是否在线、原始报文是否有 register/keepalive、再看控制命令状态”。</p>' +
         '</div>' +
-      '</div>' +
-      '<div class="settings-section">' +
         '<div style="padding:14px 16px;border-bottom:1px solid var(--color-border);font-weight:600;color:var(--color-text)">C 端操作流程</div>' +
         '<div style="padding:12px 16px;color:var(--color-text-secondary);font-size:13px;line-height:1.8">' +
           '<ol style="padding-left:20px;margin:0">' +
@@ -586,6 +681,42 @@
           '</ol>' +
         '</div>' +
       '</div>' +
+      '<div class="settings-section help-section" id="help-flow">' +
+        '<div style="padding:14px 16px;border-bottom:1px solid var(--color-border);font-weight:600;color:var(--color-text)">最小流程图</div>' +
+        '<div style="padding:12px 16px">' +
+          renderDataFlowDiagram() +
+          '<div style="height:12px"></div>' +
+          renderPacketMatrix() +
+          '<div style="height:12px"></div>' +
+          renderTimeline() +
+        '</div>' +
+      '</div>' +
+      '<div class="settings-section help-section" id="help-admin">' +
+        '<div style="padding:14px 16px;border-bottom:1px solid var(--color-border);font-weight:600;color:var(--color-text)">管理员操作说明</div>' +
+        '<div style="padding:12px 16px;color:var(--color-text-secondary);font-size:13px;line-height:1.8">' +
+          helpList([
+            '先在设备管理中确认设备网关已注册并在线。',
+            '把设备网关绑定给农户，再补齐采集执行器和功能点。',
+            '联调控制优先使用自定义 Hex，不把未确认协议做成固定按钮。',
+            '异常排查先看原始报文，再看控制日志状态。'
+          ]) +
+        '</div>' +
+      '</div>' +
+      '<div class="settings-section help-section" id="help-hardware">' +
+        '<div style="padding:14px 16px;border-bottom:1px solid var(--color-border);font-weight:600;color:var(--color-text)">硬件联调说明</div>' +
+        '<div style="padding:12px 16px;color:var(--color-text-secondary);font-size:13px;line-height:1.8">' +
+          helpList([
+            '设备网关作为 TCP 客户端接入云端接入层；云端不要求硬件直连 HTTP。',
+            '联调先发注册和心跳，再发工作数据、告警、未知包样例。',
+            '原始报文会完整留痕，解析字段以最终协议样例为准。',
+            '下行控制由平台创建命令，接入层在设备连接存在时写回 TCP。'
+          ]) +
+        '</div>' +
+      '</div>' +
+      '<div class="settings-section help-section" id="help-checklist">' +
+        '<div style="padding:14px 16px;border-bottom:1px solid var(--color-border);font-weight:600;color:var(--color-text)">上线验证清单</div>' +
+        '<div style="padding:12px 16px">' + renderValidationChecklist() + '</div>' +
+      '</div>' +
       '<div class="settings-section">' +
         '<div style="padding:14px 16px;border-bottom:1px solid var(--color-border);font-weight:600;color:var(--color-text)">常见问题</div>' +
         '<div style="padding:12px 16px;color:var(--color-text);font-size:13px;line-height:1.7">' +
@@ -593,6 +724,14 @@
           '<p>控制命令未生效时，先确认网关是否从 Adapter 拉取到 pending 并成功写回 TCP。</p>' +
         '</div>' +
       '</div>';
+
+    var sections = container.querySelectorAll('.help-section');
+    for (var i = 0; i < sections.length; i++) {
+      sections[i].style.display = sections[i].id === 'help-' + activeSection ? '' : 'none';
+    }
+
+    var target = document.getElementById('help-' + activeSection);
+    if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
   // ---------- 设置 ----------

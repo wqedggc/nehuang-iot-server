@@ -332,6 +332,180 @@ tbody tr:last-child td { border-bottom: none; }
   overflow: auto;
   max-height: 320px;
 }
+
+/* ---------- 帮助中心 ---------- */
+.help-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 16px;
+}
+.help-tab {
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+}
+.help-tab:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary-dark);
+}
+.help-tab.active {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: #fff;
+}
+.help-list {
+  margin: 10px 0 0 20px;
+  font-size: 13px;
+  color: var(--color-text);
+  line-height: 1.7;
+}
+.help-flow-board {
+  display: grid;
+  grid-template-columns: minmax(150px, 1fr) 28px minmax(150px, 1fr) 28px minmax(150px, 1fr) 28px minmax(150px, 1fr);
+  align-items: stretch;
+  gap: 8px;
+}
+.help-flow-node {
+  min-height: 112px;
+  padding: 12px;
+  border: 1px solid #d7e2cf;
+  border-radius: var(--radius-sm);
+  background: #fbfdf9;
+}
+.help-flow-index {
+  width: 24px;
+  height: 24px;
+  border-radius: 12px;
+  background: var(--color-primary-light);
+  color: var(--color-primary-dark);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+.help-flow-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--color-text);
+}
+.help-flow-sub {
+  margin-top: 5px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--color-text-secondary);
+}
+.help-flow-arrow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-primary);
+  font-size: 20px;
+  font-weight: 700;
+}
+.help-flow-note {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.help-packet-table {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+.help-packet-row {
+  display: grid;
+  grid-template-columns: 110px 1.5fr 1.2fr 1.6fr;
+  border-top: 1px solid var(--color-border);
+}
+.help-packet-row:first-child { border-top: none; }
+.help-packet-row > div {
+  padding: 10px 12px;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--color-text-secondary);
+  border-left: 1px solid var(--color-border);
+}
+.help-packet-row > div:first-child {
+  border-left: none;
+  color: var(--color-text);
+  font-weight: 600;
+}
+.help-packet-head > div {
+  background: var(--color-bg);
+  color: var(--color-text-muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+.help-timeline {
+  border-left: 2px solid #d7e2cf;
+  margin-left: 9px;
+  padding-left: 16px;
+}
+.help-timeline-item {
+  position: relative;
+  padding: 0 0 14px;
+}
+.help-timeline-dot {
+  position: absolute;
+  left: -23px;
+  top: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--color-primary);
+  border: 2px solid var(--color-surface);
+}
+.help-timeline-title {
+  font-size: 13px;
+  font-weight: 700;
+}
+.help-timeline-body {
+  margin-top: 3px;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  line-height: 1.55;
+}
+.help-checklist {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 10px;
+}
+.help-check-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: #fbfdf9;
+}
+.help-check-box {
+  color: var(--color-primary);
+  font-size: 15px;
+  line-height: 1.2;
+}
+.help-check-title {
+  font-size: 13px;
+  font-weight: 700;
+}
+.help-check-body {
+  margin-top: 3px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--color-text-secondary);
+}
 .detail-mini-table {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
@@ -473,4 +647,10 @@ tbody tr:last-child td { border-bottom: none; }
   .table-header { flex-direction: column; align-items: flex-start; gap: 8px; }
   .table-search { width: 100%; }
   .form-row { grid-template-columns: 1fr; }
+  .help-flow-board { grid-template-columns: 1fr; }
+  .help-flow-arrow { transform: rotate(90deg); min-height: 20px; }
+  .help-packet-row { grid-template-columns: 1fr; }
+  .help-packet-row > div { border-left: none; border-top: 1px solid var(--color-border); }
+  .help-packet-row > div:first-child { border-top: none; }
+  .help-packet-head { display: none; }
 }

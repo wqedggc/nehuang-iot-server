@@ -6,8 +6,8 @@
 (function (global) {
   'use strict';
 
-  const VERSION = '0.3.0';
-  const BUILD_DATE = '20260629';
+  const VERSION = '0.3.1';
+  const BUILD_DATE = '20260705';
   const VERSION_STRING = VERSION + ' (' + BUILD_DATE + ')';
 
   global.APP_VERSION = VERSION;
