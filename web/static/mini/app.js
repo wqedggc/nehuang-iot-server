@@ -176,7 +176,7 @@
 
   function renderTimeline() {
     var items = [
-      ['1. 注册', '设备网关先让平台知道“我是谁”，后台才能显示并绑定给农户。'],
+      ['1. 注册', '设备网关先让平台知道"我是谁"，后台才能显示并绑定给农户。'],
       ['2. 心跳', '注册后持续上报 keepalive，平台用它刷新在线状态。'],
       ['3. 业务包', '工作数据、告警、未知包都先进入原始报文排查，确认字段后再解析成业务数据。'],
       ['4. 绑定与查看', '管理员把设备网关绑定给农户，C 端看到该网关下授权的采集执行器和功能点。'],
@@ -376,6 +376,25 @@
   var deviceDetailData = null;
   var deviceDetailPointId = null;
   var deviceDetailActiveTab = 'info';
+  var deviceDetailHistoryRange = '1d';       // 历史数据 tab 当前时间范围
+  var deviceDetailHistoryLoaded = false;    // 历史数据 tab 是否已加载过
+
+  /**
+   * 判断设备是否离线 (value_status === 6)
+   */
+  function isDeviceOffline(d) {
+    return Number(d.value_status) === 6;
+  }
+
+  /**
+   * 生成离线提示条 HTML
+   */
+  function offlineBanner() {
+    return '<div class="offline-banner">' +
+      '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>' +
+      '<span>设备离线，数据可能不是最新的</span>' +
+    '</div>';
+  }
 
   async function renderDeviceDetail(container, id) {
     if (!id) { navigate('devices'); return; }
@@ -392,20 +411,29 @@
       deviceDetailData = d;
       deviceDetailPointId = pointID;
       deviceDetailActiveTab = 'info';
+      deviceDetailHistoryRange = '1d';
+      deviceDetailHistoryLoaded = false;
 
       var status = valueStatusClass(d.value_status);
       var statusClass = 'status-' + status;
       var statusTextClass = 'status-text-' + status;
+      var offline = isDeviceOffline(d);
+      var offlineHtml = offline ? offlineBanner() : '';
 
+      // ── Tab Bar: 5 tabs ──
       var html = '<div class="tab-bar">' +
         '<button class="tab-btn active" data-tab="info">基本信息</button>' +
         '<button class="tab-btn" data-tab="realtime">实时数据</button>' +
-        '<button class="tab-btn" data-tab="history">数据曲线</button>' +
+        '<button class="tab-btn" data-tab="history-table">历史数据</button>' +
+        '<button class="tab-btn" data-tab="chart">数据曲线</button>' +
         '<button class="tab-btn" data-tab="control">控制</button>' +
       '</div>';
 
-      // Tab: 基本信息
+      // ════════════════════════════════════════
+      // Tab 1: 基本信息
+      // ════════════════════════════════════════
       html += '<div class="tab-panel active" id="tab-info">' +
+        offlineHtml +
         '<div class="detail-section">' +
           '<h3>基本信息</h3>' +
           '<div class="detail-grid">' +
@@ -421,30 +449,60 @@
         '</div>' +
       '</div>';
 
-      // Tab: 实时数据
+      // ════════════════════════════════════════
+      // Tab 2: 实时数据
+      // ════════════════════════════════════════
       var rangeHint = '';
       if (d.best_min != null && d.best_max != null) {
         rangeHint = '适宜范围：' + d.best_min + ' ~ ' + d.best_max + ' ' + escHtml(d.unit);
       }
+
       html += '<div class="tab-panel" id="tab-realtime">' +
+        offlineHtml +
         '<div class="detail-section">' +
-          '<h3>实时数据</h3>' +
-          '<div class="detail-real-value">' +
-            '<span class="big-value">' + (d.real_value != null ? d.real_value : '--') + '</span>' +
+          '<h3>实时数据</h3>';
+
+      if (d.real_value == null) {
+        // 空数据状态
+        html += '<div class="empty-state" style="padding:36px 24px">' +
+          '<svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>' +
+          '<p>暂无实时数据</p>' +
+          '<p style="font-size:12px;color:var(--color-text-muted);margin-top:4px">设备尚未上报实时数据，请稍后再试</p>' +
+        '</div>';
+      } else {
+        html += '<div class="detail-real-value">' +
+            '<span class="big-value">' + d.real_value + '</span>' +
             '<span class="big-unit">' + escHtml(d.unit) + '</span>' +
             '<p class="range-hint">' + rangeHint + '</p>' +
             '<p style="margin-top:4px"><span class="device-card-status ' + statusClass + '"><span class="status-dot"></span><span class="' + statusTextClass + '">' + escHtml(d.value_status_label || '--') + '</span></span></p>' +
-          '</div>' +
-        '</div>' +
-      '</div>';
+          '</div>';
+      }
 
-      // Tab: 历史曲线 (placeholder, loaded on tab switch)
-      html += '<div class="tab-panel" id="tab-history">' +
+      html += '</div></div>';
+
+      // ════════════════════════════════════════
+      // Tab 3: 历史数据 (table)
+      // ════════════════════════════════════════
+      html += '<div class="tab-panel" id="tab-history-table">' +
+        offlineHtml +
         '<div class="loading-state"><div class="loading-spinner"></div><p>点击标签加载历史数据...</p></div>' +
       '</div>';
 
-      // Tab: 控制
-      html += '<div class="tab-panel" id="tab-control">';
+      // ════════════════════════════════════════
+      // Tab 4: 数据曲线 (chart)
+      // ════════════════════════════════════════
+      html += '<div class="tab-panel" id="tab-chart">' +
+        offlineHtml +
+        '<div class="loading-state"><div class="loading-spinner"></div><p>点击标签加载数据曲线...</p></div>' +
+      '</div>';
+
+      // ════════════════════════════════════════
+      // Tab 5: 控制
+      // ════════════════════════════════════════
+      html += '<div class="tab-panel" id="tab-control">' +
+        offlineHtml;
+
+      // 判断是否有控制功能 (func 1/2 是传感器, 4/5/6 是控制器)
       if (d.func === 4 || d.func === 5 || d.func === 6) {
         html += '<div class="detail-section">' +
           '<h3>设备控制</h3>' +
@@ -462,9 +520,14 @@
           '</p>' +
         '</div>';
       } else {
+        // 无控制功能，也不属于传感器 → 显示"不支持控制功能"
         html += '<div class="detail-section">' +
-          '<h3>设备状态</h3>' +
-          '<p style="font-size:13px;color:var(--color-text-muted)">当前值：' + (d.real_value != null ? d.real_value : '--') + '</p>' +
+          '<h3>设备控制</h3>' +
+          '<div class="empty-state" style="padding:36px 24px">' +
+            '<svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>' +
+            '<p>此设备不支持控制功能</p>' +
+            '<p style="font-size:12px;color:var(--color-text-muted);margin-top:4px">当前设备类型暂不支持远程控制操作</p>' +
+          '</div>' +
         '</div>';
       }
       html += '</div>';
@@ -494,24 +557,120 @@
       panel.classList.toggle('active', panel.id === 'tab-' + tab);
     });
 
-    // Load history on demand
-    if (tab === 'history' && deviceDetailPointId) {
-      var historyPanel = document.getElementById('tab-history');
-      if (historyPanel && historyPanel.querySelector('.loading-state')) {
-        loadHistoryInTab(deviceDetailPointId);
+    // Lazy load: 历史数据 tab (table)
+    if (tab === 'history-table' && deviceDetailPointId && !deviceDetailHistoryLoaded) {
+      deviceDetailHistoryLoaded = true;
+      loadHistoryTableInTab(deviceDetailPointId, deviceDetailHistoryRange);
+    }
+
+    // Lazy load: 数据曲线 tab (chart)
+    if (tab === 'chart' && deviceDetailPointId) {
+      var chartPanel = document.getElementById('tab-chart');
+      if (chartPanel && chartPanel.querySelector('.loading-state')) {
+        loadChartInTab(deviceDetailPointId);
       }
     }
   }
 
-  async function loadHistoryInTab(pointID) {
-    var panel = document.getElementById('tab-history');
+  // ════════════════════════════════════════
+  // 历史数据 Tab — 表格形式
+  // ════════════════════════════════════════
+
+  async function loadHistoryTableInTab(pointID, range) {
+    var panel = document.getElementById('tab-history-table');
     if (!panel) return;
-    panel.innerHTML = '<div class="loading-state"><div class="loading-spinner"></div><p>加载历史数据...</p></div>';
+
+    // 保留离线提示条
+    var offlineHtml = (deviceDetailData && isDeviceOffline(deviceDetailData)) ? offlineBanner() : '';
+    panel.innerHTML = offlineHtml + '<div class="loading-state"><div class="loading-spinner"></div><p>加载历史数据...</p></div>';
+
+    try {
+      var res = await NHApi.getDeviceHistory(pointID, range);
+      var d = res.data;
+      var points = (d && d.points) ? d.points : [];
+
+      var html = offlineHtml;
+
+      // Range tabs
+      html += '<div class="range-tabs">' +
+        '<button class="range-tab' + (range === '1d' ? ' active' : '') + '" data-range="1d">近1天</button>' +
+        '<button class="range-tab' + (range === '3d' ? ' active' : '') + '" data-range="3d">近3天</button>' +
+        '<button class="range-tab' + (range === '7d' ? ' active' : '') + '" data-range="7d">近7天</button>' +
+        '<button class="range-tab' + (range === '30d' ? ' active' : '') + '" data-range="30d">近30天</button>' +
+      '</div>';
+
+      if (!d || points.length === 0) {
+        // 无历史数据
+        html += '<div class="detail-section">' +
+          '<div class="empty-state" style="padding:36px 24px">' +
+            '<svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="9" x2="15" y2="15"/><line x1="15" y1="9" x2="9" y2="15"/></svg>' +
+            '<p>暂无历史数据</p>' +
+            '<p style="font-size:12px;color:var(--color-text-muted);margin-top:4px">该时间范围内没有历史数据记录</p>' +
+          '</div>' +
+        '</div>';
+      } else {
+        // 构建表格
+        html += '<div class="detail-section">' +
+          '<div class="history-table-wrap">' +
+            '<table class="history-table">' +
+              '<thead><tr>' +
+                '<th>时间</th>' +
+                '<th>实时值</th>' +
+                '<th>单位</th>' +
+                '<th>状态</th>' +
+              '</tr></thead>' +
+              '<tbody>';
+
+        points.forEach(function (p) {
+          var pStatus = valueStatusClass(p.value_status);
+          var pStatusClass = 'status-' + pStatus;
+          var pStatusTextClass = 'status-text-' + pStatus;
+          html += '<tr>' +
+            '<td class="history-time">' + formatFullTime(p.time) + '</td>' +
+            '<td class="history-value">' + (p.real_temp != null ? escHtml(p.real_temp) : '--') + '</td>' +
+            '<td class="history-unit">' + escHtml((d && d.unit) || (deviceDetailData && deviceDetailData.unit) || '--') + '</td>' +
+            '<td><span class="device-card-status ' + pStatusClass + '"><span class="status-dot"></span><span class="' + pStatusTextClass + '">' + escHtml(p.value_status_label || '--') + '</span></span></td>' +
+          '</tr>';
+        });
+
+        html += '</tbody></table></div></div>';
+      }
+
+      panel.innerHTML = html;
+
+      // Bind range tab clicks
+      panel.querySelectorAll('.range-tab').forEach(function (tab) {
+        tab.onclick = function () {
+          var newRange = this.dataset.range;
+          if (newRange === deviceDetailHistoryRange) return;
+          deviceDetailHistoryRange = newRange;
+          loadHistoryTableInTab(pointID, newRange);
+        };
+      });
+    } catch (e) {
+      panel.innerHTML = offlineHtml + '<div class="error-state"><p>加载失败</p><button class="btn btn-outline btn-sm" onclick="switchTab(\'history-table\')">重试</button></div>';
+    }
+  }
+
+  // ════════════════════════════════════════
+  // 数据曲线 Tab — Canvas 图表
+  // ════════════════════════════════════════
+
+  async function loadChartInTab(pointID) {
+    var panel = document.getElementById('tab-chart');
+    if (!panel) return;
+
+    var offlineHtml = (deviceDetailData && isDeviceOffline(deviceDetailData)) ? offlineBanner() : '';
+    panel.innerHTML = offlineHtml + '<div class="loading-state"><div class="loading-spinner"></div><p>加载数据曲线...</p></div>';
 
     try {
       var res = await NHApi.getDeviceHistory(pointID, '1d');
       if (!res.data) {
-        panel.innerHTML = '<div class="error-state"><p>暂无数据</p></div>';
+        panel.innerHTML = offlineHtml + '<div class="detail-section"><div class="empty-state" style="padding:36px 24px">' +
+          '<svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>' +
+          '<p>暂无数据曲线</p>' +
+          '<p style="font-size:12px;color:var(--color-text-muted);margin-top:4px">暂无历史数据可用于绘制曲线</p>' +
+        '</div></div>';
         return;
       }
 
@@ -523,19 +682,29 @@
         rangeText = ' · 适宜范围：' + d.best_min + ' ~ ' + d.best_max + ' ' + escHtml(d.unit);
       }
 
-      var html = '<div class="range-tabs">' +
-        '<button class="range-tab active" data-range="1d">近1天</button>' +
-        '<button class="range-tab" data-range="3d">近3天</button>' +
-        '<button class="range-tab" data-range="7d">近7天</button>' +
-        '<button class="range-tab" data-range="30d">近30天</button>' +
-      '</div>' +
-      '<div class="chart-container">' +
-        '<canvas id="history-chart"></canvas>' +
-      '</div>' +
-      '<p style="text-align:center;margin-top:12px;font-size:13px;color:var(--color-text-muted)">' +
-        '设备：' + escHtml(d.func_name || '功能点') + ' · 单位：' + escHtml(d.unit || '--') +
-        rangeText +
-      '</p>';
+      if (points.length === 0) {
+        panel.innerHTML = offlineHtml + '<div class="detail-section"><div class="empty-state" style="padding:36px 24px">' +
+          '<svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>' +
+          '<p>暂无数据曲线</p>' +
+          '<p style="font-size:12px;color:var(--color-text-muted);margin-top:4px">暂无历史数据可用于绘制曲线</p>' +
+        '</div></div>';
+        return;
+      }
+
+      var html = offlineHtml +
+        '<div class="range-tabs">' +
+          '<button class="range-tab active" data-range="1d">近1天</button>' +
+          '<button class="range-tab" data-range="3d">近3天</button>' +
+          '<button class="range-tab" data-range="7d">近7天</button>' +
+          '<button class="range-tab" data-range="30d">近30天</button>' +
+        '</div>' +
+        '<div class="chart-container">' +
+          '<canvas id="history-chart"></canvas>' +
+        '</div>' +
+        '<p style="text-align:center;margin-top:12px;font-size:13px;color:var(--color-text-muted)">' +
+          '设备：' + escHtml(d.func_name || '功能点') + ' · 单位：' + escHtml(d.unit || '--') +
+          rangeText +
+        '</p>';
 
       panel.innerHTML = html;
 
@@ -547,25 +716,38 @@
           activeRange = range;
           panel.querySelectorAll('.range-tab').forEach(function (t) { t.classList.remove('active'); });
           this.classList.add('active');
-          loadHistoryDataInTab(pointID, range, d);
+          loadChartDataInTab(pointID, range, d);
         };
       });
 
       drawChart(points, d);
     } catch (e) {
-      panel.innerHTML = '<div class="error-state"><p>加载失败</p><button class="btn btn-outline btn-sm" onclick="switchTab(\'history\')">重试</button></div>';
+      panel.innerHTML = offlineHtml + '<div class="error-state"><p>加载失败</p><button class="btn btn-outline btn-sm" onclick="switchTab(\'chart\')">重试</button></div>';
     }
   }
 
-  async function loadHistoryDataInTab(pointID, range, info) {
+  async function loadChartDataInTab(pointID, range, info) {
     try {
       var res = await NHApi.getDeviceHistory(pointID, range);
-      if (res.data && res.data.points) {
+      if (res.data && res.data.points && res.data.points.length > 0) {
         drawChart(res.data.points, info);
+      } else {
+        var container = $('.chart-container');
+        if (container) {
+          container.innerHTML = '<div class="empty-state"><p>暂无数据曲线</p></div>';
+        }
       }
     } catch (e) {
-      showToast('加载历史数据失败', 'error');
+      showToast('加载数据曲线失败', 'error');
     }
+  }
+
+  // ---------- 历史曲线（独立页面路由保留，重定向到设备详情页的 chart tab） ----------
+  async function renderHistory(container, id) {
+    // Redirect to device detail with chart tab active
+    if (!id) { navigate('devices'); return; }
+    deviceDetailActiveTab = 'chart';
+    navigate('device/' + id);
   }
 
   async function doControl(id, action) {
@@ -585,21 +767,15 @@
     }
   }
 
-  // ---------- 历史曲线（独立页面路由保留，重定向到设备详情页的 history tab） ----------
-  async function renderHistory(container, id) {
-    // Redirect to device detail with history tab active
-    if (!id) { navigate('devices'); return; }
-    deviceDetailActiveTab = 'history';
-    navigate('device/' + id);
-  }
-
   function drawChart(points, info) {
     var canvas = document.getElementById('history-chart');
     if (!canvas) return;
 
     if (!points || points.length === 0) {
       var container = $('.chart-container');
-      container.innerHTML = '<div class="empty-state"><p>暂无历史数据</p></div>';
+      if (container) {
+        container.innerHTML = '<div class="empty-state"><p>暂无数据曲线</p></div>';
+      }
       return;
     }
 
@@ -618,7 +794,10 @@
     var plotH = height - padding.top - padding.bottom;
     var values = points.map(function (p) { return Number(p.real_temp); }).filter(function (v) { return Number.isFinite(v); });
     if (values.length === 0) {
-      $('.chart-container').innerHTML = '<div class="empty-state"><p>暂无历史数据</p></div>';
+      var chartContainer = $('.chart-container');
+      if (chartContainer) {
+        chartContainer.innerHTML = '<div class="empty-state"><p>暂无数据曲线</p></div>';
+      }
       return;
     }
 
@@ -716,9 +895,9 @@
       '<div class="settings-section help-section" id="help-mini">' +
         '<div style="padding:14px 16px;border-bottom:1px solid var(--color-border);font-weight:600;color:var(--color-text)">C 端使用说明</div>' +
         '<div style="padding:12px 16px;color:var(--color-text);font-size:13px;line-height:1.7">' +
-          '<p style="margin-top:0">本页只描述“怎么用”，不展示实现代码、服务地址、数据库字段和密钥。</p>' +
+          '<p style="margin-top:0">本页只描述"怎么用"，不展示实现代码、服务地址、数据库字段和密钥。</p>' +
           '<p>核心术语：<strong>设备网关</strong> / <strong>采集执行器</strong> / <strong>功能点</strong> / <strong>原始报文</strong>。</p>' +
-          '<p>路径建议：设置页 → 使用说明，出现问题后先核对“设备网关是否在线、原始报文是否有 register/keepalive、再看控制命令状态”。</p>' +
+          '<p>路径建议：设置页 → 使用说明，出现问题后先核对"设备网关是否在线、原始报文是否有 register/keepalive、再看控制命令状态"。</p>' +
         '</div>' +
         '<div style="padding:14px 16px;border-bottom:1px solid var(--color-border);font-weight:600;color:var(--color-text)">C 端操作流程</div>' +
         '<div style="padding:12px 16px;color:var(--color-text-secondary);font-size:13px;line-height:1.8">' +
@@ -727,7 +906,7 @@
             '<li>点击设备查看实时值、状态与更新时间</li>' +
             '<li>可用控制的功能点点击控制后会创建异步命令</li>' +
             '<li>命令状态逐步更新为 pending / sent / ack / succeeded / failed / timeout</li>' +
-            '<li>原始报文异常优先到“原始报文排查”做分类与二次回放</li>' +
+            '<li>原始报文异常优先到"原始报文排查"做分类与二次回放</li>' +
           '</ol>' +
         '</div>' +
       '</div>' +
