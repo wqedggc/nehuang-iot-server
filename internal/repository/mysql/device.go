@@ -576,6 +576,9 @@ LIMIT 1`, pointID).Scan(
 	}
 
 	// 补全显示标签。
+	if strings.TrimSpace(d.FunctionName) == "" {
+		d.FunctionName = domain.FunctionType(d.FunctionType).FunctionTypeName()
+	}
 	d.ValueStatusLabel = valueStatusLabel(d.ValueStatus)
 	d.RunModeLabel = runModeLabel(d.RunMode)
 
@@ -627,6 +630,9 @@ ORDER BY dp.updated_at DESC`, userID, userID)
 		}
 		if realValue.Valid {
 			d.RealValue = &realValue.Float64
+		}
+		if strings.TrimSpace(d.FunctionName) == "" {
+			d.FunctionName = domain.FunctionType(d.FunctionType).FunctionTypeName()
 		}
 		d.UpdatedAt = updatedAt.UTC().Format("2006-01-02T15:04:05.000Z")
 		d.ValueStatusLabel = valueStatusLabel(d.ValueStatus)

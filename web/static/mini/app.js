@@ -348,6 +348,10 @@
       var d = res.data;
       var points = d.points || [];
       var activeRange = '1d';
+      var rangeText = '';
+      if (d.best_min != null && d.best_max != null) {
+        rangeText = ' · 适宜范围：' + d.best_min + ' ~ ' + d.best_max + ' ' + escHtml(d.unit);
+      }
 
       var html = '<div class="range-tabs">' +
         '<button class="range-tab active" data-range="1d">近1天</button>' +
@@ -359,8 +363,8 @@
         '<canvas id="history-chart"></canvas>' +
       '</div>' +
       '<p style="text-align:center;margin-top:12px;font-size:13px;color:var(--color-text-muted)">' +
-        '设备：' + escHtml(d.func_name) + ' · 单位：' + escHtml(d.unit) +
-        ' · 适宜范围：' + d.best_min + ' ~ ' + d.best_max + ' ' + escHtml(d.unit) +
+        '设备：' + escHtml(d.func_name || '功能点') + ' · 单位：' + escHtml(d.unit || '--') +
+        rangeText +
       '</p>';
 
       container.innerHTML = html;
