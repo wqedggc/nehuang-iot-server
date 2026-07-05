@@ -135,6 +135,8 @@ func (s *Server) Routes() http.Handler {
 		authMiddleware(secret, adminRoles(http.HandlerFunc(ah.handleRawEvents))))
 	mux.Handle("/api/v1/admin/control-logs",
 		authMiddleware(secret, adminRoles(http.HandlerFunc(ah.handleControlLogs))))
+	mux.Handle("/api/v1/admin/gateway-bind-candidates",
+		authMiddleware(secret, adminRoles(http.HandlerFunc(ah.handleGatewayBindCandidates))))
 	mux.Handle("/api/v1/admin/device-tree",
 		authMiddleware(secret, adminRoles(http.HandlerFunc(ah.handleDeviceTree))))
 	mux.Handle("/api/v1/admin/device-points",
@@ -143,6 +145,8 @@ func (s *Server) Routes() http.Handler {
 		authMiddleware(secret, adminRoles(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.Method == http.MethodPatch {
 				ah.handleDevicePointUpdate(w, r)
+			} else if r.Method == http.MethodPost && hasSuffix(r.URL.Path, "/control") {
+				ah.handleDevicePointControl(w, r)
 			} else {
 				writeCode(w, http.StatusMethodNotAllowed, 405, "method not allowed")
 			}

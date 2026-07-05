@@ -10,6 +10,8 @@
 - 收到任意 bytes 后立即写 raw frame journal。
 - 将每次 TCP read 到的原始 bytes 上报到 `POST /api/v1/adapter/raw-frames`。
 - 保留旧网关 `FP_xxx` 注册包和显式心跳包的最小分类，用于连接维度 `gateway_name` 和 debug 日志；业务解析由 Go 服务完成。
+- 识别出设备网关后，按 `gateway_external_id` 拉取 Server 中的 pending control command。
+- 将 pending command 的 `command_hex` 写回当前 TCP 连接，写成功后回调 Server 标记 `sent`。
 - 提供 `/healthz` 和 `/readyz`，默认监听 `NEHUANG_GATEWAY_HEALTH_ADDR=:18081`。
 - 提供 CRC-16/MODBUS 和协议分类骨架，真实工作包解析等硬件样例包稳定后再补。
 
@@ -18,6 +20,7 @@
 - runtime log：结构化 JSON，记录启动、连接、断开、转发失败、raw 写入失败。
 - raw frame journal：JSONL，默认目录 `data/gateway-adapter/raw-frames`，字段包含 `connection_id`、`gateway_name`、`remote_addr`、`direction`、`payload_hex`、`received_at`、`raw_seq`。
 - debug/protocol log：通过 `NEHUANG_GATEWAY_DEBUG=true` 开启，记录协议分类和 CRC 等调试字段。
+- command log：结构化 JSON，记录 pending 拉取、TCP 写回、`sent` 回调和失败原因。
 
 ## 命令
 
@@ -36,6 +39,14 @@ NEHUANG_GATEWAY_API_BASE_URL=http://43.143.208.153:8080 \
 NEHUANG_ADAPTER_TOKEN=nehuang-adapter-dev-token \
 go run ./cmd/gateway-adapter
 ```
+
+下行命令相关配置：
+
+| 环境变量 | 默认值 | 含义 |
+|----------|--------|------|
+| `NEHUANG_GATEWAY_COMMAND_POLL_INTERVAL_SECONDS` | `2` | 每个已识别设备网关连接拉取 pending command 的间隔 |
+| `NEHUANG_GATEWAY_COMMAND_POLL_LIMIT` | `20` | 每次拉取命令数量上限 |
+| `NEHUANG_GATEWAY_COMMAND_WRITE_TIMEOUT_SECONDS` | `5` | 写回 TCP 连接的超时时间 |
 
 模拟硬件网关发包：
 
@@ -121,6 +132,14 @@ go run ./cmd/gateway-adapter-mock -addr 127.0.0.1:8081 -frame unknown
 go run ./cmd/gateway-adapter-mock -addr 127.0.0.1:8081 -frame all -repeat 3 -delay 1s
 ```
 
+模拟硬件等待云端下行命令：
+
+```bash
+go run ./cmd/gateway-adapter-mock -addr 127.0.0.1:8081 -wait-downlink -wait-timeout 30s
+```
+
+该模式会先发送注册和心跳，使 Adapter 能识别设备网关；随后阻塞读取 TCP 下行 bytes，并把收到的命令打印为 hex。
+
 ## 如何看日志
 
 ### runtime log
@@ -133,6 +152,11 @@ Adapter 标准输出是结构化 JSON。重点看这些事件：
 | `gateway_connection_opened` | 硬件网关建立 TCP 连接 |
 | `gateway_protocol_classified` | debug 开启时输出协议识别结果 |
 | `gateway_raw_frame_forward_failed` | raw frame 上报 Go 服务失败 |
+| `gateway_pending_commands_poll_failed` | 拉取 pending command 失败 |
+| `gateway_pending_command_decode_failed` | pending command 的 `command_hex` 非法 |
+| `gateway_pending_command_write_failed` | 写回 TCP 连接失败 |
+| `gateway_pending_command_mark_sent_failed` | TCP 写回成功后，回调 Server 标记 sent 失败 |
+| `gateway_pending_command_written` | 命令已写回 TCP |
 | `gateway_connection_closed` | TCP 连接断开 |
 
 开启协议调试：
@@ -179,7 +203,8 @@ go run ./cmd/gateway-adapter-replay -raw-log data/gateway-adapter/raw-frames/raw
 2. 发送心跳包，确认 gateway 在线时间刷新。
 3. 发送真实工作包，检查 raw journal 和 Go 服务 `raw_device_events`，不要求第一版立刻解析。
 4. 拿 raw journal 跑 replay，补协议 parser 和 CRC 校验。
-5. 控制链路先走 `control_commands` 异步状态，等 MCU ACK 协议确认后再启用完整闭环。
+5. 在 Admin 或 Mini 创建控制命令，确认 Adapter 能拉取 pending command 并写回当前 TCP 连接。
+6. 等 MCU ACK 协议确认后，再启用真实 ACK 解析、清缓存和完整闭环。
 
 ## Nginx
 

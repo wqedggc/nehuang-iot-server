@@ -131,6 +131,9 @@ NEHUANG_GATEWAY_HEALTH_ADDR=:18081
 NEHUANG_GATEWAY_API_BASE_URL=http://43.143.208.153:8080
 NEHUANG_GATEWAY_RAW_LOG_DIR=data/gateway-adapter/raw-frames
 NEHUANG_GATEWAY_DEBUG=false
+NEHUANG_GATEWAY_COMMAND_POLL_INTERVAL_SECONDS=2
+NEHUANG_GATEWAY_COMMAND_POLL_LIMIT=20
+NEHUANG_GATEWAY_COMMAND_WRITE_TIMEOUT_SECONDS=5
 
 # 管理员初始密码
 NEHUANG_ADMIN_PASSWORD=admin123
@@ -353,6 +356,9 @@ NEHUANG_GATEWAY_HEALTH_ADDR=:18081 \
 NEHUANG_GATEWAY_API_BASE_URL=http://43.143.208.153:8080 \
 NEHUANG_ADAPTER_TOKEN=nehuang-adapter-dev-token \
 NEHUANG_GATEWAY_RAW_LOG_DIR=data/gateway-adapter/raw-frames \
+NEHUANG_GATEWAY_COMMAND_POLL_INTERVAL_SECONDS=2 \
+NEHUANG_GATEWAY_COMMAND_POLL_LIMIT=20 \
+NEHUANG_GATEWAY_COMMAND_WRITE_TIMEOUT_SECONDS=5 \
 nohup ./gateway-adapter > gateway-adapter.log 2>&1 &
 
 # 测试 Gateway Adapter health
@@ -360,6 +366,9 @@ curl http://localhost:18081/healthz
 
 # 本地模拟硬件 TCP 发包
 go run ./cmd/gateway-adapter-mock -addr 127.0.0.1:8081 -frame all
+
+# 本地模拟硬件等待云端下行命令
+go run ./cmd/gateway-adapter-mock -addr 127.0.0.1:8081 -wait-downlink -wait-timeout 30s
 
 # 查看 raw journal
 tail -n 20 data/gateway-adapter/raw-frames/raw-frames-YYYYMMDD.jsonl

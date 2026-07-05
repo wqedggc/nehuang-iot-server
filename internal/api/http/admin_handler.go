@@ -3,6 +3,7 @@ package http
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -36,6 +37,12 @@ type adminRepository interface {
 	ListBindingsByUserID(ctx context.Context, userID uint64) ([]domain.BindRelation, error)
 	// 创建绑定关系。
 	CreateBinding(ctx context.Context, b *domain.BindRelation) error
+	// 按 gateway_id 查询 gateway 记录。
+	FindGatewayByID(ctx context.Context, gatewayID uint64) (*domain.Gateway, error)
+	// 按 user_id + gateway_id 查询 active gateway 绑定。
+	FindActiveBindingByUserAndGateway(ctx context.Context, userID uint64, gatewayID uint64) (*domain.BindRelation, error)
+	// 按 gateway_id 查询任意 active gateway 绑定。
+	FindActiveBindingByGateway(ctx context.Context, gatewayID uint64) (*domain.BindRelation, error)
 	// 解绑（软删除，更新 bind_status=2）。
 	UnbindRelation(ctx context.Context, bindID uint64) error
 	// 管理端原始事件列表。
@@ -46,14 +53,20 @@ type adminRepository interface {
 	GetDeviceTree(ctx context.Context) ([]domain.DeviceTreeNode, error)
 	// 按 point_id 查询功能点。
 	FindDevicePointByID(ctx context.Context, pointID uint64) (*domain.DevicePoint, error)
+	// 按 node_id 查询采集执行器节点。
+	FindCollectorNodeByID(ctx context.Context, nodeID uint64) (*domain.CollectorNode, error)
 	// 按 user_id + point_id 查询 active 绑定。
 	FindActiveBindingByUserAndPoint(ctx context.Context, userID uint64, pointID uint64) (*domain.BindRelation, error)
 	// 按 point_id 查询 active 绑定（用于冲突检测：检查 point 是否已被任意用户绑定）。
 	FindActiveBindingByPoint(ctx context.Context, pointID uint64) (*domain.BindRelation, error)
 	// 管理端设备点位搜索。
 	SearchDevicePoints(ctx context.Context, keyword string, bindStatus string) ([]domain.DevicePointSearchResult, error)
+	// 管理端未绑定 gateway 候选列表。
+	ListGatewayBindCandidates(ctx context.Context, keyword string) ([]domain.GatewayBindCandidate, error)
 	// 管理端设备点位配置更新。
 	UpdateDevicePointConfig(ctx context.Context, pointID uint64, input domain.DevicePointUpdateInput) error
+	// 管理端创建控制命令。
+	CreateControlCommandForPoint(ctx context.Context, input domain.CreateControlCommandInput) (*domain.ControlCommand, error)
 	// Payload 排查页面。
 	ListPayloadEvents(ctx context.Context, params domain.PayloadEventQuery) ([]domain.PayloadEventListItem, int, error)
 	GetPayloadEventDetail(ctx context.Context, rawEventID uint64) (*domain.PayloadEventDetail, error)
@@ -271,24 +284,41 @@ func (h *adminHandler) handleBindings(w http.ResponseWriter, r *http.Request) {
 
 // createBindingRequest is the JSON body for POST /api/v1/admin/bindings.
 type createBindingRequest struct {
-	UserID  string `json:"user_id"`
-	PointID string `json:"point_id"`
+	BindingType string `json:"binding_type"`
+	UserID      string `json:"user_id"`
+	GatewayID   string `json:"gateway_id"`
+	PointID     string `json:"point_id"`
 }
 
-// handleCreateBinding 处理 POST /api/v1/admin/bindings。
-// 以 point_id 为核心创建绑定关系。
-// 规则：
-//   - point 已 active 绑定给同一用户 → 幂等返回 200（已有绑定）
-//   - point 已 active 绑定给其他用户 → 返回 409 conflict
-//   - point 无 active 绑定 → 创建新绑定
 func (h *adminHandler) handleCreateBinding(w http.ResponseWriter, r *http.Request) {
 	var req createBindingRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeCode(w, http.StatusBadRequest, 400, "invalid request body")
 		return
 	}
-	if req.UserID == "" || req.PointID == "" {
-		writeCode(w, http.StatusBadRequest, 400, "user_id and point_id are required")
+
+	bindingType := domain.BindingType(strings.ToLower(strings.TrimSpace(req.BindingType)))
+	if bindingType == "" {
+		if strings.TrimSpace(req.PointID) != "" {
+			bindingType = domain.BindingTypePoint
+		} else if strings.TrimSpace(req.GatewayID) != "" {
+			bindingType = domain.BindingTypeGateway
+		}
+	}
+	if bindingType != domain.BindingTypeGateway && bindingType != domain.BindingTypePoint {
+		writeCode(w, http.StatusBadRequest, 400, "binding_type must be gateway or point")
+		return
+	}
+	if req.UserID == "" {
+		writeCode(w, http.StatusBadRequest, 400, "user_id is required")
+		return
+	}
+	if bindingType == domain.BindingTypeGateway && strings.TrimSpace(req.GatewayID) == "" {
+		writeCode(w, http.StatusBadRequest, 400, "gateway_id is required for gateway binding")
+		return
+	}
+	if bindingType == domain.BindingTypePoint && strings.TrimSpace(req.PointID) == "" {
+		writeCode(w, http.StatusBadRequest, 400, "point_id is required for point binding")
 		return
 	}
 
@@ -297,55 +327,7 @@ func (h *adminHandler) handleCreateBinding(w http.ResponseWriter, r *http.Reques
 		writeCode(w, http.StatusBadRequest, 400, "invalid user_id")
 		return
 	}
-	pointID, err := strconv.ParseUint(req.PointID, 10, 64)
-	if err != nil {
-		writeCode(w, http.StatusBadRequest, 400, "invalid point_id")
-		return
-	}
-
 	ctx := r.Context()
-
-	// Step 1: 检查 point 是否已被任意用户 active 绑定（冲突检测）。
-	existingByPoint, err := h.repo.FindActiveBindingByPoint(ctx, pointID)
-	if err != nil {
-		writeCode(w, http.StatusInternalServerError, 500, "internal error: "+err.Error())
-		return
-	}
-	if existingByPoint != nil {
-		existingUserID := uint64(0)
-		if existingByPoint.UserID != nil {
-			existingUserID = *existingByPoint.UserID
-		}
-		if existingUserID == userID {
-			// 同一用户重复绑定 → 幂等返回
-			writeJSON(w, http.StatusOK, map[string]any{"data": existingByPoint})
-			return
-		}
-		// 其他用户已绑定 → conflict
-		writeJSON(w, http.StatusConflict, map[string]any{
-			"code":    409,
-			"message": "device point already bound to another user",
-			"data": map[string]any{
-				"existing_user_id":   idStr(existingUserID),
-				"existing_bind_id":   idStr(existingByPoint.BindID),
-				"existing_user_name": existingByPoint.BindUserName,
-			},
-		})
-		return
-	}
-
-	// Step 2: 查询 device_point 补全字段。
-	point, err := h.repo.FindDevicePointByID(ctx, pointID)
-	if err != nil {
-		writeCode(w, http.StatusInternalServerError, 500, "internal error: "+err.Error())
-		return
-	}
-	if point == nil {
-		writeCode(w, http.StatusNotFound, 404, "device point not found")
-		return
-	}
-
-	// Step 3: 查询用户信息获取 bind_user_name。
 	user, err := h.repo.GetUserByID(ctx, userID)
 	if err != nil {
 		writeCode(w, http.StatusInternalServerError, 500, "internal error: "+err.Error())
@@ -356,32 +338,202 @@ func (h *adminHandler) handleCreateBinding(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	adminUserID := uint64(0)
+	if claims, ok := ClaimsFromContext(ctx); ok {
+		adminUserID = claims.UserID
+	}
+
 	bindUserName := ""
 	if user.DisplayName != nil {
 		bindUserName = *user.DisplayName
 	}
 
-	b := &domain.BindRelation{
-		UserID:           &userID,
-		BindUserName:     bindUserName,
-		GatewayID:        point.GatewayID,
-		NodeID:           &point.NodeID,
-		PointID:          &point.PointID,
-		ShedNo:           "",
-		Frequency:        point.Frequency,
-		DeviceExternalID: point.DeviceExternalID,
-		FunctionType:     point.FunctionType,
-	}
+	switch bindingType {
+	case domain.BindingTypeGateway:
+		gatewayID, err := strconv.ParseUint(req.GatewayID, 10, 64)
+		if err != nil {
+			writeCode(w, http.StatusBadRequest, 400, "invalid gateway_id")
+			return
+		}
+		existingByGateway, err := h.repo.FindActiveBindingByGateway(ctx, gatewayID)
+		if err != nil {
+			writeCode(w, http.StatusInternalServerError, 500, "internal error: "+err.Error())
+			return
+		}
+		if existingByGateway != nil {
+			existingUserID := uint64(0)
+			if existingByGateway.UserID != nil {
+				existingUserID = *existingByGateway.UserID
+			}
+			if existingUserID == userID {
+				writeJSON(w, http.StatusOK, map[string]any{"data": existingByGateway})
+				return
+			}
+			writeJSON(w, http.StatusConflict, map[string]any{
+				"code":    409,
+				"message": "gateway already bound to another user",
+				"data": map[string]any{
+					"existing_user_id":   idStr(existingUserID),
+					"existing_bind_id":   idStr(existingByGateway.BindID),
+					"existing_user_name": existingByGateway.BindUserName,
+				},
+			})
+			return
+		}
 
-	if err := h.repo.CreateBinding(ctx, b); err != nil {
-		log.Printf("[handleCreateBinding] repo.CreateBinding failed: user_id=%d point_id=%d err=%v", userID, pointID, err)
-		writeCode(w, http.StatusInternalServerError, 500, "failed to create binding: "+err.Error())
+		gateway, err := h.repo.FindGatewayByID(ctx, gatewayID)
+		if err != nil {
+			writeCode(w, http.StatusInternalServerError, 500, "internal error: "+err.Error())
+			return
+		}
+		if gateway == nil {
+			writeCode(w, http.StatusNotFound, 404, "gateway not found")
+			return
+		}
+
+		b := &domain.BindRelation{
+			UserID:            &userID,
+			BindUserName:      bindUserName,
+			BindingType:       string(domain.BindingTypeGateway),
+			GatewayID:         gateway.GatewayID,
+			GatewayName:       gateway.GatewayName,
+			GatewayExternalID: gateway.GatewayExternalID,
+			ShedNo:            "",
+			Frequency:         0,
+			DeviceExternalID:  "",
+			FunctionType:      0,
+			CreatedBy:         uint64Ptr(adminUserID),
+		}
+		if err := h.repo.CreateBinding(ctx, b); err != nil {
+			if errors.Is(err, domain.ErrBindingConflict) {
+				existingByGateway, _ := h.repo.FindActiveBindingByGateway(ctx, gatewayID)
+				existingUserID := userID
+				existingBindID := b.BindID
+				existingUserName := b.BindUserName
+				if existingByGateway != nil {
+					existingBindID = existingByGateway.BindID
+					existingUserName = existingByGateway.BindUserName
+					if existingByGateway.UserID != nil {
+						existingUserID = *existingByGateway.UserID
+					}
+				}
+				writeJSON(w, http.StatusConflict, map[string]any{
+					"code":    409,
+					"message": "gateway already bound to another user",
+					"data": map[string]any{
+						"existing_user_id":   idStr(existingUserID),
+						"existing_bind_id":   idStr(existingBindID),
+						"existing_user_name": existingUserName,
+					},
+				})
+				return
+			}
+			log.Printf("[handleCreateBinding] repo.CreateBinding failed: user_id=%d gateway_id=%d err=%v", userID, gatewayID, err)
+			writeCode(w, http.StatusInternalServerError, 500, "failed to create binding: "+err.Error())
+			return
+		}
+
+		log.Printf("[handleCreateBinding] success: bind_id=%d user_id=%d gateway_id=%d", b.BindID, userID, gatewayID)
+		writeJSON(w, http.StatusOK, map[string]any{"data": b})
+		return
+
+	case domain.BindingTypePoint:
+		pointID, err := strconv.ParseUint(req.PointID, 10, 64)
+		if err != nil {
+			writeCode(w, http.StatusBadRequest, 400, "invalid point_id")
+			return
+		}
+
+		existingByPoint, err := h.repo.FindActiveBindingByPoint(ctx, pointID)
+		if err != nil {
+			writeCode(w, http.StatusInternalServerError, 500, "internal error: "+err.Error())
+			return
+		}
+		if existingByPoint != nil {
+			existingUserID := uint64(0)
+			if existingByPoint.UserID != nil {
+				existingUserID = *existingByPoint.UserID
+			}
+			if existingUserID == userID {
+				writeJSON(w, http.StatusOK, map[string]any{"data": existingByPoint})
+				return
+			}
+			writeJSON(w, http.StatusConflict, map[string]any{
+				"code":    409,
+				"message": "device point already bound to another user",
+				"data": map[string]any{
+					"existing_user_id":   idStr(existingUserID),
+					"existing_bind_id":   idStr(existingByPoint.BindID),
+					"existing_user_name": existingByPoint.BindUserName,
+				},
+			})
+			return
+		}
+
+		point, err := h.repo.FindDevicePointByID(ctx, pointID)
+		if err != nil {
+			writeCode(w, http.StatusInternalServerError, 500, "internal error: "+err.Error())
+			return
+		}
+		if point == nil {
+			writeCode(w, http.StatusNotFound, 404, "device point not found")
+			return
+		}
+		gateway, err := h.repo.FindGatewayByID(ctx, point.GatewayID)
+		if err != nil {
+			writeCode(w, http.StatusInternalServerError, 500, "internal error: "+err.Error())
+			return
+		}
+		if gateway == nil {
+			writeCode(w, http.StatusNotFound, 404, "gateway not found")
+			return
+		}
+		collectorNode, err := h.repo.FindCollectorNodeByID(ctx, point.NodeID)
+		if err != nil {
+			writeCode(w, http.StatusInternalServerError, 500, "internal error: "+err.Error())
+			return
+		}
+		collector := &domain.BindingCollectorSummary{
+			PointID:          point.PointID,
+			NodeID:           point.NodeID,
+			PointName:        point.PointName,
+			FunctionType:     point.FunctionType,
+			FunctionName:     point.FunctionType.FunctionTypeName(),
+			ChannelNo:        point.ChannelNo,
+			ShedNo:           "",
+			Frequency:        point.Frequency,
+			DeviceExternalID: point.DeviceExternalID,
+		}
+		if collectorNode != nil {
+			collector.ShedNo = collectorNode.ShedNo
+		}
+		b := &domain.BindRelation{
+			UserID:            &userID,
+			BindUserName:      bindUserName,
+			BindingType:       string(domain.BindingTypePoint),
+			GatewayID:         point.GatewayID,
+			GatewayName:       gateway.GatewayName,
+			GatewayExternalID: gateway.GatewayExternalID,
+			NodeID:            &point.NodeID,
+			PointID:           &point.PointID,
+			ShedNo:            "",
+			Frequency:         point.Frequency,
+			DeviceExternalID:  point.DeviceExternalID,
+			FunctionType:      point.FunctionType,
+			Collector:         collector,
+			CreatedBy:         uint64Ptr(adminUserID),
+		}
+
+		if err := h.repo.CreateBinding(ctx, b); err != nil {
+			log.Printf("[handleCreateBinding] repo.CreateBinding failed: user_id=%d point_id=%d err=%v", userID, pointID, err)
+			writeCode(w, http.StatusInternalServerError, 500, "failed to create binding: "+err.Error())
+			return
+		}
+
+		log.Printf("[handleCreateBinding] success: bind_id=%d user_id=%d point_id=%d", b.BindID, userID, pointID)
+		writeJSON(w, http.StatusOK, map[string]any{"data": b})
 		return
 	}
-
-	log.Printf("[handleCreateBinding] success: bind_id=%d user_id=%d point_id=%d", b.BindID, userID, pointID)
-
-	writeJSON(w, http.StatusOK, map[string]any{"data": b})
 }
 
 // handleUnbind 处理 DELETE /api/v1/admin/bindings/{id}。
@@ -483,6 +635,17 @@ func (h *adminHandler) handleDevicePointSearch(w http.ResponseWriter, r *http.Re
 	writeJSON(w, http.StatusOK, map[string]any{"data": results})
 }
 
+// handleGatewayBindCandidates 处理 GET /api/v1/admin/gateway-bind-candidates。
+func (h *adminHandler) handleGatewayBindCandidates(w http.ResponseWriter, r *http.Request) {
+	keyword := strings.TrimSpace(r.URL.Query().Get("keyword"))
+	items, err := h.repo.ListGatewayBindCandidates(r.Context(), keyword)
+	if err != nil {
+		writeCode(w, http.StatusInternalServerError, 500, "internal error: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"data": items})
+}
+
 // handleDevicePointUpdate 处理 PATCH /api/v1/admin/device-points/{point_id}。
 func (h *adminHandler) handleDevicePointUpdate(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1/admin/device-points/")
@@ -524,6 +687,115 @@ func (h *adminHandler) handleDevicePointUpdate(w http.ResponseWriter, r *http.Re
 			"updated":  true,
 		},
 	})
+}
+
+// handleDevicePointControl 处理 POST /api/v1/admin/device-points/{point_id}/control。
+func (h *adminHandler) handleDevicePointControl(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeCode(w, http.StatusMethodNotAllowed, 405, "method not allowed")
+		return
+	}
+	path := strings.TrimPrefix(r.URL.Path, "/api/v1/admin/device-points/")
+	path = strings.TrimSuffix(path, "/control")
+	path = strings.TrimSpace(path)
+	pointID, err := strconv.ParseUint(path, 10, 64)
+	if err != nil || pointID == 0 {
+		writeCode(w, http.StatusBadRequest, 400, "invalid point id")
+		return
+	}
+
+	point, err := h.repo.FindDevicePointByID(r.Context(), pointID)
+	if err != nil {
+		writeCode(w, http.StatusInternalServerError, 500, "internal error: "+err.Error())
+		return
+	}
+	if point == nil {
+		writeCode(w, http.StatusNotFound, 404, "device point not found")
+		return
+	}
+
+	claims, ok := ClaimsFromContext(r.Context())
+	if !ok {
+		writeCode(w, http.StatusUnauthorized, 401, "missing claims")
+		return
+	}
+
+	var req struct {
+		Action     string `json:"action"`
+		CommandHex string `json:"command_hex"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeCode(w, http.StatusBadRequest, 400, "invalid request body")
+		return
+	}
+
+	input, actionLabel, err := buildAdminControlCommandInput(pointID, claims.UserID, req.Action, req.CommandHex)
+	if err != nil {
+		writeCode(w, http.StatusBadRequest, 400, err.Error())
+		return
+	}
+
+	cmd, err := h.repo.CreateControlCommandForPoint(r.Context(), input)
+	if err != nil {
+		writeCode(w, http.StatusInternalServerError, 500, "failed to create control command")
+		return
+	}
+	if cmd == nil {
+		writeCode(w, http.StatusInternalServerError, 500, "failed to create control command")
+		return
+	}
+
+	writeJSON(w, http.StatusAccepted, map[string]any{
+		"data": map[string]any{
+			"command_id":   idStr(cmd.CommandID),
+			"point_id":     idStr(point.PointID),
+			"action":       req.Action,
+			"action_label": actionLabel,
+			"status":       cmd.CommandStatus.Label(),
+			"command_hex":  cmd.CommandHex,
+		},
+	})
+}
+
+func buildAdminControlCommandInput(pointID uint64, userID uint64, action string, commandHex string) (domain.CreateControlCommandInput, string, error) {
+	reqBy := userID
+	extra := `{"source":"admin_control"}`
+	input := domain.CreateControlCommandInput{
+		PointID:       pointID,
+		RequestedBy:   &reqBy,
+		CommandSource: domain.CommandSourceAdmin,
+		Extra:         &extra,
+	}
+	trimmedHex := strings.ToUpper(strings.TrimSpace(commandHex))
+	if trimmedHex != "" {
+		if !isHexCommand(trimmedHex) {
+			return input, "", fmt.Errorf("command_hex must be hex")
+		}
+		input.CommandType = domain.CommandTypeCustomHex
+		input.CommandHex = trimmedHex
+		return input, "自定义", nil
+	}
+
+	switch strings.ToLower(strings.TrimSpace(action)) {
+	case "open":
+		rel := uint8(1)
+		input.CommandType = domain.CommandTypeRelayOpen
+		input.CommandHex = "F0"
+		input.Rel1TargetStatus = &rel
+		return input, "开启", nil
+	case "close":
+		rel := uint8(1)
+		input.CommandType = domain.CommandTypeRelayClose
+		input.CommandHex = "0F"
+		input.Rel2TargetStatus = &rel
+		return input, "关闭", nil
+	case "stop":
+		input.CommandType = domain.CommandTypeRelayStop
+		input.CommandHex = "00"
+		return input, "停止", nil
+	default:
+		return input, "", fmt.Errorf("action must be open, close, stop, or command_hex must be provided")
+	}
 }
 
 type devicePointUpdateRequest struct {
@@ -626,6 +898,13 @@ func trimStringPtr(v *string) *string {
 	}
 	trimmed := strings.TrimSpace(*v)
 	return &trimmed
+}
+
+func uint64Ptr(v uint64) *uint64 {
+	if v == 0 {
+		return nil
+	}
+	return &v
 }
 
 func isHexCommand(v string) bool {

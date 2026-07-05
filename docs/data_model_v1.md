@@ -379,7 +379,7 @@ MySQL 是业务唯一事实来源：
 - `sensor_data` 记录按功能点沉淀的历史曲线。
 - `raw_device_events` 记录原始设备输入，便于追溯和重放解析。
 - `control_commands/control_results` 记录控制闭环。
-- `bind_relations` 记录农户和设备功能点的可见/可操作关系。
+- `bind_relations` 记录农户和设备网关/功能点的可见/可操作关系。当前默认是农户绑定设备网关，旧功能点绑定保留兼容。
 
 ## 8. 已确认的上线与迭代方案
 

@@ -15,14 +15,17 @@ import (
 
 func main() {
 	cfg := gatewayadapter.Config{
-		TCPAddr:        envDefault("NEHUANG_GATEWAY_TCP_ADDR", ":8081"),
-		HealthAddr:     envDefault("NEHUANG_GATEWAY_HEALTH_ADDR", ":18081"),
-		APIBaseURL:     envDefault("NEHUANG_GATEWAY_API_BASE_URL", "http://43.143.208.153:8080"),
-		AdapterToken:   envDefault("NEHUANG_ADAPTER_TOKEN", "nehuang-adapter-dev-token"),
-		RawLogDir:      envDefault("NEHUANG_GATEWAY_RAW_LOG_DIR", "data/gateway-adapter/raw-frames"),
-		Debug:          envBool("NEHUANG_GATEWAY_DEBUG", false),
-		ReadBufferSize: envInt("NEHUANG_GATEWAY_READ_BUFFER_SIZE", 4096),
-		ReadTimeout:    time.Duration(envInt("NEHUANG_GATEWAY_READ_TIMEOUT_SECONDS", 120)) * time.Second,
+		TCPAddr:             envDefault("NEHUANG_GATEWAY_TCP_ADDR", ":8081"),
+		HealthAddr:          envDefault("NEHUANG_GATEWAY_HEALTH_ADDR", ":18081"),
+		APIBaseURL:          envDefault("NEHUANG_GATEWAY_API_BASE_URL", "http://43.143.208.153:8080"),
+		AdapterToken:        envDefault("NEHUANG_ADAPTER_TOKEN", "nehuang-adapter-dev-token"),
+		RawLogDir:           envDefault("NEHUANG_GATEWAY_RAW_LOG_DIR", "data/gateway-adapter/raw-frames"),
+		Debug:               envBool("NEHUANG_GATEWAY_DEBUG", false),
+		ReadBufferSize:      envInt("NEHUANG_GATEWAY_READ_BUFFER_SIZE", 4096),
+		ReadTimeout:         time.Duration(envInt("NEHUANG_GATEWAY_READ_TIMEOUT_SECONDS", 120)) * time.Second,
+		CommandPollInterval: time.Duration(envInt("NEHUANG_GATEWAY_COMMAND_POLL_INTERVAL_SECONDS", 2)) * time.Second,
+		CommandPollLimit:    envInt("NEHUANG_GATEWAY_COMMAND_POLL_LIMIT", 20),
+		CommandWriteTimeout: time.Duration(envInt("NEHUANG_GATEWAY_COMMAND_WRITE_TIMEOUT_SECONDS", 5)) * time.Second,
 	}
 
 	logger := gatewayadapter.NewLogger(os.Stdout)

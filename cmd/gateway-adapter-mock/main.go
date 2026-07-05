@@ -1,9 +1,11 @@
 package main
 
 import (
+	"context"
 	"encoding/hex"
 	"flag"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"strings"
@@ -23,9 +25,16 @@ func main() {
 	frameName := flag.String("frame", "all", "frame to send: all, register, heartbeat, work, alarm, unknown")
 	repeat := flag.Int("repeat", 1, "repeat count")
 	delay := flag.Duration("delay", 300*time.Millisecond, "delay between frames")
+	waitDownlink := flag.Bool("wait-downlink", false, "send bootstrap frames, then wait and print downlink bytes")
+	waitTimeout := flag.Duration("wait-timeout", 0, "read timeout while waiting for downlink; 0 means wait until connection closes")
 	flag.Parse()
 
-	frames, err := selectFrames(*frameName)
+	selectedFrameName := *frameName
+	if *waitDownlink && strings.EqualFold(strings.TrimSpace(selectedFrameName), "all") {
+		selectedFrameName = "register,heartbeat"
+	}
+
+	frames, err := selectFrames(selectedFrameName)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
@@ -55,6 +64,10 @@ func main() {
 			)
 			time.Sleep(*delay)
 		}
+	}
+
+	if *waitDownlink {
+		waitForDownlink(conn, *waitTimeout)
 	}
 }
 
@@ -91,12 +104,21 @@ func selectFrames(name string) ([]sampleFrame, error) {
 	if key == "" || key == "all" {
 		return all, nil
 	}
+	byName := make(map[string]sampleFrame, len(all))
 	for _, frame := range all {
-		if frame.name == key {
-			return []sampleFrame{frame}, nil
-		}
+		byName[frame.name] = frame
 	}
-	return nil, fmt.Errorf("unknown frame %q; use all, register, heartbeat, work, alarm, or unknown", name)
+	parts := strings.Split(key, ",")
+	selected := make([]sampleFrame, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		frame, ok := byName[part]
+		if !ok {
+			return nil, fmt.Errorf("unknown frame %q; use all, register, heartbeat, work, alarm, or unknown", part)
+		}
+		selected = append(selected, frame)
+	}
+	return selected, nil
 }
 
 func mustHex(raw string) []byte {
@@ -105,4 +127,44 @@ func mustHex(raw string) []byte {
 		panic(err)
 	}
 	return payload
+}
+
+func waitForDownlink(conn net.Conn, timeout time.Duration) {
+	ctx := context.Background()
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
+
+	buf := make([]byte, 4096)
+	for {
+		if deadline, ok := ctx.Deadline(); ok {
+			_ = conn.SetReadDeadline(deadline)
+		}
+		n, err := conn.Read(buf)
+		if err != nil {
+			if ok, err := isTimeout(err); ok {
+				fmt.Fprintf(os.Stderr, "wait downlink timeout: %v\n", err)
+				return
+			}
+			if err == io.EOF {
+				fmt.Fprintln(os.Stderr, "connection closed by adapter")
+				return
+			}
+			fmt.Fprintf(os.Stderr, "read downlink: %v\n", err)
+			return
+		}
+		fmt.Printf("received downlink bytes=%d hex=%s\n", n, strings.ToUpper(hex.EncodeToString(buf[:n])))
+	}
+}
+
+func isTimeout(err error) (bool, error) {
+	if err == nil {
+		return false, nil
+	}
+	if ne, ok := err.(net.Error); ok && ne.Timeout() {
+		return true, err
+	}
+	return false, err
 }

@@ -12,6 +12,7 @@
 | `current_api.md` | 当前代码真实注册的 HTTP API |
 | `gateway_adapter.md` | Go TCP Adapter 的运行方式、TCP 交互口径、raw 日志和模拟发包 |
 | `hardware_protocol_current.md` | 根据甲方最新硬件侧逻辑说明书整理的云端相关协议边界 |
+| `customer_questions.md` | 待甲方明确答复的问题，覆盖后台口径、报文、ACK、时隙和联调 |
 | `architecture_v1.md` | 当前四层架构、数据流、控制链路和发布边界 |
 | `data_model_v1.md` | 设备身份、主模型、兼容投影和写库口径 |
 | `deploy_guide.md` | 部署、迁移、线上验证 |

@@ -19,14 +19,17 @@ import (
 )
 
 type Config struct {
-	TCPAddr        string
-	HealthAddr     string
-	APIBaseURL     string
-	AdapterToken   string
-	RawLogDir      string
-	Debug          bool
-	ReadBufferSize int
-	ReadTimeout    time.Duration
+	TCPAddr             string
+	HealthAddr          string
+	APIBaseURL          string
+	AdapterToken        string
+	RawLogDir           string
+	Debug               bool
+	ReadBufferSize      int
+	ReadTimeout         time.Duration
+	CommandPollInterval time.Duration
+	CommandPollLimit    int
+	CommandWriteTimeout time.Duration
 }
 
 type Server struct {
@@ -60,6 +63,15 @@ func NewServer(cfg Config, jw *journal.Writer, logger *Logger) *Server {
 	}
 	if cfg.ReadTimeout <= 0 {
 		cfg.ReadTimeout = 120 * time.Second
+	}
+	if cfg.CommandPollInterval <= 0 {
+		cfg.CommandPollInterval = 2 * time.Second
+	}
+	if cfg.CommandPollLimit <= 0 {
+		cfg.CommandPollLimit = 20
+	}
+	if cfg.CommandWriteTimeout <= 0 {
+		cfg.CommandWriteTimeout = 5 * time.Second
 	}
 	if logger == nil {
 		logger = NewLogger(nil)
@@ -147,7 +159,11 @@ func (s *Server) handleConn(conn net.Conn) {
 	remoteAddr := conn.RemoteAddr().String()
 	remoteIP, remotePort := splitRemote(remoteAddr)
 	var gatewayName string
+	var gatewayExternalID string
 	var rawSeq uint64
+	connCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var startCommandPolling sync.Once
 
 	s.logger.Info("gateway_connection_opened", map[string]any{
 		"connection_id": connectionID,
@@ -214,6 +230,14 @@ func (s *Server) handleConn(conn net.Conn) {
 		if msg.Kind == protocol.MessageHeartbeat && gatewayName == "" {
 			gatewayName = msg.GatewayName
 		}
+		if gatewayName != "" && gatewayExternalID == "" {
+			gatewayExternalID = protocol.GatewayExternalID(gatewayName)
+		}
+		if gatewayExternalID != "" {
+			startCommandPolling.Do(func() {
+				s.startPendingCommandLoop(connCtx, conn, connectionID, gatewayName, gatewayExternalID)
+			})
+		}
 		if err := s.forwardRawFrame(context.Background(), frame, gatewayName, remoteIP, remotePort); err != nil {
 			s.forwardFailures.Add(1)
 			s.logger.Warn("gateway_raw_frame_forward_failed", map[string]any{
@@ -225,6 +249,118 @@ func (s *Server) handleConn(conn net.Conn) {
 			})
 		}
 	}
+}
+
+func (s *Server) startPendingCommandLoop(ctx context.Context, conn net.Conn, connectionID, gatewayName, gatewayExternalID string) {
+	s.logger.Info("gateway_command_polling_started", map[string]any{
+		"connection_id":       connectionID,
+		"gateway_name":        gatewayName,
+		"gateway_external_id": gatewayExternalID,
+		"poll_interval_ms":    s.cfg.CommandPollInterval.Milliseconds(),
+		"poll_limit":          s.cfg.CommandPollLimit,
+	})
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		s.pollPendingCommands(ctx, conn, connectionID, gatewayName, gatewayExternalID)
+	}()
+}
+
+func (s *Server) pollPendingCommands(ctx context.Context, conn net.Conn, connectionID, gatewayName, gatewayExternalID string) {
+	timer := time.NewTimer(0)
+	defer timer.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-timer.C:
+		}
+
+		commands, err := s.forwarder.ListPendingCommands(ctx, gatewayExternalID, s.cfg.CommandPollLimit)
+		if err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+			s.logger.Warn("gateway_pending_commands_poll_failed", map[string]any{
+				"connection_id":       connectionID,
+				"gateway_name":        gatewayName,
+				"gateway_external_id": gatewayExternalID,
+				"error":               err.Error(),
+			})
+		} else {
+			s.dispatchPendingCommands(ctx, conn, connectionID, gatewayName, gatewayExternalID, commands)
+		}
+
+		timer.Reset(s.cfg.CommandPollInterval)
+	}
+}
+
+func (s *Server) dispatchPendingCommands(ctx context.Context, conn net.Conn, connectionID, gatewayName, gatewayExternalID string, commands []PendingCommand) {
+	for _, command := range commands {
+		if ctx.Err() != nil {
+			return
+		}
+		payload, err := decodeCommandHex(command.CommandHex)
+		if err != nil {
+			s.logger.Error("gateway_pending_command_decode_failed", map[string]any{
+				"connection_id":       connectionID,
+				"gateway_name":        gatewayName,
+				"gateway_external_id": gatewayExternalID,
+				"command_id":          command.CommandID,
+				"error":               err.Error(),
+			})
+			continue
+		}
+		if s.cfg.CommandWriteTimeout > 0 {
+			_ = conn.SetWriteDeadline(time.Now().Add(s.cfg.CommandWriteTimeout))
+		}
+		if _, err := conn.Write(payload); err != nil {
+			s.logger.Warn("gateway_pending_command_write_failed", map[string]any{
+				"connection_id":       connectionID,
+				"gateway_name":        gatewayName,
+				"gateway_external_id": gatewayExternalID,
+				"command_id":          command.CommandID,
+				"error":               err.Error(),
+			})
+			return
+		}
+		if s.cfg.CommandWriteTimeout > 0 {
+			_ = conn.SetWriteDeadline(time.Time{})
+		}
+		s.logger.Info("gateway_pending_command_written", map[string]any{
+			"connection_id":       connectionID,
+			"gateway_name":        gatewayName,
+			"gateway_external_id": gatewayExternalID,
+			"command_id":          command.CommandID,
+			"bytes":               len(payload),
+		})
+		if err := s.forwarder.MarkCommandSent(ctx, command.CommandID); err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+			s.logger.Warn("gateway_pending_command_mark_sent_failed", map[string]any{
+				"connection_id":       connectionID,
+				"gateway_name":        gatewayName,
+				"gateway_external_id": gatewayExternalID,
+				"command_id":          command.CommandID,
+				"error":               err.Error(),
+			})
+			continue
+		}
+	}
+}
+
+func decodeCommandHex(raw string) ([]byte, error) {
+	normalized := strings.Join(strings.Fields(strings.TrimSpace(raw)), "")
+	normalized = strings.TrimPrefix(strings.TrimPrefix(normalized, "0x"), "0X")
+	if normalized == "" {
+		return nil, errors.New("command_hex is empty")
+	}
+	payload, err := hex.DecodeString(normalized)
+	if err != nil {
+		return nil, err
+	}
+	return payload, nil
 }
 
 func (s *Server) forwardRawFrame(ctx context.Context, frame journal.Frame, gatewayName, remoteIP string, remotePort int) error {

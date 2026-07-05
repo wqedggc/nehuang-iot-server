@@ -1,7 +1,12 @@
 // Package domain 定义涅凰智农 IoT 平台核心业务实体。
 package domain
 
-import "time"
+import (
+	"errors"
+	"time"
+)
+
+var ErrBindingConflict = errors.New("binding conflict")
 
 // ─── 原始设备事件 ───
 
@@ -321,24 +326,58 @@ type SensorData struct {
 
 // BindRelation 对应 bind_relations 表。
 type BindRelation struct {
-	BindID           uint64       `json:"bind_id,string"`
-	UserID           *uint64      `json:"user_id,string"`
-	BindUserName     string       `json:"bind_user_name"`
-	GatewayID        uint64       `json:"gateway_id,string"`
-	RealtimeID       *uint64      `json:"realtime_id,string"`
-	NodeID           *uint64      `json:"node_id,string"`
-	PointID          *uint64      `json:"point_id,string"`
-	ShedNo           string       `json:"shed_no"`
-	Frequency        int          `json:"frequency"`
-	DeviceExternalID string       `json:"device_external_id"`
+	BindID            uint64                   `json:"bind_id,string"`
+	UserID            *uint64                  `json:"user_id,string"`
+	BindUserName      string                   `json:"bind_user_name"`
+	BindingType       string                   `json:"binding_type"`
+	GatewayID         uint64                   `json:"gateway_id,string"`
+	GatewayName       string                   `json:"gateway_name"`
+	GatewayExternalID string                   `json:"gateway_external_id"`
+	RealtimeID        *uint64                  `json:"realtime_id,string"`
+	NodeID            *uint64                  `json:"node_id,string"`
+	PointID           *uint64                  `json:"point_id,string"`
+	ShedNo            string                   `json:"shed_no"`
+	Frequency         int                      `json:"frequency"`
+	DeviceExternalID  string                   `json:"device_external_id"`
+	FunctionType      FunctionType             `json:"function_type"`
+	Collector         *BindingCollectorSummary `json:"collector,omitempty"`
+	BindStatus        BindStatus               `json:"bind_status"`
+	BoundAtMS         time.Time                `json:"bound_at_ms"`
+	UnboundAtMS       *time.Time               `json:"unbound_at_ms"`
+	CreatedBy         *uint64                  `json:"created_by,string"`
+	Extra             *string                  `json:"extra"`
+	CreatedAt         time.Time                `json:"created_at"`
+	UpdatedAt         time.Time                `json:"updated_at"`
+}
+
+// BindingCollectorSummary 是绑定列表中点位摘要的响应视图。
+type BindingCollectorSummary struct {
+	PointID          uint64       `json:"point_id,string"`
+	NodeID           uint64       `json:"node_id,string"`
+	PointName        string       `json:"point_name"`
 	FunctionType     FunctionType `json:"function_type"`
-	BindStatus       BindStatus   `json:"bind_status"`
-	BoundAtMS        time.Time    `json:"bound_at_ms"`
-	UnboundAtMS      *time.Time   `json:"unbound_at_ms"`
-	CreatedBy        *uint64      `json:"created_by,string"`
-	Extra            *string      `json:"extra"`
-	CreatedAt        time.Time    `json:"created_at"`
-	UpdatedAt        time.Time    `json:"updated_at"`
+	FunctionName     string       `json:"func_name"`
+	ChannelNo        int          `json:"channel_no"`
+	ShedNo           string       `json:"shed_no"`
+	Frequency        int          `json:"freq"`
+	DeviceExternalID string       `json:"devid"`
+}
+
+// BindingType 绑定类型。
+type BindingType string
+
+const (
+	BindingTypeGateway BindingType = "gateway"
+	BindingTypePoint   BindingType = "point"
+)
+
+// GatewayBindCandidate 是管理端网关级绑定弹窗的候选项。
+type GatewayBindCandidate struct {
+	GatewayID         uint64 `json:"gateway_id,string"`
+	GatewayName       string `json:"gateway_name"`
+	GatewayExternalID string `json:"gateway_external_id"`
+	OnlineStatus      uint8  `json:"online_status"`
+	LastHeartbeatAtMS string `json:"last_heartbeat_at_ms"`
 }
 
 // BindStatus 绑定状态。

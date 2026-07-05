@@ -13,7 +13,7 @@
   -> 全量 raw frame 上报 Go 服务
   -> Go 服务先写 raw_device_events，再最小解析 register/heartbeat
   -> Go nehuang-server 维护 MySQL 主模型
-  -> Admin 管理已有设备点位和绑定
+  -> Admin 按设备网关管理设备和绑定
   -> Mini/C 端查看已绑定设备并创建异步控制命令
 ```
 
@@ -33,6 +33,9 @@
 
 - Admin 登录、Dashboard、用户/农户管理。
 - 设备树：`cloud_gateways -> collector_nodes -> device_points`。
+- Admin 术语已统一为设备网关、采集执行器、功能点、原始报文。
+- 设备管理按设备网关一级列表展示，选中设备网关后查看采集执行器和功能点。
+- 绑定管理默认支持农户绑定设备网关，并兼容旧功能点绑定。
 - 功能点搜索、绑定、解绑。
 - 点位配置 API：
   - `point_name`
@@ -46,8 +49,9 @@
   - `poll_cmd`
   - `point_status`
   - `remark`
-- 原始事件查看。
-- Payload 排查页面。
+- 原始报文查看。
+- 原始报文排查页面。
+- 原始报文排查按 `event_type` 分开展示注册、心跳、工作数据、告警、未知包。
 - Mini 微信登录接口。
 - Mini 农户资料、设备列表、实时数据、历史曲线。
 - Dashboard/Mini history 支持 `1d/3d/7d/30d`，兼容 `1h/6h/24h`。
@@ -71,13 +75,16 @@
 - 注册/心跳的业务解析由 Go 服务在 raw frame 落库后完成。
 - CRC-16/MODBUS 固定实现。
 - `cmd/gateway-adapter-mock` 可模拟注册、心跳、工作包、告警包、未知包。
+- `cmd/gateway-adapter-mock` 可进入等待下行模式，打印 Adapter 写回 TCP 的 command hex。
 - `cmd/gateway-adapter-replay` 可回放 raw journal 并统计分类结果。
+- 识别出设备网关后，Adapter 会按 `gateway_external_id` 拉取 pending command。
+- Adapter 能把 pending command 的 `command_hex` 写回当前 TCP 连接，并在成功写回后标记 `sent`。
 
 当前限制：
 
 - 工作包已经能进入 Go 服务 `raw_device_events`，但仍不解析字段。
 - 告警包已经能进入 Go 服务 `raw_device_events`，但仍不入业务告警。
-- 未实现真实下行 hex 写回硬件连接。
+- 下行 hex 写回已经具备 Mock 演示能力；真实硬件 ACK 语义仍待确认。
 - 未实现时隙调度。
 
 ### 2.3 控制链路
@@ -86,15 +93,16 @@
 
 - `control_commands` / `control_results` 领域模型。
 - Mini 控制请求创建异步控制命令并返回 `command_id + pending`。
+- Admin 可按功能点创建异步控制命令，并返回 `command_id + pending`。
 - Adapter 内部接口：
   - 拉取 pending command。
   - 标记 sent。
   - 回写 ack/succeeded/failed/timeout。
+- Adapter 已接入 pending 拉取、TCP 写回和 sent 标记。
 
 未实现：
 
 - Admin 控制发起页面。
-- Adapter 真实下发 hex。
 - MCU ACK 解析。
 - 命令超时扫描完整接入。
 - 控制结果驱动前端状态刷新。
@@ -112,7 +120,15 @@
 
 当前没有实现“后台手动新增设备/网关/采集执行器/功能点”的完整产品能力。
 
-后台的“绑定设备”实际含义是：
+后台当前默认绑定口径是：
+
+```text
+农户
+  -> 设备网关
+  -> 设备网关下所有采集执行器和功能点
+```
+
+旧版“绑定功能点”继续保留兼容：
 
 ```text
 从已经上报并入库的 device_points 中选择一个功能点
@@ -184,7 +200,7 @@
 | 告警 parser 与去重 | 未实现 | R/S 故障不能进入告警业务和通知 | 告警包最终格式、重复 3 次的去重窗口 |
 | ACK/清缓存语义 | 未实现 | 无法确认 MCU 是否已收到、是否可清缓存 | `AA AA BB ZZ` 在不同场景的准确含义 |
 | 时隙调度 | 未实现 | 不能按 2 秒窗口可靠下发命令 | 时隙由云端、Adapter、硬件网关还是 MCU 维护 |
-| 控制真实下发 | 命令队列骨架已实现 | Mini/Admin 控制不能真正到硬件 | 下行 hex 完整格式和 ACK 格式 |
+| 控制真实下发 | Mock 链路已通，真实硬件未验收 | Mini/Admin 控制能进入 TCP 下行演示，但不能承诺 MCU 执行 | 下行 hex 完整格式和 ACK 格式 |
 | Adapter 生产部署 | 未完成 | 云端还不能让硬件正式切到新 TCP 入口 | TCP 端口、安全组、systemd、日志目录 |
 | 设备首次入库 | register 已有，work 入点位未完成 | 真实采集执行器和功能点不能自动完整建档 | 工作包里如何表达 function_type/channel_no |
 | 手动新增设备 | 未实现 | 如果甲方要施工前录入设备，当前不满足 | 是否需要手动创建 gateway/node/point 或 Excel 导入 |
@@ -221,11 +237,12 @@
 
 当前下一步不应先做复杂 UI，而应先完成硬件接入的最小闭环：
 
-1. 部署 `gateway-adapter` 到腾讯云独立端口。
-2. 让甲方硬件网关连 TCP 端口并发送注册、心跳、工作包样例。
-3. 用 raw journal 和 replay 工具确认真实包形态。
-4. 根据真实样例补 parser。
-5. 先打通：
+1. 把本轮 Admin/Adapter 改动部署到腾讯云。
+2. 用 `gateway-adapter-mock -wait-downlink` 验证控制命令从 Server 到 TCP 下行。
+3. 让甲方硬件网关连 TCP 端口并发送注册、心跳、工作包样例。
+4. 用 raw journal 和 replay 工具确认真实包形态。
+5. 根据真实样例补 parser。
+6. 先打通：
    - 注册
    - 心跳
    - 一个工作包入 `sensor_data`

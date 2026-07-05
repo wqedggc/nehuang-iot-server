@@ -572,13 +572,21 @@ SELECT
   dp.function_type, dp.point_name,
   dp.real_value, dp.unit,
   dp.value_status, dp.run_mode, dp.updated_at
-FROM bind_relations br
-JOIN device_points dp ON br.point_id = dp.point_id
+FROM device_points dp
 JOIN cloud_gateways cg ON dp.gateway_id = cg.gateway_id
 JOIN collector_nodes cn ON dp.node_id = cn.node_id
-WHERE br.user_id = ? AND br.bind_status = 1
-  AND dp.point_status = 1
-ORDER BY dp.updated_at DESC`, userID)
+WHERE dp.point_status = 1
+  AND (
+    EXISTS (
+      SELECT 1 FROM bind_relations br
+      WHERE br.user_id = ? AND br.point_id = dp.point_id AND br.bind_status = 1
+    )
+    OR EXISTS (
+      SELECT 1 FROM bind_relations br
+      WHERE br.user_id = ? AND br.gateway_id = dp.gateway_id AND br.point_id IS NULL AND br.bind_status = 1
+    )
+  )
+ORDER BY dp.updated_at DESC`, userID, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -613,9 +621,20 @@ ORDER BY dp.updated_at DESC`, userID)
 func (r *Repository) CheckBindRelation(ctx context.Context, userID uint64, pointID uint64) (bool, error) {
 	var count int
 	err := r.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM bind_relations
-		 WHERE user_id = ? AND point_id = ? AND bind_status = 1`,
-		userID, pointID,
+		`SELECT COUNT(*)
+		 FROM device_points dp
+		 WHERE dp.point_id = ?
+		   AND (
+		     EXISTS (
+		       SELECT 1 FROM bind_relations br
+		       WHERE br.user_id = ? AND br.point_id = dp.point_id AND br.bind_status = 1
+		     )
+		     OR EXISTS (
+		       SELECT 1 FROM bind_relations br
+		       WHERE br.user_id = ? AND br.gateway_id = dp.gateway_id AND br.point_id IS NULL AND br.bind_status = 1
+		     )
+		   )`,
+		pointID, userID, userID,
 	).Scan(&count)
 	return count > 0, err
 }
@@ -786,18 +805,112 @@ func newDeviceRealtimeMapProjection(point *domain.DevicePoint) deviceRealtimeMap
 
 // ─── 绑定关系 ───
 
+type bindingRowScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanBindingRelationRow(row bindingRowScanner) (domain.BindRelation, error) {
+	var b domain.BindRelation
+	var (
+		sUserID, sRealtimeID, sNodeID, sPointID, sCreatedBy sql.NullInt64
+		sUnboundAtMS                                        sql.NullTime
+		sExtra                                              sql.NullString
+		sPointName, sCollectorShedNo                        sql.NullString
+		sCollectorNodeID                                    sql.NullInt64
+		sChannelNo                                          sql.NullInt64
+	)
+	if err := row.Scan(
+		&b.BindID,
+		&sUserID,
+		&b.BindUserName,
+		&b.GatewayID,
+		&b.GatewayName,
+		&b.GatewayExternalID,
+		&sRealtimeID,
+		&sNodeID,
+		&sPointID,
+		&b.ShedNo, &b.Frequency, &b.DeviceExternalID, &b.FunctionType,
+		&b.BindStatus, &b.BoundAtMS,
+		&sUnboundAtMS,
+		&sCreatedBy,
+		&sExtra,
+		&b.CreatedAt, &b.UpdatedAt,
+		&sPointName, &sChannelNo, &sCollectorShedNo, &sCollectorNodeID,
+	); err != nil {
+		return domain.BindRelation{}, err
+	}
+	if sUserID.Valid {
+		uid := uint64(sUserID.Int64)
+		b.UserID = &uid
+	}
+	if sRealtimeID.Valid {
+		rid := uint64(sRealtimeID.Int64)
+		b.RealtimeID = &rid
+	}
+	if sNodeID.Valid {
+		nid := uint64(sNodeID.Int64)
+		b.NodeID = &nid
+	}
+	if sPointID.Valid {
+		pid := uint64(sPointID.Int64)
+		b.PointID = &pid
+		b.BindingType = string(domain.BindingTypePoint)
+	} else {
+		b.BindingType = string(domain.BindingTypeGateway)
+	}
+	if sCreatedBy.Valid {
+		cb := uint64(sCreatedBy.Int64)
+		b.CreatedBy = &cb
+	}
+	if sUnboundAtMS.Valid {
+		b.UnboundAtMS = &sUnboundAtMS.Time
+	}
+	if sExtra.Valid {
+		b.Extra = &sExtra.String
+	}
+	if sPointID.Valid {
+		var collectorNodeID uint64
+		if sCollectorNodeID.Valid {
+			collectorNodeID = uint64(sCollectorNodeID.Int64)
+		}
+		collector := &domain.BindingCollectorSummary{
+			PointID:          uint64(sPointID.Int64),
+			NodeID:           collectorNodeID,
+			PointName:        sPointName.String,
+			FunctionType:     b.FunctionType,
+			FunctionName:     b.FunctionType.FunctionTypeName(),
+			ChannelNo:        int(sChannelNo.Int64),
+			ShedNo:           b.ShedNo,
+			Frequency:        b.Frequency,
+			DeviceExternalID: b.DeviceExternalID,
+		}
+		if collector.ShedNo == "" && sCollectorShedNo.Valid {
+			collector.ShedNo = sCollectorShedNo.String
+		}
+		b.Collector = collector
+	}
+	return b, nil
+}
+
+const bindingSelectColumns = `
+SELECT
+  br.bind_id, br.user_id, br.bind_user_name,
+  br.gateway_id, cg.gateway_name, cg.gateway_external_id,
+  br.realtime_id, br.node_id, br.point_id,
+  br.shed_no, br.frequency, br.device_external_id, br.function_type,
+  br.bind_status, br.bound_at_ms, br.unbound_at_ms, br.created_by,
+  br.extra, br.created_at, br.updated_at,
+  dp.point_name, dp.channel_no, cn.shed_no, cn.node_id
+FROM bind_relations br
+JOIN cloud_gateways cg ON cg.gateway_id = br.gateway_id
+LEFT JOIN device_points dp ON dp.point_id = br.point_id
+LEFT JOIN collector_nodes cn ON cn.node_id = dp.node_id`
+
 // ListBindings 返回所有 active 绑定关系列表。
 func (r *Repository) ListBindings(ctx context.Context) ([]domain.BindRelation, error) {
-	rows, err := r.db.QueryContext(ctx, `
-SELECT
-  bind_id, user_id, bind_user_name,
-  gateway_id, realtime_id, node_id, point_id,
-  shed_no, frequency, device_external_id, function_type,
-  bind_status, bound_at_ms, unbound_at_ms, created_by,
-  extra, created_at, updated_at
-FROM bind_relations
-WHERE bind_status = 1
-ORDER BY updated_at DESC
+	rows, err := r.db.QueryContext(ctx, bindingSelectColumns+`
+WHERE br.bind_status = 1
+ORDER BY br.updated_at DESC
 LIMIT 500`)
 	if err != nil {
 		return nil, err
@@ -806,22 +919,8 @@ LIMIT 500`)
 
 	bindings := make([]domain.BindRelation, 0)
 	for rows.Next() {
-		var b domain.BindRelation
-		if err := rows.Scan(
-			&b.BindID,
-			scanNullUint64(&b.UserID),
-			&b.BindUserName,
-			&b.GatewayID,
-			scanNullUint64(&b.RealtimeID),
-			scanNullUint64(&b.NodeID),
-			scanNullUint64(&b.PointID),
-			&b.ShedNo, &b.Frequency, &b.DeviceExternalID, &b.FunctionType,
-			&b.BindStatus, &b.BoundAtMS,
-			scanNullTime(&b.UnboundAtMS),
-			scanNullUint64(&b.CreatedBy),
-			scanNullString(&b.Extra),
-			&b.CreatedAt, &b.UpdatedAt,
-		); err != nil {
+		b, err := scanBindingRelationRow(rows)
+		if err != nil {
 			return nil, err
 		}
 		bindings = append(bindings, b)
@@ -832,67 +931,15 @@ LIMIT 500`)
 // FindActiveBindingByUserAndPoint 检查是否已存在用户对某个功能点的 active 绑定。
 // 返回已存在的绑定记录，不存在则返回 nil。
 func (r *Repository) FindActiveBindingByUserAndPoint(ctx context.Context, userID uint64, pointID uint64) (*domain.BindRelation, error) {
-	var b domain.BindRelation
-	var (
-		sUserID, sRealtimeID, sNodeID, sPointID, sCreatedBy sql.NullInt64
-		sUnboundAtMS                                        sql.NullTime
-		sExtra                                              sql.NullString
-	)
-	err := r.db.QueryRowContext(ctx, `
-SELECT
-  bind_id, user_id, bind_user_name,
-  gateway_id, realtime_id, node_id, point_id,
-  shed_no, frequency, device_external_id, function_type,
-  bind_status, bound_at_ms, unbound_at_ms, created_by,
-  extra, created_at, updated_at
-FROM bind_relations
-WHERE user_id = ? AND point_id = ? AND bind_status = 1
-LIMIT 1`, userID, pointID).Scan(
-		&b.BindID,
-		&sUserID,
-		&b.BindUserName,
-		&b.GatewayID,
-		&sRealtimeID,
-		&sNodeID,
-		&sPointID,
-		&b.ShedNo, &b.Frequency, &b.DeviceExternalID, &b.FunctionType,
-		&b.BindStatus, &b.BoundAtMS,
-		&sUnboundAtMS,
-		&sCreatedBy,
-		&sExtra,
-		&b.CreatedAt, &b.UpdatedAt,
-	)
+	row := r.db.QueryRowContext(ctx, bindingSelectColumns+`
+WHERE br.user_id = ? AND br.point_id = ? AND br.bind_status = 1
+LIMIT 1`, userID, pointID)
+	b, err := scanBindingRelationRow(row)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
-	}
-	if sUserID.Valid {
-		uid := uint64(sUserID.Int64)
-		b.UserID = &uid
-	}
-	if sRealtimeID.Valid {
-		rid := uint64(sRealtimeID.Int64)
-		b.RealtimeID = &rid
-	}
-	if sNodeID.Valid {
-		nid := uint64(sNodeID.Int64)
-		b.NodeID = &nid
-	}
-	if sPointID.Valid {
-		pid := uint64(sPointID.Int64)
-		b.PointID = &pid
-	}
-	if sCreatedBy.Valid {
-		cb := uint64(sCreatedBy.Int64)
-		b.CreatedBy = &cb
-	}
-	if sUnboundAtMS.Valid {
-		b.UnboundAtMS = &sUnboundAtMS.Time
-	}
-	if sExtra.Valid {
-		b.Extra = &sExtra.String
 	}
 	return &b, nil
 }
@@ -901,67 +948,15 @@ LIMIT 1`, userID, pointID).Scan(
 // 用于冲突检测：检查 point 是否已被任意用户绑定。
 // 返回已存在的绑定记录，不存在则返回 nil。
 func (r *Repository) FindActiveBindingByPoint(ctx context.Context, pointID uint64) (*domain.BindRelation, error) {
-	var b domain.BindRelation
-	var (
-		sUserID, sRealtimeID, sNodeID, sPointID, sCreatedBy sql.NullInt64
-		sUnboundAtMS                                        sql.NullTime
-		sExtra                                              sql.NullString
-	)
-	err := r.db.QueryRowContext(ctx, `
-SELECT
-  bind_id, user_id, bind_user_name,
-  gateway_id, realtime_id, node_id, point_id,
-  shed_no, frequency, device_external_id, function_type,
-  bind_status, bound_at_ms, unbound_at_ms, created_by,
-  extra, created_at, updated_at
-FROM bind_relations
-WHERE point_id = ? AND bind_status = 1
-LIMIT 1`, pointID).Scan(
-		&b.BindID,
-		&sUserID,
-		&b.BindUserName,
-		&b.GatewayID,
-		&sRealtimeID,
-		&sNodeID,
-		&sPointID,
-		&b.ShedNo, &b.Frequency, &b.DeviceExternalID, &b.FunctionType,
-		&b.BindStatus, &b.BoundAtMS,
-		&sUnboundAtMS,
-		&sCreatedBy,
-		&sExtra,
-		&b.CreatedAt, &b.UpdatedAt,
-	)
+	row := r.db.QueryRowContext(ctx, bindingSelectColumns+`
+WHERE br.point_id = ? AND br.bind_status = 1
+LIMIT 1`, pointID)
+	b, err := scanBindingRelationRow(row)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
-	}
-	if sUserID.Valid {
-		uid := uint64(sUserID.Int64)
-		b.UserID = &uid
-	}
-	if sRealtimeID.Valid {
-		rid := uint64(sRealtimeID.Int64)
-		b.RealtimeID = &rid
-	}
-	if sNodeID.Valid {
-		nid := uint64(sNodeID.Int64)
-		b.NodeID = &nid
-	}
-	if sPointID.Valid {
-		pid := uint64(sPointID.Int64)
-		b.PointID = &pid
-	}
-	if sCreatedBy.Valid {
-		cb := uint64(sCreatedBy.Int64)
-		b.CreatedBy = &cb
-	}
-	if sUnboundAtMS.Valid {
-		b.UnboundAtMS = &sUnboundAtMS.Time
-	}
-	if sExtra.Valid {
-		b.Extra = &sExtra.String
 	}
 	return &b, nil
 }
@@ -1196,16 +1191,9 @@ WHERE bind_status = 1`)
 
 // ListBindingsByUserID 返回指定用户的所有绑定关系（含 active 和已解绑）。
 func (r *Repository) ListBindingsByUserID(ctx context.Context, userID uint64) ([]domain.BindRelation, error) {
-	rows, err := r.db.QueryContext(ctx, `
-SELECT
-  bind_id, user_id, bind_user_name,
-  gateway_id, realtime_id, node_id, point_id,
-  shed_no, frequency, device_external_id, function_type,
-  bind_status, bound_at_ms, unbound_at_ms, created_by,
-  extra, created_at, updated_at
-FROM bind_relations
-WHERE user_id = ? AND bind_status = 1
-ORDER BY updated_at DESC
+	rows, err := r.db.QueryContext(ctx, bindingSelectColumns+`
+WHERE br.user_id = ? AND br.bind_status = 1
+ORDER BY br.updated_at DESC
 LIMIT 500`, userID)
 	if err != nil {
 		return nil, err
@@ -1214,64 +1202,158 @@ LIMIT 500`, userID)
 
 	bindings := make([]domain.BindRelation, 0)
 	for rows.Next() {
-		var b domain.BindRelation
-		var (
-			sUserID, sRealtimeID, sNodeID, sPointID, sCreatedBy sql.NullInt64
-			sUnboundAtMS                                        sql.NullTime
-			sExtra                                              sql.NullString
-		)
-		if err := rows.Scan(
-			&b.BindID,
-			&sUserID,
-			&b.BindUserName,
-			&b.GatewayID,
-			&sRealtimeID,
-			&sNodeID,
-			&sPointID,
-			&b.ShedNo, &b.Frequency, &b.DeviceExternalID, &b.FunctionType,
-			&b.BindStatus, &b.BoundAtMS,
-			&sUnboundAtMS,
-			&sCreatedBy,
-			&sExtra,
-			&b.CreatedAt, &b.UpdatedAt,
-		); err != nil {
+		b, err := scanBindingRelationRow(rows)
+		if err != nil {
 			return nil, err
-		}
-		if sUserID.Valid {
-			uid := uint64(sUserID.Int64)
-			b.UserID = &uid
-		}
-		if sRealtimeID.Valid {
-			rid := uint64(sRealtimeID.Int64)
-			b.RealtimeID = &rid
-		}
-		if sNodeID.Valid {
-			nid := uint64(sNodeID.Int64)
-			b.NodeID = &nid
-		}
-		if sPointID.Valid {
-			pid := uint64(sPointID.Int64)
-			b.PointID = &pid
-		}
-		if sCreatedBy.Valid {
-			cb := uint64(sCreatedBy.Int64)
-			b.CreatedBy = &cb
-		}
-		if sUnboundAtMS.Valid {
-			b.UnboundAtMS = &sUnboundAtMS.Time
-		}
-		if sExtra.Valid {
-			b.Extra = &sExtra.String
 		}
 		bindings = append(bindings, b)
 	}
 	return bindings, rows.Err()
 }
 
+// FindGatewayByID 按 gateway_id 查询 gateway。
+func (r *Repository) FindGatewayByID(ctx context.Context, gatewayID uint64) (*domain.Gateway, error) {
+	var g domain.Gateway
+	err := r.db.QueryRowContext(ctx, `
+SELECT gateway_id, gateway_external_id, gateway_name, ip, port, gateway_sn, online_status, source_type, last_heartbeat_at_ms, created_at, updated_at
+FROM cloud_gateways
+WHERE gateway_id = ?
+LIMIT 1`, gatewayID).Scan(
+		&g.GatewayID, &g.GatewayExternalID, &g.GatewayName, &g.IP, &g.Port, &g.GatewaySN,
+		&g.OnlineStatus, &g.SourceType, &g.LastHeartbeatAtMS, &g.CreatedAt, &g.UpdatedAt,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &g, nil
+}
+
+// FindCollectorNodeByID 按 node_id 查询 collector node。
+func (r *Repository) FindCollectorNodeByID(ctx context.Context, nodeID uint64) (*domain.CollectorNode, error) {
+	var c domain.CollectorNode
+	var (
+		lastReportAtMS sql.NullTime
+		lastRawEventID sql.NullInt64
+		remark         sql.NullString
+		extra          sql.NullString
+	)
+	err := r.db.QueryRowContext(ctx, `
+SELECT node_id, gateway_id, frequency, device_external_id, node_name, shed_no, base_name, area_name,
+       collector_no, node_status, online_status, last_report_at_ms, last_raw_event_id, remark, extra,
+       created_at, updated_at
+FROM collector_nodes
+WHERE node_id = ?
+LIMIT 1`, nodeID).Scan(
+		&c.NodeID, &c.GatewayID, &c.Frequency, &c.DeviceExternalID, &c.NodeName, &c.ShedNo, &c.BaseName, &c.AreaName,
+		scanNullInt(&c.CollectorNo), &c.NodeStatus, &c.OnlineStatus, &lastReportAtMS, &lastRawEventID, &remark, &extra,
+		&c.CreatedAt, &c.UpdatedAt,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if lastReportAtMS.Valid {
+		c.LastReportAtMS = &lastReportAtMS.Time
+	}
+	if lastRawEventID.Valid {
+		v := uint64(lastRawEventID.Int64)
+		c.LastRawEventID = &v
+	}
+	if remark.Valid {
+		c.Remark = &remark.String
+	}
+	if extra.Valid {
+		c.Extra = &extra.String
+	}
+	return &c, nil
+}
+
+// FindActiveBindingByUserAndGateway 检查是否已存在用户对某个 gateway 的 active 绑定。
+func (r *Repository) FindActiveBindingByUserAndGateway(ctx context.Context, userID uint64, gatewayID uint64) (*domain.BindRelation, error) {
+	row := r.db.QueryRowContext(ctx, bindingSelectColumns+`
+WHERE br.user_id = ? AND br.gateway_id = ? AND br.bind_status = 1 AND br.point_id IS NULL
+LIMIT 1`, userID, gatewayID)
+	b, err := scanBindingRelationRow(row)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &b, nil
+}
+
+// FindActiveBindingByGateway 按 gateway_id 查询 active gateway 绑定。
+func (r *Repository) FindActiveBindingByGateway(ctx context.Context, gatewayID uint64) (*domain.BindRelation, error) {
+	row := r.db.QueryRowContext(ctx, bindingSelectColumns+`
+WHERE br.gateway_id = ? AND br.bind_status = 1 AND br.point_id IS NULL
+LIMIT 1`, gatewayID)
+	b, err := scanBindingRelationRow(row)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &b, nil
+}
+
+// ListGatewayBindCandidates 返回尚未被 active 绑定的 gateway 候选列表。
+func (r *Repository) ListGatewayBindCandidates(ctx context.Context, keyword string) ([]domain.GatewayBindCandidate, error) {
+	query := `
+SELECT g.gateway_id, g.gateway_name, g.gateway_external_id, g.online_status, g.last_heartbeat_at_ms
+FROM cloud_gateways g
+LEFT JOIN bind_relations br ON br.gateway_id = g.gateway_id AND br.bind_status = 1 AND br.point_id IS NULL`
+	var args []any
+	keyword = strings.TrimSpace(keyword)
+	if keyword != "" {
+		like := "%" + keyword + "%"
+		query += `
+WHERE br.bind_id IS NULL AND (g.gateway_name LIKE ? OR g.gateway_external_id LIKE ?)`
+		args = append(args, like, like)
+	} else {
+		query += `
+WHERE br.bind_id IS NULL`
+	}
+	query += `
+ORDER BY g.updated_at DESC
+LIMIT 100`
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]domain.GatewayBindCandidate, 0)
+	for rows.Next() {
+		var item domain.GatewayBindCandidate
+		var lastHeartbeat time.Time
+		if err := rows.Scan(&item.GatewayID, &item.GatewayName, &item.GatewayExternalID, &item.OnlineStatus, &lastHeartbeat); err != nil {
+			return nil, err
+		}
+		item.LastHeartbeatAtMS = lastHeartbeat.UTC().Format("2006-01-02T15:04:05.000Z")
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
 // CreateBinding 创建新的绑定关系。
 func (r *Repository) CreateBinding(ctx context.Context, b *domain.BindRelation) error {
 	if b.BindID == 0 {
 		b.BindID = idgen.NextID()
+	}
+	if b.BindingType == "" {
+		if b.PointID != nil {
+			b.BindingType = string(domain.BindingTypePoint)
+		} else {
+			b.BindingType = string(domain.BindingTypeGateway)
+		}
 	}
 	now := time.Now()
 	b.BoundAtMS = now
@@ -1284,6 +1366,50 @@ func (r *Repository) CreateBinding(ctx context.Context, b *domain.BindRelation) 
 	nid := nullableUint64(b.NodeID)
 	pid := nullableUint64(b.PointID)
 	cbid := nullableUint64(b.CreatedBy)
+
+	if b.PointID == nil {
+		tx, err := r.db.BeginTx(ctx, nil)
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+
+		if _, err := tx.ExecContext(ctx, `SELECT gateway_id FROM cloud_gateways WHERE gateway_id = ? FOR UPDATE`, b.GatewayID); err != nil {
+			return err
+		}
+		var existingBindID uint64
+		var existingUserID sql.NullInt64
+		err = tx.QueryRowContext(ctx, `
+SELECT bind_id, user_id
+FROM bind_relations
+WHERE gateway_id = ? AND bind_status = 1 AND point_id IS NULL
+LIMIT 1 FOR UPDATE`, b.GatewayID).Scan(&existingBindID, &existingUserID)
+		if err != nil && err != sql.ErrNoRows {
+			return err
+		}
+		if err == nil {
+			return domain.ErrBindingConflict
+		}
+
+		_, err = tx.ExecContext(ctx, `
+INSERT INTO bind_relations
+  (bind_id, user_id, bind_user_name,
+   gateway_id, realtime_id, node_id, point_id,
+   shed_no, frequency, device_external_id, function_type,
+   bind_status, bound_at_ms, created_by, created_at, updated_at)
+VALUES
+  (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			b.BindID, uid, b.BindUserName,
+			b.GatewayID, rid, nid, pid,
+			b.ShedNo, b.Frequency, b.DeviceExternalID, uint8(b.FunctionType),
+			uint8(b.BindStatus), b.BoundAtMS, cbid,
+			b.CreatedAt, b.UpdatedAt,
+		)
+		if err != nil {
+			return err
+		}
+		return tx.Commit()
+	}
 
 	_, err := r.db.ExecContext(ctx, `
 INSERT INTO bind_relations

@@ -59,15 +59,35 @@ HTTP Adapter API 是 Go `gateway-adapter` 和 Go `nehuang-server` 之间的内�
 | GET | `/api/v1/admin/farmers/{user_id}/bindings` | 正式 |
 | GET | `/api/v1/admin/collectors` | 正式 |
 | GET | `/api/v1/admin/bindings` | 正式 |
-| POST | `/api/v1/admin/bindings` | 正式 |
+| POST | `/api/v1/admin/bindings` | 正式；支持 `binding_type=gateway/point` |
 | DELETE | `/api/v1/admin/bindings/{bind_id}` | 正式 |
+| GET | `/api/v1/admin/gateway-bind-candidates?keyword=` | 正式；返回未 active 绑定的设备网关候选 |
 | GET | `/api/v1/admin/raw-events?limit=` | 正式 |
 | GET | `/api/v1/admin/control-logs?limit=` | 占位视图，依赖 `op_records` |
 | GET | `/api/v1/admin/device-tree` | 正式 |
 | GET | `/api/v1/admin/device-points?keyword=&bind_status=` | 正式 |
 | PATCH | `/api/v1/admin/device-points/{point_id}` | 正式，更新点位配置 |
+| POST | `/api/v1/admin/device-points/{point_id}/control` | 正式创建异步控制命令，最终下发和 ACK 由 Adapter 完成 |
 | GET | `/api/v1/admin/payload-events` | 正式 |
 | GET | `/api/v1/admin/payload-events/{raw_event_id}` | 正式 |
+
+### POST `/api/v1/admin/bindings`
+
+请求字段：
+
+- 网关级绑定：`binding_type=gateway`、`user_id`、`gateway_id`
+- 兼容功能点绑定：`binding_type=point`、`user_id`、`point_id`
+
+默认产品口径是农户绑定设备网关：一个农户可绑定多个设备网关；同一设备网关同时只能有一个 active 农户绑定。旧功能点绑定继续可读、可解绑、可创建，用于兼容历史数据和精细授权场景。
+
+### POST `/api/v1/admin/device-points/{point_id}/control`
+
+请求字段：
+
+- `action`: `open`、`close`、`stop`
+- `command_hex`: 可选；传入后按自定义 hex 创建命令，优先于 `action`
+
+返回 `command_id`、`status=pending`、`command_hex`。该接口只创建异步控制命令，不等待真实硬件 ACK。
 
 ### PATCH `/api/v1/admin/device-points/{point_id}`
 
