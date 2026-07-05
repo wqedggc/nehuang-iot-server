@@ -901,7 +901,6 @@
       '<div class="info-card help-section" id="help-overview">' +
         '<h3>总览</h3>' +
         '<div class="detail-section">' +
-          '<p style="font-size:13px;color:var(--color-text-muted);margin:0 0 10px">帮助中心只描述产品使用和联调路径，不展示源码、数据库结构、真实服务地址、密码、token 或内部路径。</p>' +
           '<p style="font-size:13px;color:var(--color-text);margin:0">统一术语：<strong>设备网关</strong> / <strong>采集执行器</strong> / <strong>功能点</strong> / <strong>原始报文</strong>。</p>' +
         '</div>' +
         '<div class="detail-section">' +
@@ -946,7 +945,6 @@
         '</div>' +
         '<div class="detail-section">' +
           '<h4 style="font-size:14px;margin:0 0 8px">常见问题</h4>' +
-          '<p style="font-size:13px;color:var(--color-text-muted);margin-bottom:6px">“原始报文排查”只能按原始 hex 与分类结果查询，不应出现地址、密码、代码路径、内部 token。</p>' +
           '<p style="font-size:13px;color:var(--color-text-muted)">请先确认该网关是否有注册/心跳报文；无注册报文通常说明平台尚未建立该设备网关档案。</p>' +
         '</div>' +
       '</div>' +
