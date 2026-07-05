@@ -1118,9 +1118,9 @@ ORDER BY node_id ASC, channel_no ASC`)
 		return nil, err
 	}
 
-	// 4. 查询所有 active 绑定关系，建立 point_id → user_id 映射。
+	// 4. 查询所有 active 绑定关系，建立 point_id/gateway_id → user_id 映射。
 	bindRows, err := r.db.QueryContext(ctx, `
-SELECT point_id, user_id
+SELECT gateway_id, point_id, user_id
 FROM bind_relations
 WHERE bind_status = 1`)
 	if err != nil {
@@ -1128,13 +1128,19 @@ WHERE bind_status = 1`)
 	}
 	defer bindRows.Close()
 
-	boundMap := make(map[uint64]uint64) // point_id → user_id
+	pointBoundMap := make(map[uint64]uint64)   // point_id → user_id
+	gatewayBoundMap := make(map[uint64]uint64) // gateway_id → user_id
 	for bindRows.Next() {
-		var pid, uid uint64
-		if err := bindRows.Scan(&pid, &uid); err != nil {
+		var gatewayID, uid uint64
+		var pointID sql.NullInt64
+		if err := bindRows.Scan(&gatewayID, &pointID, &uid); err != nil {
 			return nil, err
 		}
-		boundMap[pid] = uid
+		if pointID.Valid {
+			pointBoundMap[uint64(pointID.Int64)] = uid
+			continue
+		}
+		gatewayBoundMap[gatewayID] = uid
 	}
 	if err := bindRows.Err(); err != nil {
 		return nil, err
@@ -1186,7 +1192,7 @@ WHERE bind_status = 1`)
 				Points:           make([]domain.DeviceTreePoint, 0),
 			}
 			for _, p := range ptByNode[c.NodeID] {
-				boundUserID, isBound := boundMap[p.PointID]
+				boundUserID, isBound := resolveDeviceTreeBoundUser(pointBoundMap, gatewayBoundMap, g.ID, p.PointID)
 				var boundUserIDPtr *uint64
 				if isBound {
 					boundUserIDPtr = &boundUserID
@@ -1206,6 +1212,16 @@ WHERE bind_status = 1`)
 	}
 
 	return tree, nil
+}
+
+func resolveDeviceTreeBoundUser(pointBoundMap map[uint64]uint64, gatewayBoundMap map[uint64]uint64, gatewayID uint64, pointID uint64) (uint64, bool) {
+	if userID, ok := pointBoundMap[pointID]; ok {
+		return userID, true
+	}
+	if userID, ok := gatewayBoundMap[gatewayID]; ok {
+		return userID, true
+	}
+	return 0, false
 }
 
 // ListBindingsByUserID 返回指定用户的所有绑定关系（含 active 和已解绑）。
