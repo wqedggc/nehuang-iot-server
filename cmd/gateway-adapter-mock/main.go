@@ -137,16 +137,13 @@ func selectFrames(name string, gatewayName string) ([]sampleFrame, error) {
 		{
 			name:    "unknown",
 			payload: mustHex("01020304"),
-			note:    "unknown bytes; Adapter keeps raw journal and Server stores raw frame",
+			note:    "unknown bytes; Adapter keeps raw journal and forwards only when configured",
 		},
 	}
 
 	key := strings.ToLower(strings.TrimSpace(name))
 	if key == "" || key == "all" {
 		return all, nil
-	}
-	if key == "telemetry" || key == "work" {
-		key = "telemetry-temp,telemetry-soil,telemetry-relay"
 	}
 	byName := make(map[string]sampleFrame, len(all))
 	for _, frame := range all {
@@ -156,6 +153,12 @@ func selectFrames(name string, gatewayName string) ([]sampleFrame, error) {
 	selected := make([]sampleFrame, 0, len(parts))
 	for _, part := range parts {
 		part = strings.TrimSpace(part)
+		if part == "telemetry" || part == "work" {
+			for _, telemetryName := range []string{"telemetry-temp", "telemetry-soil", "telemetry-relay"} {
+				selected = append(selected, byName[telemetryName])
+			}
+			continue
+		}
 		frame, ok := byName[part]
 		if !ok {
 			return nil, fmt.Errorf("unknown frame %q; use all, register, heartbeat, heartbeat-message, telemetry, telemetry-temp, telemetry-soil, telemetry-relay, modbus-read, binary-work, alarm, or unknown", part)

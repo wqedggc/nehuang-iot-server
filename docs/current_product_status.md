@@ -230,14 +230,17 @@
 已实现：
 
 - `deploy.sh` 支持基础 migration runner。
-- 腾讯云 Go 服务部署链路已跑通。
+- 腾讯云 Go HTTP 服务部署链路已跑通：服务器从 CNB 拉取代码，执行 `bash deploy.sh`，完成迁移、管理员账号、编译和启动 `nehuang-server`。
+- 腾讯云 `gateway-adapter` 手动部署链路已跑通：构建 `gateway-adapter`、`gateway-adapter-mock`、`gateway-adapter-replay`，通过 `nohup ./gateway-adapter` 独立运行。
 - `/healthz`、`/readyz` 可用于部署后检查。
+- Adapter `:18081/healthz` 可用于 TCP Adapter 进程检查。
+- 线上已监听 HTTP `:8080`、硬件 TCP `:8081`、Adapter health `:18081`。
 - 线上 mock login 关闭。
 
 未完成：
 
-- `gateway-adapter` 还没有纳入正式腾讯云 systemd/deploy 流程。
-- 硬件 TCP 端口、防火墙、安全组、日志目录和进程守护需要部署方案固化。
+- `gateway-adapter` 还没有纳入 `deploy.sh` 或 systemd，当前仍是手动构建、手动 `nohup`、手动 health check。
+- 硬件 TCP 端口、安全组、日志目录、日志轮转和进程守护需要继续固化为长期运维方案。
 - Nginx stream 仅作为可选方案，第一版默认硬件 TCP 直连 Adapter。
 
 ## 三、硬件端最新文档带来的新增要求
@@ -269,7 +272,7 @@
 | ACK/清缓存语义 | 未实现 | 无法确认 MCU 是否已收到、是否可清缓存 | `AA AA BB ZZ` 在不同场景的准确含义 |
 | 云端时隙调度 | 不再作为云端职责 | 云端无需卡 2 秒窗口，但仍需生成/解析时间同步字段 | 硬件侧缓存、丢弃、重试规则 |
 | 控制真实下发 | Mock 链路已通，真实硬件未验收 | Mini/Admin 控制能进入 TCP 下行演示，但不能承诺 MCU 执行 | 下行 hex 完整格式和 ACK 格式 |
-| Adapter 生产部署 | 未完成 | 云端还不能让硬件正式切到新 TCP 入口 | TCP 端口、安全组、systemd、日志目录 |
+| Adapter 生产部署 | 手动链路已跑通，systemd 未完成 | 云端可以联调 TCP 入口，但长期守护和自动拉起未固化 | systemd、日志轮转、部署脚本接入 |
 | 设备首次入库 | register 已有，work 入点位未完成 | 真实采集执行器和功能点不能自动完整建档 | 工作包里如何表达 function_type/channel_no |
 | 采集执行器自动注册到设备网关 | 管理端手工建档已实现，硬件自动同步未实现 | 云端可先通过人工建档点名采集执行器，但不能自动发现真实清单 | 是否还需要设备网关主动上报采集执行器清单 |
 | 共享设备网关权限 | 已实现 `shared/exclusive` 与采集执行器授权 | 仍需真实多农户场景联调确认 | 资产归属、维护权限、农户自助绑定校验规则 |
@@ -371,8 +374,8 @@
 
 当前下一步不应先做复杂 UI，而应先完成硬件接入的最小闭环：
 
-1. 把本轮 Admin/Adapter 改动部署到腾讯云。
-2. 用 `gateway-adapter-mock -wait-downlink` 验证控制命令从 Server 到 TCP 下行。
+1. 把 `gateway-adapter` 接入 systemd 或扩展 `deploy.sh`，解决进程守护、开机自启和失败自动恢复。
+2. 用 `gateway-adapter-mock -wait-downlink` 继续回归控制命令从 Server 到 TCP 下行。
 3. 让硬件网关连 TCP 端口并发送注册、心跳、工作包样例。
 4. 用 raw journal 和 replay 工具确认真实包形态。
 5. 根据真实样例补 parser。

@@ -1,6 +1,6 @@
 # 涅凰智农 IoT — 部署流程文档
 
-> 最后更新：2026-07-05（Go HTTP Server + Go TCP Gateway Adapter）
+> 最后更新：2026-07-06（腾讯云双进程部署：Go HTTP Server + Go TCP Gateway Adapter）
 
 ## 一、服务器信息
 
@@ -21,8 +21,8 @@
 
 | 仓库 | 地址 |
 |------|------|
-| Go 服务端（含前端） | `https://cnb.cool/wqedggc/nehuang-iot-server`（CNB） |
-| Go 服务端（GitHub 镜像） | `https://github.com/wqedggc/nehuang-iot-server.git`（GitHub） |
+| Go 服务端（含前端） | `https://cnb.cool/wqedggc/nehuang-iot-server`（CNB，腾讯云当前拉取源） |
+| Go 服务端（GitHub 镜像） | `https://github.com/wqedggc/nehuang-iot-server.git`（GitHub，镜像/备份） |
 
 本地项目路径：`/Users/shore/Desktop/ShoreOS/services/nehuang-iot-server/`
 
@@ -60,14 +60,15 @@
 │   ├── mini/                   # C 端 HTML/CSS/JS
 │   └── mock/                   # Mock API 层（mock-api.js）
 ├── configs/mysql/              # MySQL 配置文件（nehuang_agent.cnf）
-├── schema/mysql/               # 数据库迁移 SQL（001-005，deploy.sh 顺序执行）
+├── schema/mysql/               # 数据库迁移 SQL（001-006，deploy.sh 顺序执行）
 ├── scripts/
 │   └── mock_device_events.sh   # Mock HTTP 设备事件上报脚本
 ├── .env                        # 环境变量（JWT secret、MySQL 密码等）
 ├── .env.example                # 环境变量模板
-├── deploy.sh                   # 一键部署脚本（首次部署）
+├── deploy.sh                   # HTTP 服务部署脚本：迁移、管理员、编译并启动 nehuang-server
 ├── nehuang-server              # 编译后的 Go 二进制
-├── gateway-adapter             # 编译后的 TCP Adapter 二进制（待纳入正式 deploy）
+├── gateway-adapter             # 编译后的 TCP Adapter 二进制
+├── gateway-adapter.pid         # TCP Adapter PID（手动部署时写入）
 ├── server.log                  # HTTP 服务运行日志
 └── gateway-adapter.log         # TCP Adapter 运行日志
 ```
@@ -105,7 +106,8 @@
 │ Go Gateway Adapter (:8081 TCP, :18081 health)               │
 │ - 硬件 TCP 连接                                              │
 │ - raw frame journal                                          │
-│ - register/heartbeat 转发                                    │
+│ - raw frame 上报 /api/v1/adapter/raw-frames                  │
+│ - pending command 拉取和 TCP 下行写回                         │
 │ - 后续工作包/告警包/ACK parser                               │
 └─────────────────────────────────────────────────────────────┘
   ▲
@@ -131,6 +133,7 @@ NEHUANG_GATEWAY_HEALTH_ADDR=:18081
 NEHUANG_GATEWAY_API_BASE_URL=http://43.143.208.153:8080
 NEHUANG_GATEWAY_RAW_LOG_DIR=data/gateway-adapter/raw-frames
 NEHUANG_GATEWAY_DEBUG=false
+NEHUANG_GATEWAY_FORWARD_UNKNOWN_FRAMES=false
 NEHUANG_GATEWAY_COMMAND_POLL_INTERVAL_SECONDS=2
 NEHUANG_GATEWAY_COMMAND_POLL_LIMIT=20
 NEHUANG_GATEWAY_COMMAND_WRITE_TIMEOUT_SECONDS=5
@@ -191,11 +194,11 @@ cp .env.example .env
 vim .env
 ```
 
-### 6.4 一键部署
+### 6.4 部署 HTTP 服务
 
 ```bash
-chmod +x deploy.sh
-./deploy.sh
+# deploy.sh 当前在部分服务器上可能没有可执行位；用 bash 调用最稳。
+bash deploy.sh
 ```
 
 `deploy.sh` 自动完成以下步骤：
@@ -204,11 +207,45 @@ chmod +x deploy.sh
 3. 生成 MySQL 配置文件 `configs/mysql/nehuang_agent.cnf`
 4. 创建/检查 `schema_migrations`，按顺序执行 `schema/mysql/*.sql`
 5. 创建管理员账号（user_id=10001, username=admin）
-6. 编译服务端二进制（含嵌入式前端）
-7. 后台启动服务
+6. 编译 HTTP 服务端二进制 `nehuang-server`（含嵌入式前端）
+7. 后台启动 HTTP 服务
 8. 健康检查验证
 
-### 6.5 验证
+> 当前 `deploy.sh` 只负责 HTTP 服务，不会自动构建或重启 `gateway-adapter`。首次部署如果要让硬件 TCP 接入生效，还需要执行 6.5。
+
+### 6.5 部署 Gateway Adapter
+
+```bash
+cd /home/work/nehuang-iot-server
+
+go build -o gateway-adapter ./cmd/gateway-adapter/
+go build -o gateway-adapter-mock ./cmd/gateway-adapter-mock/
+go build -o gateway-adapter-replay ./cmd/gateway-adapter-replay/
+
+pkill -x gateway-adapter 2>/dev/null || true
+sleep 1
+
+set -a
+source .env
+set +a
+
+export NEHUANG_GATEWAY_TCP_ADDR="${NEHUANG_GATEWAY_TCP_ADDR:-:8081}"
+export NEHUANG_GATEWAY_HEALTH_ADDR="${NEHUANG_GATEWAY_HEALTH_ADDR:-:18081}"
+export NEHUANG_GATEWAY_API_BASE_URL="${NEHUANG_GATEWAY_API_BASE_URL:-http://43.143.208.153:8080}"
+export NEHUANG_GATEWAY_RAW_LOG_DIR="${NEHUANG_GATEWAY_RAW_LOG_DIR:-data/gateway-adapter/raw-frames}"
+export NEHUANG_GATEWAY_FORWARD_UNKNOWN_FRAMES="${NEHUANG_GATEWAY_FORWARD_UNKNOWN_FRAMES:-false}"
+export NEHUANG_GATEWAY_COMMAND_POLL_INTERVAL_SECONDS="${NEHUANG_GATEWAY_COMMAND_POLL_INTERVAL_SECONDS:-2}"
+export NEHUANG_GATEWAY_COMMAND_POLL_LIMIT="${NEHUANG_GATEWAY_COMMAND_POLL_LIMIT:-20}"
+export NEHUANG_GATEWAY_COMMAND_WRITE_TIMEOUT_SECONDS="${NEHUANG_GATEWAY_COMMAND_WRITE_TIMEOUT_SECONDS:-5}"
+
+nohup ./gateway-adapter > gateway-adapter.log 2>&1 &
+echo $! > gateway-adapter.pid
+
+sleep 2
+curl http://localhost:18081/healthz
+```
+
+### 6.6 验证
 
 ```bash
 # 健康检查
@@ -223,6 +260,16 @@ curl http://localhost:8080/readyz
 curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/admin/
 # → 200
 
+# 访问农户端
+curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/mini/
+# → 200
+
+# Adapter health
+curl http://localhost:18081/healthz
+
+# 监听端口
+ss -tlnp | grep -E ':8080|:8081|:18081'
+
 # 测试登录
 curl -X POST http://localhost:8080/api/v1/admin/login \
   -H "Content-Type: application/json" \
@@ -233,20 +280,16 @@ curl -X POST http://localhost:8080/api/v1/admin/login \
 
 ### 7.1 标准部署：推送代码 + 服务器编译
 
-**⚠️ 铁律：所有代码（后端 Go + 前端静态文件）必须走 git 流程。严禁直接 scp 覆盖服务器文件。**
+**铁律：所有代码（后端 Go + 前端静态文件）必须走 git 流程。严禁直接 scp 覆盖服务器文件。**
 
 ```bash
 # === 本地操作 ===
 cd /Users/shore/Desktop/ShoreOS/services/nehuang-iot-server/
 
-# 修改代码后提交，并推送到 CNB + GitHub
+# 修改代码后提交，并推送到 CNB
 git add -A
 git commit -m "描述你的改动"
 git push cnb master
-/Users/shore/Desktop/Knowledge/tools/github_device_push.sh \
-  --repo /Users/shore/Desktop/ShoreOS/services/nehuang-iot-server \
-  --remote origin \
-  --ref master
 
 # === 服务器操作 ===
 ssh -i ~/shore.pem root@43.143.208.153
@@ -256,20 +299,47 @@ cd /home/work/nehuang-iot-server
 # 从 CNB 拉取最新代码
 git pull origin master
 
-# 编译（Go 1.24，含嵌入式前端，无需额外步骤）
-go build -o nehuang-server ./cmd/server/
+# 部署 HTTP 服务：迁移、管理员账号、编译并启动 nehuang-server
+bash deploy.sh
 
-# 重启服务
-pkill -f nehuang-server; sleep 1
+# 部署 TCP Adapter：构建并重启 gateway-adapter
+go build -o gateway-adapter ./cmd/gateway-adapter/
+go build -o gateway-adapter-mock ./cmd/gateway-adapter-mock/
+go build -o gateway-adapter-replay ./cmd/gateway-adapter-replay/
+pkill -x gateway-adapter 2>/dev/null || true
+sleep 1
 set -a
 source .env
 set +a
-nohup ./nehuang-server > server.log 2>&1 &
+export NEHUANG_GATEWAY_TCP_ADDR="${NEHUANG_GATEWAY_TCP_ADDR:-:8081}"
+export NEHUANG_GATEWAY_HEALTH_ADDR="${NEHUANG_GATEWAY_HEALTH_ADDR:-:18081}"
+export NEHUANG_GATEWAY_API_BASE_URL="${NEHUANG_GATEWAY_API_BASE_URL:-http://43.143.208.153:8080}"
+export NEHUANG_GATEWAY_RAW_LOG_DIR="${NEHUANG_GATEWAY_RAW_LOG_DIR:-data/gateway-adapter/raw-frames}"
+export NEHUANG_GATEWAY_FORWARD_UNKNOWN_FRAMES="${NEHUANG_GATEWAY_FORWARD_UNKNOWN_FRAMES:-false}"
+export NEHUANG_GATEWAY_COMMAND_POLL_INTERVAL_SECONDS="${NEHUANG_GATEWAY_COMMAND_POLL_INTERVAL_SECONDS:-2}"
+export NEHUANG_GATEWAY_COMMAND_POLL_LIMIT="${NEHUANG_GATEWAY_COMMAND_POLL_LIMIT:-20}"
+export NEHUANG_GATEWAY_COMMAND_WRITE_TIMEOUT_SECONDS="${NEHUANG_GATEWAY_COMMAND_WRITE_TIMEOUT_SECONDS:-5}"
+nohup ./gateway-adapter > gateway-adapter.log 2>&1 &
+echo $! > gateway-adapter.pid
 
-# 验证
+# 验证 HTTP + TCP Adapter
 sleep 2
 curl http://localhost:8080/healthz
+curl http://localhost:8080/readyz
+curl http://localhost:18081/healthz
+ss -tlnp | grep -E ':8080|:8081|:18081'
 ```
+
+如需同步 GitHub 镜像，在本地使用：
+
+```bash
+/Users/shore/Desktop/Knowledge/tools/github_device_push.sh \
+  --repo /Users/shore/Desktop/ShoreOS/services/nehuang-iot-server \
+  --remote origin \
+  --ref master
+```
+
+腾讯云当前部署只依赖服务器从 CNB `origin` 拉取，GitHub 镜像不是部署前置条件。
 
 ### 7.2 前端代码更新
 
@@ -281,21 +351,12 @@ curl http://localhost:8080/healthz
 git add -A
 git commit -m "feat: 描述前端改动"
 git push cnb master
-/Users/shore/Desktop/Knowledge/tools/github_device_push.sh \
-  --repo /Users/shore/Desktop/ShoreOS/services/nehuang-iot-server \
-  --remote origin \
-  --ref master
 
 # === 服务器操作 ===
 ssh -i ~/shore.pem root@43.143.208.153
 cd /home/work/nehuang-iot-server
 git pull origin master
-go build -o nehuang-server ./cmd/server/
-pkill -f nehuang-server; sleep 1
-set -a
-source .env
-set +a
-nohup ./nehuang-server > server.log 2>&1 &
+bash deploy.sh
 ```
 
 > **不再需要**独立的前端仓库（`nehuang-iot-prototype`）和独立的前端部署步骤。前后端统一在一个仓库、一个二进制中。
@@ -304,26 +365,33 @@ nohup ./nehuang-server > server.log 2>&1 &
 
 ```bash
 # 查看服务状态
-ps aux | grep nehuang-server
+pgrep -af 'nehuang-server|gateway-adapter'
 
 # 查看监听端口
-ss -tlnp | grep 8080
+ss -tlnp | grep -E ':8080|:8081|:18081'
 
 # 查看日志
 tail -f /home/work/nehuang-iot-server/server.log
+tail -f /home/work/nehuang-iot-server/gateway-adapter.log
 
-# 重启服务
-pkill -f nehuang-server || true
+# 重启 HTTP 服务
+cd /home/work/nehuang-iot-server
+bash deploy.sh
+
+# 重启 Gateway Adapter
+pkill -x gateway-adapter 2>/dev/null || true
 sleep 1
 cd /home/work/nehuang-iot-server
 set -a
 source .env
 set +a
-nohup ./nehuang-server > server.log 2>&1 &
+nohup ./gateway-adapter > gateway-adapter.log 2>&1 &
+echo $! > gateway-adapter.pid
 
 # 健康检查
 curl http://localhost:8080/healthz
 curl http://localhost:8080/readyz
+curl http://localhost:18081/healthz
 
 # 测试登录
 curl -X POST http://localhost:8080/api/v1/admin/login \
@@ -350,16 +418,18 @@ bash scripts/mock_device_events.sh \
   --rounds 20 \
   --interval 1
 
-# 启动 Gateway Adapter（临时方式；生产建议 systemd）
+# 启动 Gateway Adapter（当前腾讯云手动部署方式；生产长期建议 systemd）
 NEHUANG_GATEWAY_TCP_ADDR=:8081 \
 NEHUANG_GATEWAY_HEALTH_ADDR=:18081 \
 NEHUANG_GATEWAY_API_BASE_URL=http://43.143.208.153:8080 \
 NEHUANG_ADAPTER_TOKEN=nehuang-adapter-dev-token \
 NEHUANG_GATEWAY_RAW_LOG_DIR=data/gateway-adapter/raw-frames \
+NEHUANG_GATEWAY_FORWARD_UNKNOWN_FRAMES=false \
 NEHUANG_GATEWAY_COMMAND_POLL_INTERVAL_SECONDS=2 \
 NEHUANG_GATEWAY_COMMAND_POLL_LIMIT=20 \
 NEHUANG_GATEWAY_COMMAND_WRITE_TIMEOUT_SECONDS=5 \
 nohup ./gateway-adapter > gateway-adapter.log 2>&1 &
+echo $! > gateway-adapter.pid
 
 # 测试 Gateway Adapter health
 curl http://localhost:18081/healthz
@@ -403,7 +473,7 @@ Gateway (云边网关) ──1:N──→ CollectorNode (采集执行器) ──
 | `cloud_gateways` | 云边网关设备（FP_xxx），记录在线状态、IP、心跳 |
 | `collector_nodes` | 采集执行器节点（gateway_id + frequency + device_external_id） |
 | `device_points` | 功能点（温度/墒情/限位/继电器/水泵/风机） |
-| `bind_relations` | 农户↔功能点绑定（active/unbound/deleted） |
+| `bind_relations` | 农户↔设备网关/采集执行器/功能点绑定（active/unbound/deleted） |
 | `sensor_data` | 传感器时序数据（历史曲线） |
 | `raw_device_events` | 原始设备事件（register/heartbeat/telemetry/control_result） |
 | `control_commands` | 控制命令（created→sent→ack→succeeded/failed/timeout） |
@@ -480,7 +550,7 @@ Gateway (云边网关) ──1:N──→ CollectorNode (采集执行器) ──
 | 农户绑定全流程（搜索→绑定→解绑） | 微信小程序真实对接 |
 | HTTP 设备事件 Mock 入库 | 真实工作包 parser |
 | Go TCP Gateway Adapter raw capture | 告警 parser、去重和通知 |
-| Dashboard 真实数据统计（5 类） | Gateway Adapter 正式 systemd/deploy 接入 |
+| Gateway Adapter 腾讯云手动部署 | Gateway Adapter systemd 守护接入 |
 | 嵌入式前端部署 | 生产环境安全加固 |
 
 ## 十、注意事项
@@ -488,7 +558,7 @@ Gateway (云边网关) ──1:N──→ CollectorNode (采集执行器) ──
 1. **Go 版本**：服务器和本地统一为 Go 1.24.0，编译无需任何兼容性处理。
 2. **前端嵌入**：前端静态文件（`web/static/`）通过 `//go:embed` 在编译时嵌入二进制，修改前端代码后需重新 `go build`。不再需要独立的前端仓库或手动同步静态文件。
 3. **CORS 中间件**：已在 `server.go` 的 `Routes()` 最外层应用，允许所有来源跨域访问。
-4. **安全组**：HTTP 管理端/API 需要放行 8080；硬件 TCP Adapter 正式联调时还需要放行 8081；Adapter health 18081 建议只允许本机或内网访问。
+4. **安全组**：HTTP 管理端/API 需要放行 8080；硬件 TCP Adapter 联调需要放行 8081；Adapter health 18081 建议只允许本机或内网访问。
 5. **CNB token**：服务器 git remote 中嵌入了 token，生产环境建议改用 SSH key 认证。
 6. **GitHub 认证**：本机或 Agent 推送 GitHub 时必须使用 `/Users/shore/Desktop/Knowledge/tools/github_device_push.sh`。该脚本使用 device flow 和临时 `GH_CONFIG_DIR`，并在 `git push` 时清空默认 credential helper，禁止使用 macOS Keychain 或登录钥匙串密码。
 7. **前端模式切换**：`web/static/mock/mock-api.js` 中 `MODE` 变量控制调真实 API（`'real'`）还是本地 mock（`'mock'`）。当前已设为 `'real'`，后端未实现的接口会自动 fallback mock。
@@ -496,4 +566,6 @@ Gateway (云边网关) ──1:N──→ CollectorNode (采集执行器) ──
 9. **NewServer 签名**：`NewServer(repo repository, cfg config.Config)`，接收完整 Config（含 JWT + AdapterToken）。
 10. **二进制名**：HTTP 服务使用 `nehuang-server`，编译命令为 `go build -o nehuang-server ./cmd/server/`；TCP Adapter 使用 `gateway-adapter`，编译命令为 `go build -o gateway-adapter ./cmd/gateway-adapter/`。
 11. **环境变量**：Go 程序通过 `os.Getenv` 读取环境变量，`.env` 文件由 `deploy.sh` 加载。手动 `nohup` 启动时确保所需环境变量已 export（或使用 `deploy.sh` 自动处理）。
-12. **部署铁律**：所有代码变更（后端 + 前端）必须走 `git commit → git push → 服务器 git pull → go build` 流程，严禁 scp 覆盖。
+12. **部署铁律**：所有代码变更（后端 + 前端）必须走 `git commit → git push cnb master → 服务器 git pull origin master → bash deploy.sh / go build` 流程，严禁 scp 覆盖。
+13. **重启安全**：不要用 `pkill -f nehuang-server`，该模式可能匹配 SSH wrapper 或部署 shell；停止 HTTP 服务使用 `deploy.sh` 内置的 `pkill -x nehuang-server`，停止 Adapter 使用 `pkill -x gateway-adapter`。
+14. **部署完成标准**：不能只看命令退出码。必须确认 `curl /healthz`、`curl /readyz`、`curl :18081/healthz`、`/admin/`、`/mini/` 和端口监听都正常。
