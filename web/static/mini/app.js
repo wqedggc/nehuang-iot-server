@@ -321,8 +321,8 @@
     showToast('正在' + (actionLabels[action] || action) + '...', 'info');
     try {
       var res = await NHApi.controlDevice(id, action);
-      if (res.data && (res.data.status === 'succeeded' || res.data.status === 'created')) {
-        showToast(res.data.message || '操作成功', 'success');
+      if (res.data && (res.data.status === 'pending' || res.data.status === 'sent' || res.data.status === 'ack' || res.data.status === 'succeeded' || res.data.status === 'created')) {
+        showToast(res.data.message || '控制命令已创建，等待设备执行', res.data.status === 'succeeded' ? 'success' : 'info');
         // 刷新详情
         setTimeout(function () { renderPage(); }, 500);
       } else {

@@ -37,6 +37,22 @@ func TestClassifyPayload_Register(t *testing.T) {
 	}
 }
 
+func TestClassifyPayload_RejectsNonUnderscoreFPRegister(t *testing.T) {
+	msg := ClassifyPayload([]byte("FPTEST_ADMIN_001\n"))
+	if msg.Kind == MessageRegister {
+		t.Fatalf("Kind = register, want non-FP_ payload not to register")
+	}
+}
+
+func TestClassifyPayload_KeepaliveHeartbeat(t *testing.T) {
+	for _, payload := range []string{"keepalive", "keepalive message"} {
+		msg := ClassifyPayload([]byte(payload))
+		if msg.Kind != MessageHeartbeat {
+			t.Fatalf("payload %q kind = %s, want heartbeat", payload, msg.Kind)
+		}
+	}
+}
+
 func TestClassifyPayload_DoesNotMisparseRandomBytes(t *testing.T) {
 	msg := ClassifyPayload([]byte{0x01, 0x02, 0x03, 0x04})
 	if msg.Kind != MessageUnknown {

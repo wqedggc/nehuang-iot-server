@@ -38,13 +38,13 @@ func ClassifyPayload(payload []byte) Message {
 	if isPrintableASCII(trimmed) {
 		msg.ASCII = string(trimmed)
 		upper := strings.ToUpper(msg.ASCII)
-		if strings.HasPrefix(upper, "FP") {
+		if strings.HasPrefix(upper, "FP_") {
 			msg.Kind = MessageRegister
 			msg.GatewayName = msg.ASCII
 			return msg
 		}
 		switch upper {
-		case "HB", "PING", "HEART", "HEARTBEAT":
+		case "HB", "PING", "HEART", "HEARTBEAT", "KEEPALIVE", "KEEPALIVE MESSAGE":
 			msg.Kind = MessageHeartbeat
 			return msg
 		}

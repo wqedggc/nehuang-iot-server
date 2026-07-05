@@ -75,13 +75,23 @@ func selectFrames(name string) ([]sampleFrame, error) {
 	all := []sampleFrame{
 		{
 			name:    "register",
-			payload: []byte("FP_TEST_ADMIN_001\n"),
+			payload: []byte("FP_TEST_ADMIN_002\n"),
 			note:    "ASCII register; Adapter forwards raw bytes to /api/v1/adapter/raw-frames",
 		},
 		{
 			name:    "heartbeat",
-			payload: []byte("HEARTBEAT\n"),
-			note:    "ASCII heartbeat; Adapter forwards raw bytes after gateway_name is known",
+			payload: []byte("keepalive"),
+			note:    "ASCII keepalive heartbeat; Adapter forwards raw bytes after gateway_name is known",
+		},
+		{
+			name:    "heartbeat-message",
+			payload: []byte("keepalive message"),
+			note:    "ASCII keepalive message heartbeat variant observed in hardware debug output",
+		},
+		{
+			name:    "modbus-read",
+			payload: mustHex("03030000000185E8"),
+			note:    "Modbus read holding register command sample; Server shows protocol summary only",
 		},
 		{
 			name:    "work",
@@ -114,7 +124,7 @@ func selectFrames(name string) ([]sampleFrame, error) {
 		part = strings.TrimSpace(part)
 		frame, ok := byName[part]
 		if !ok {
-			return nil, fmt.Errorf("unknown frame %q; use all, register, heartbeat, work, alarm, or unknown", part)
+			return nil, fmt.Errorf("unknown frame %q; use all, register, heartbeat, heartbeat-message, modbus-read, work, alarm, or unknown", part)
 		}
 		selected = append(selected, frame)
 	}

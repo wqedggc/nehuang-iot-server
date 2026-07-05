@@ -393,6 +393,7 @@ const (
 
 // ControlLogSummary 控制日志列表摘要，供管理端控制日志页使用。
 type ControlLogSummary struct {
+	CommandID      uint64    `json:"command_id,string,omitempty"`
 	OpID           uint64    `json:"op_id,string"`
 	GatewayID      uint64    `json:"gateway_id,string"`
 	GatewayName    string    `json:"gateway_name"`
@@ -405,6 +406,7 @@ type ControlLogSummary struct {
 	RunMode        uint8     `json:"run_mode"`
 	CmdStatus      uint8     `json:"cmd_status"`
 	CmdStatusLabel string    `json:"cmd_status_label"`
+	CommandHex     string    `json:"command_hex"`
 	Result         string    `json:"result"`
 	OpTime         time.Time `json:"op_time"`
 }
@@ -552,27 +554,48 @@ type PayloadEventListItem struct {
 	PayloadLen      int    `json:"payload_len"`
 }
 
+// ProtocolSummary is a display-only interpretation of raw bytes for debugging.
+// It does not mean the raw event has been projected into business tables.
+type ProtocolSummary struct {
+	Kind        string                 `json:"kind"`
+	Label       string                 `json:"label"`
+	Description string                 `json:"description"`
+	ASCII       string                 `json:"ascii,omitempty"`
+	CRCValid    *bool                  `json:"crc_valid,omitempty"`
+	Fields      []ProtocolSummaryField `json:"fields,omitempty"`
+}
+
+// ProtocolSummaryField is one stable decoded field for Admin raw payload detail.
+type ProtocolSummaryField struct {
+	Name  string `json:"name"`
+	Label string `json:"label"`
+	Value string `json:"value"`
+}
+
 // PayloadEventDetail 是 payload 事件详情。
 type PayloadEventDetail struct {
-	RawEventID      uint64  `json:"raw_event_id,string"`
-	GatewayID       *uint64 `json:"gateway_id,string,omitempty"`
-	NodeID          *uint64 `json:"node_id,string,omitempty"`
-	PointID         *uint64 `json:"point_id,string,omitempty"`
-	GatewayName     string  `json:"gateway_name"`
-	SourceType      uint8   `json:"source_type"`
-	SourceTypeName  string  `json:"source_type_name"`
-	IsMock          bool    `json:"is_mock"`
-	EventType       uint8   `json:"event_type"`
-	EventTypeName   string  `json:"event_type_name"`
-	ParseStatus     uint8   `json:"parse_status"`
-	ParseStatusName string  `json:"parse_status_name"`
-	ParseError      string  `json:"parse_error"`
-	MessageID       string  `json:"message_id"`
-	EventCount      int     `json:"event_count"`
-	ParsedCount     int     `json:"parsed_count"`
-	RemoteIP        string  `json:"remote_ip"`
-	RemotePort      int     `json:"remote_port"`
-	PayloadSnapshot string  `json:"payload_snapshot"`
-	ReceivedAtMS    string  `json:"received_at_ms"`
-	CreatedAt       string  `json:"created_at"`
+	RawEventID      uint64           `json:"raw_event_id,string"`
+	GatewayID       *uint64          `json:"gateway_id,string,omitempty"`
+	NodeID          *uint64          `json:"node_id,string,omitempty"`
+	PointID         *uint64          `json:"point_id,string,omitempty"`
+	GatewayName     string           `json:"gateway_name"`
+	SourceType      uint8            `json:"source_type"`
+	SourceTypeName  string           `json:"source_type_name"`
+	IsMock          bool             `json:"is_mock"`
+	EventType       uint8            `json:"event_type"`
+	EventTypeName   string           `json:"event_type_name"`
+	ParseStatus     uint8            `json:"parse_status"`
+	ParseStatusName string           `json:"parse_status_name"`
+	ParseError      string           `json:"parse_error"`
+	MessageID       string           `json:"message_id"`
+	EventCount      int              `json:"event_count"`
+	ParsedCount     int              `json:"parsed_count"`
+	RemoteIP        string           `json:"remote_ip"`
+	RemotePort      int              `json:"remote_port"`
+	PayloadHex      string           `json:"payload_hex"`
+	PayloadByteLen  int              `json:"payload_byte_len"`
+	ProtocolSummary *ProtocolSummary `json:"protocol_summary,omitempty"`
+	PayloadSnapshot string           `json:"payload_snapshot"`
+	ReceivedAtMS    string           `json:"received_at_ms"`
+	CreatedAt       string           `json:"created_at"`
 }

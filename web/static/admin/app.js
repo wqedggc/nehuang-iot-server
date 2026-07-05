@@ -78,6 +78,71 @@
     return isNaN(n) ? null : n;
   }
 
+  function normalizeHexText(hex) {
+    var raw = toText(hex).trim();
+    if (!raw) return '';
+    return raw.replace(/^0x/i, '').replace(/[^0-9a-fA-F]/g, '').toUpperCase();
+  }
+
+  function formatHexDisplay(hex) {
+    var clean = normalizeHexText(hex);
+    if (!clean) return '';
+    var parts = [];
+    for (var i = 0; i < clean.length; i += 2) {
+      parts.push(clean.slice(i, i + 2));
+    }
+    return parts.join(' ');
+  }
+
+  function hexToAscii(hex) {
+    var clean = normalizeHexText(hex);
+    if (!clean) return '';
+    var out = [];
+    for (var i = 0; i + 1 < clean.length; i += 2) {
+      var byte = parseInt(clean.slice(i, i + 2), 16);
+      if (isNaN(byte)) continue;
+      if (byte >= 32 && byte <= 126) out.push(String.fromCharCode(byte));
+      else if (byte === 10) out.push('\\n');
+      else if (byte === 13) out.push('\\r');
+      else if (byte === 9) out.push('\\t');
+      else out.push('.');
+    }
+    return out.join('');
+  }
+
+  function normalizeProtocolSummary(summary) {
+    if (!summary) return null;
+    if (typeof summary === 'string') {
+      try {
+        summary = JSON.parse(summary);
+      } catch (e) {
+        return { rawText: summary };
+      }
+    }
+    if (typeof summary !== 'object') return null;
+
+    var fields = [];
+    if (Array.isArray(summary.fields)) {
+      fields = summary.fields.map(function (field) {
+        return {
+          name: toText(field.name || ''),
+          label: toText(field.label || field.name || ''),
+          value: toText(field.value || '')
+        };
+      });
+    }
+
+    return {
+      kind: toText(summary.kind || ''),
+      label: toText(summary.label || ''),
+      description: toText(summary.description || ''),
+      ascii: toText(summary.ascii || ''),
+      crcValid: summary.crc_valid === true ? true : summary.crc_valid === false ? false : null,
+      fields: fields,
+      rawText: toText(summary.rawText || '')
+    };
+  }
+
   function getGatewayId(gateway) {
     if (!gateway) return '';
     return toText(gateway.gateway_id || gateway.gatewayId || gateway.gatewayIdStr || gateway.gateway_external_id || gateway.gatewayId || gateway.id || gateway.ID || gateway.gateway_id_str || '').trim();
@@ -212,10 +277,59 @@
       messageId: toText(item.message_id || ''),
       remoteIp: toText(item.remote_ip || ''),
       remotePort: toText(item.remote_port || ''),
+      payloadHex: toText(item.payload_hex || item.payloadHex || ''),
       payloadLen: toNum(item.payload_len),
+      payloadByteLen: toNum(item.payload_byte_len || item.payloadByteLen || item.payload_len),
+      protocolSummary: normalizeProtocolSummary(item.protocol_summary || item.protocolSummary || null),
       eventCount: toNum(item.event_count),
       parsedCount: toNum(item.parsed_count),
       receivedAt: item.received_at_ms || item.received_at || item.created_at || ''
+    };
+  }
+
+  function normalizeCommandStatusLabel(statusValue, labelValue) {
+    var label = toText(labelValue || '').trim();
+    if (label && label !== '--') return label;
+    var raw = toText(statusValue || '').trim();
+    var n = parseInt(raw, 10);
+    if (n === 1) return 'pending';
+    if (n === 2) return 'sent';
+    if (n === 3) return 'ack';
+    if (n === 4) return 'succeeded';
+    if (n === 5) return 'failed';
+    if (n === 6) return 'timeout';
+    if (raw === 'succeeded' || raw === 'failed' || raw === 'timeout' || raw === 'pending' || raw === 'sent' || raw === 'ack') return raw;
+    return raw || '--';
+  }
+
+  function normalizeControlLogRecord(item) {
+    if (!item) return {};
+    var statusText = normalizeCommandStatusLabel(item.cmd_status || item.status || item.command_status || item.commandStatus, item.cmd_status_label || item.status_label || item.statusLabel);
+    var targetPointId = toText(item.point_id || item.pointId || item.target_point_id || item.targetPointId || '');
+    var targetPointName = toText(item.point_name || item.pointName || item.func_name || item.function_name || '');
+    var gatewaySummary = [toText(item.gateway_name || item.gatewayName || ''), toText(item.freq || item.frequency || ''), toText(item.devid || item.device_external_id || '')]
+      .filter(function (part) { return part !== ''; })
+      .join(' / ');
+    return {
+      raw: item,
+      commandId: toText(item.command_id || item.commandId || ''),
+      opId: toText(item.op_id || item.opId || ''),
+      gatewayId: toText(item.gateway_id || item.gatewayId || ''),
+      gatewayName: toText(item.gateway_name || item.gatewayName || ''),
+      pointId: targetPointId,
+      pointName: targetPointName,
+      targetSummary: targetPointName || targetPointId || gatewaySummary || '--',
+      bindUserName: toText(item.bind_usr_name || item.bindUserName || ''),
+      frequency: toText(item.freq || item.frequency || ''),
+      devid: toText(item.devid || item.device_external_id || ''),
+      funcName: toText(item.func_name || item.function_name || ''),
+      opType: toText(item.op_type || ''),
+      runMode: toText(item.run_mode || ''),
+      cmdStatus: toText(item.cmd_status || item.status || ''),
+      cmdStatusLabel: statusText || '--',
+      commandHex: normalizeHexText(item.command_hex || item.commandHex || ''),
+      result: toText(item.result || ''),
+      opTime: item.op_time || item.opTime || ''
     };
   }
 
@@ -1337,7 +1451,10 @@
               '<td>' + escHtml(getFunctionTypeName(pointItem.functionType || pointItem.function_type || pointItem.functionType)) + '</td>' +
               '<td>' + escHtml(pointItem.unit || '--') + '</td>' +
               '<td>' + (pointItem.isBound ? '<span class="badge badge-warning">已绑定</span>' : '<span class="badge badge-muted">未绑定</span>') + '</td>' +
-              '<td><button class="btn btn-outline btn-sm" onclick="openPointEditModal(\'' + escHtml(pointItem.pointId) + '\')">编辑</button></td>' +
+              '<td><div class="table-actions">' +
+                '<button class="btn btn-outline btn-sm" onclick="openPointEditModal(\'' + escHtml(pointItem.pointId) + '\')">编辑</button>' +
+                ((pointItem.controllableStatus === 1 || pointItem.controllableStatus === '1') ? '<button class="btn btn-outline btn-sm" onclick="openPointControlModal(\'' + escHtml(pointItem.pointId) + '\')">联调</button>' : '') +
+              '</div></td>' +
             '</tr>';
           }).join('');
 
@@ -1452,6 +1569,17 @@
         '</div>' +
         '<div class="form-group"><label class="form-label">控制命令</label><input class="form-input" id="point-edit-poll-cmd" type="text" value="' + escHtml(point.pollCmd || '') + '"></div>' +
         '<div class="form-group"><label class="form-label">备注</label><input class="form-input" id="point-edit-remark" type="text" value="' + escHtml(point.remark || '') + '"></div>' +
+        ((point.controllableStatus === 1 || point.controllableStatus === '1') ? (
+          '<div class="control-entry">' +
+            '<div class="control-entry-head">' +
+              '<div>' +
+                '<div class="control-entry-title">发送下行 Hex 指令</div>' +
+                '<div class="control-entry-sub">仅对可控功能点开放，command_hex 优先。</div>' +
+              '</div>' +
+              '<button class="btn btn-outline btn-sm" onclick="openPointControlModal(\'' + escHtml(point.pointId) + '\')">打开联调</button>' +
+            '</div>' +
+          '</div>'
+        ) : '') +
       '</div>' +
       '<div class="modal-actions">' +
         '<button class="btn btn-outline" onclick="closeModal()">取消</button>' +
@@ -1511,6 +1639,78 @@
       showToast((res && (res.message || res.code)) || '保存失败', 'error');
     } catch (e) {
       showToast((e && e.message) || '保存失败', 'error');
+    }
+  }
+
+  function openPointControlModal(pointId) {
+    var point = getPointItemFromGatewayData(pointId);
+    if (!point) {
+      showToast('未找到可联调的功能点', 'error');
+      return;
+    }
+    if (!(point.controllableStatus === 1 || point.controllableStatus === '1')) {
+      showToast('该功能点当前不可控', 'error');
+      return;
+    }
+
+    var overlay = $('#modal-overlay');
+    overlay.style.display = 'flex';
+    overlay.innerHTML = '<div class="modal" style="max-width:640px">' +
+      '<div class="modal-header">' +
+        '<h3>发送下行 Hex 指令</h3>' +
+        '<button class="modal-close" onclick="closeModal()">×</button>' +
+      '</div>' +
+      '<div class="modal-body">' +
+        '<div class="info-card control-point-card">' +
+          '<div class="info-grid">' +
+            '<div class="info-item"><label>功能点ID</label><span style="font-family:monospace;font-size:12px">' + escHtml(point.pointId || '--') + '</span></div>' +
+            '<div class="info-item"><label>功能点名称</label><span>' + escHtml(point.pointName || '--') + '</span></div>' +
+            '<div class="info-item"><label>设备网关</label><span>' + escHtml(point.gatewayName || '--') + '</span></div>' +
+            '<div class="info-item"><label>采集执行器</label><span>' + escHtml(point.collectorName || '--') + '</span></div>' +
+          '</div>' +
+        '</div>' +
+        '<div class="form-group"><label class="form-label">command_hex</label><input class="form-input" id="point-control-command-hex" type="text" placeholder="请输入十六进制指令，例如 F0 或 01020304"></div>' +
+        '<div class="form-group"><label class="form-label">用途备注</label><textarea class="form-input form-textarea" id="point-control-note" placeholder="联调用途备注，可留空"></textarea></div>' +
+      '</div>' +
+      '<div class="modal-actions">' +
+        '<button class="btn btn-outline" onclick="closeModal()">取消</button>' +
+        '<button class="btn btn-primary" onclick="sendPointControlCommand(\'' + escHtml(point.pointId) + '\')">发送下行</button>' +
+      '</div>' +
+    '</div>';
+  }
+
+  async function sendPointControlCommand(pointId) {
+    var commandHex = normalizeHexText($('#point-control-command-hex').value || '');
+    var note = toText($('#point-control-note').value || '').trim();
+
+    if (!commandHex) {
+      showToast('请输入 command_hex', 'error');
+      return;
+    }
+    if (!/^[0-9A-F]+$/.test(commandHex) || commandHex.length % 2 !== 0) {
+      showToast('command_hex 必须是偶数长度的十六进制字符串', 'error');
+      return;
+    }
+
+    var btn = $('#modal-overlay .modal-actions .btn-primary');
+    if (btn) btn.disabled = true;
+    try {
+      var payload = { command_hex: commandHex };
+      if (note) payload.remark = note;
+      var res = await NHApi.post('/api/v1/admin/device-points/' + encodeURIComponent(pointId) + '/control', payload);
+      if (res && res.data) {
+        var parts = ['已创建下行命令'];
+        if (res.data.status) parts.push('状态 ' + res.data.status);
+        if (res.data.command_hex) parts.push('Hex ' + res.data.command_hex);
+        showToast(parts.join(' · '), 'success');
+        closeModal();
+        return;
+      }
+      showToast((res && res.message) || '创建下行命令失败', 'error');
+    } catch (e) {
+      showToast((e && e.message) || '创建下行命令失败', 'error');
+    } finally {
+      if (btn) btn.disabled = false;
     }
   }
 
@@ -1948,30 +2148,46 @@
     try {
       var res = await NHApi.getControlLogs();
       if (!res.data) { container.innerHTML = '<div class="error-state"><p>加载失败</p><button class="btn btn-outline btn-sm" onclick="renderPage()">重试</button></div>'; return; }
-      var logs = res.data;
+      var logs = (res.data || []).map(normalizeControlLogRecord);
 
       var html = '<div class="table-section">' +
         '<div class="table-header">' +
           '<h3>控制日志</h3>' +
           '<div class="table-header-right">' +
-            '<input class="table-search" id="log-search" type="text" placeholder="搜索操作人/设备...">' +
+            '<input class="table-search" id="log-search" type="text" placeholder="搜索操作人/设备/Hex...">' +
             '<span class="table-count">共 ' + logs.length + ' 条</span>' +
           '</div>' +
         '</div>' +
         '<div class="table-wrap"><table>' +
-          '<thead><tr><th>ID</th><th>操作人</th><th>设备</th><th>功能</th><th>操作类型</th><th>命令状态</th><th>结果</th><th>操作时间</th></tr></thead>' +
+          '<thead><tr><th>ID</th><th>目标功能点 / 设备网关</th><th>操作人</th><th>功能</th><th>操作类型</th><th>command_hex</th><th>命令状态</th><th>结果</th><th>操作时间</th></tr></thead>' +
           '<tbody id="log-tbody">' +
             logs.map(function (l) {
-              var statusBadge = l.cmd_status === 'succeeded' ? 'badge-success' : l.cmd_status === 'failed' ? 'badge-danger' : 'badge-warning';
+              var statusClass = l.cmdStatusLabel === '成功' || l.cmdStatusLabel === '已完成' || l.cmdStatusLabel === 'succeeded' ? 'badge-success' :
+                l.cmdStatusLabel === '失败' || l.cmdStatusLabel === 'failed' ? 'badge-danger' :
+                l.cmdStatusLabel === '超时' || l.cmdStatusLabel === 'timeout' ? 'badge-warning' :
+                l.cmdStatusLabel === 'pending' ? 'badge-warning' :
+                l.cmdStatusLabel === 'sent' || l.cmdStatusLabel === 'ack' ? 'badge-info' : 'badge-muted';
+              var targetHtml = '<div>' + escHtml(l.targetSummary || '--') + '</div>';
+              if (l.pointId || l.gatewayName) {
+                var fallbackLine = [];
+                if (l.pointId && l.pointId !== l.targetSummary) fallbackLine.push('点 ' + l.pointId);
+                if (l.gatewayName) fallbackLine.push(l.gatewayName);
+                if (l.frequency) fallbackLine.push('频点 ' + l.frequency);
+                if (l.devid) fallbackLine.push('DevID ' + l.devid);
+                if (fallbackLine.length) {
+                  targetHtml += '<div style="font-size:11px;color:var(--color-text-muted);margin-top:2px">' + escHtml(fallbackLine.join(' · ')) + '</div>';
+                }
+              }
               return '<tr>' +
-                '<td>' + l.op_id + '</td>' +
-                '<td>' + escHtml(l.bind_usr_name) + '</td>' +
-                '<td>' + escHtml(l.gateway_name) + ' / ' + l.freq + ' / ' + l.devid + '</td>' +
-                '<td>' + escHtml(l.func_name) + '</td>' +
-                '<td>' + escHtml(l.op_type) + '</td>' +
-                '<td><span class="badge ' + statusBadge + '">' + escHtml(l.cmd_status_label) + '</span></td>' +
-                '<td>' + escHtml(l.result) + '</td>' +
-                '<td>' + formatFullTime(l.op_time) + '</td>' +
+                '<td style="font-family:monospace;font-size:12px">' + escHtml(l.opId || '--') + '</td>' +
+                '<td class="log-target-cell">' + targetHtml + '</td>' +
+                '<td>' + escHtml(l.bindUserName || '--') + '</td>' +
+                '<td>' + escHtml(l.funcName || '--') + '</td>' +
+                '<td>' + escHtml(l.opType || '--') + '</td>' +
+                '<td><code class="code-pill">' + escHtml(formatHexDisplay(l.commandHex) || '--') + '</code></td>' +
+                '<td><span class="badge ' + statusClass + '">' + escHtml(l.cmdStatusLabel || '--') + '</span></td>' +
+                '<td class="log-result-cell">' + escHtml(l.result || '--') + '</td>' +
+                '<td style="white-space:nowrap">' + formatFullTime(l.opTime) + '</td>' +
               '</tr>';
             }).join('') +
           '</tbody>' +
@@ -2061,7 +2277,7 @@
           '</select>' +
           '<input type="datetime-local" class="form-input" id="pe-filter-start" style="width:180px;height:32px;font-size:13px" value="' + (payloadState.start || '') + '" placeholder="开始时间">' +
           '<input type="datetime-local" class="form-input" id="pe-filter-end" style="width:180px;height:32px;font-size:13px" value="' + (payloadState.end || '') + '" placeholder="结束时间">' +
-          '<input type="text" class="table-search" id="pe-filter-keyword" style="width:180px;height:32px" value="' + escHtml(payloadState.keyword || '') + '" placeholder="搜索网关/消息ID">' +
+          '<input type="text" class="table-search" id="pe-filter-keyword" style="width:180px;height:32px" value="' + escHtml(payloadState.keyword || '') + '" placeholder="搜索网关/消息ID/Hex">' +
           '<button class="btn btn-outline btn-sm" onclick="payloadResetFilters()">重置</button>' +
         '</div>' +
         '<div class="table-wrap"><table>' +
@@ -2204,8 +2420,31 @@
       var remoteAddress = d.remoteIp || '--';
       if (d.remoteIp && d.remotePort) remoteAddress = d.remoteIp + ':' + d.remotePort;
       else if (d.remotePort) remoteAddress = d.remotePort;
+      var payloadHex = formatHexDisplay(d.payloadHex || res.data.payload_hex || '');
+      var payloadAscii = d.protocolSummary && d.protocolSummary.ascii ? d.protocolSummary.ascii : hexToAscii(d.payloadHex || res.data.payload_hex || '');
+      var protocolSummary = d.protocolSummary || normalizeProtocolSummary(res.data.protocol_summary || res.data.protocolSummary || null);
+      var protocolLabelText = (protocolSummary && (protocolSummary.label || protocolSummary.rawText)) || '--';
+      var protocolKindText = (protocolSummary && (protocolSummary.kind || protocolSummary.rawText)) || '--';
+      var protocolDescText = (protocolSummary && (protocolSummary.description || protocolSummary.rawText)) || '--';
+      var crcText = '--';
+      if (protocolSummary) {
+        if (protocolSummary.crcValid === true) crcText = '通过';
+        else if (protocolSummary.crcValid === false) crcText = '不通过';
+      }
 
-      var bodyHtml = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px">' +
+      var protocolFieldsHtml = '';
+      if (protocolSummary && protocolSummary.fields && protocolSummary.fields.length) {
+        protocolFieldsHtml = '<div class="detail-mini-table">' +
+          protocolSummary.fields.map(function (field) {
+            return '<div class="detail-mini-row">' +
+              '<div class="detail-mini-key">' + escHtml(field.label || field.name || '--') + '</div>' +
+              '<div class="detail-mini-val">' + escHtml(field.value || '--') + '</div>' +
+            '</div>';
+          }).join('') +
+        '</div>';
+      }
+
+      var bodyHtml = '<div class="detail-grid">' +
         '<div class="info-item"><label>原始报文 ID</label><span style="font-family:monospace">' + escHtml(String(d.rawEventId || '--')) + '</span></div>' +
         '<div class="info-item"><label>接收时间</label><span>' + escHtml(d.receivedAt || '--') + '</span></div>' +
         '<div class="info-item"><label>事件类型</label><span class="badge ' + d.eventTypeBadgeClass + '">' + escHtml(d.eventTypeLabel) + '</span></div>' +
@@ -2215,7 +2454,47 @@
         '<div class="info-item"><label>消息 ID</label><span style="font-family:monospace;font-size:11px">' + (isMock ? '<span class="badge badge-warning" style="margin-right:4px">MOCK</span>' : '') + escHtml(d.messageId || '--') + '</span></div>' +
         '<div class="info-item"><label>事件数量</label><span>' + (d.parsedCount != null ? d.parsedCount : 0) + '/' + (d.eventCount != null ? d.eventCount : 0) + '</span></div>' +
         '<div class="info-item"><label>来源 IP</label><span>' + escHtml(remoteAddress) + '</span></div>' +
+        '<div class="info-item"><label>Payload 长度</label><span>' + escHtml(toText(d.payloadByteLen != null ? d.payloadByteLen : d.payloadLen != null ? d.payloadLen : '--')) + '</span></div>' +
       '</div>';
+
+      bodyHtml += '<div class="detail-section">' +
+        '<div class="detail-section-head">' +
+          '<div>' +
+            '<div class="detail-section-title">原始 Hex</div>' +
+            '<div class="detail-section-sub">已兼容 `payload_hex` 为空的情况。</div>' +
+          '</div>' +
+        '</div>' +
+        '<pre class="code-panel">' + escHtml(payloadHex || '(空)') + '</pre>' +
+      '</div>';
+
+      bodyHtml += '<div class="detail-section">' +
+        '<div class="detail-section-head">' +
+          '<div>' +
+            '<div class="detail-section-title">ASCII</div>' +
+            '<div class="detail-section-sub">由协议摘要优先展示，缺失时按 Hex 反推。</div>' +
+          '</div>' +
+        '</div>' +
+        '<pre class="code-panel">' + escHtml(payloadAscii || '(空)') + '</pre>' +
+      '</div>';
+
+      bodyHtml += '<div class="detail-grid detail-grid-4">' +
+        '<div class="info-item"><label>CRC</label><span><span class="badge ' + (crcText === '通过' ? 'badge-success' : crcText === '不通过' ? 'badge-danger' : 'badge-muted') + '">' + escHtml(crcText) + '</span></span></div>' +
+        '<div class="info-item"><label>协议摘要</label><span>' + escHtml(protocolLabelText) + '</span></div>' +
+        '<div class="info-item"><label>协议类型</label><span>' + escHtml(protocolKindText) + '</span></div>' +
+        '<div class="info-item"><label>协议说明</label><span>' + escHtml(protocolDescText) + '</span></div>' +
+      '</div>';
+
+      if (protocolFieldsHtml) {
+        bodyHtml += '<div class="detail-section">' +
+          '<div class="detail-section-head">' +
+            '<div>' +
+              '<div class="detail-section-title">协议字段</div>' +
+              '<div class="detail-section-sub">后端已解析出的稳定字段。</div>' +
+            '</div>' +
+          '</div>' +
+          protocolFieldsHtml +
+        '</div>';
+      }
 
       var snapshot = res.data.payload_snapshot || '';
       var formattedPayload = snapshot;
@@ -2301,6 +2580,8 @@
   window.payloadCopySnapshot = payloadCopySnapshot;
   window.payloadViewDetail = payloadViewDetail;
   window.openPointEditModal = openPointEditModal;
+  window.openPointControlModal = openPointControlModal;
   window.savePointConfig = savePointConfig;
+  window.sendPointControlCommand = sendPointControlCommand;
 
 })();

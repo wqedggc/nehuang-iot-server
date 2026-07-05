@@ -425,7 +425,8 @@ func (h *adapterHandler) handleDeviceEvents(w http.ResponseWriter, r *http.Reque
 
 func (h *adapterHandler) parseRawFrame(ctx context.Context, rawEventID uint64, envelope rawFrameEnvelope, payload []byte) (domain.ParseStatus, error) {
 	trimmed := bytes.TrimSpace(payload)
-	if bytes.HasPrefix(trimmed, []byte("FP_")) {
+	msg := protocol.ClassifyPayload(payload)
+	if msg.Kind == protocol.MessageRegister {
 		gatewayName := string(trimmed)
 		if envelope.GatewayName != "" {
 			gatewayName = envelope.GatewayName
@@ -448,7 +449,7 @@ func (h *adapterHandler) parseRawFrame(ctx context.Context, rawEventID uint64, e
 		return domain.ParseStatusParsed, nil
 	}
 
-	if bytes.EqualFold(trimmed, []byte("HEARTBEAT")) {
+	if msg.Kind == protocol.MessageHeartbeat {
 		gatewayName := strings.TrimSpace(envelope.GatewayName)
 		if gatewayName == "" {
 			return domain.ParseStatusFailed, errRawFrameHeartbeatMissingGateway

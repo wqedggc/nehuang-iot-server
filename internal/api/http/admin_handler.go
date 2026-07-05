@@ -14,6 +14,7 @@ import (
 	"nehuang-iot-server/internal/auth"
 	"nehuang-iot-server/internal/config"
 	"nehuang-iot-server/internal/domain"
+	"nehuang-iot-server/internal/protocolsummary"
 )
 
 // adminRepository defines the data access methods required by admin handlers.
@@ -766,7 +767,7 @@ func buildAdminControlCommandInput(pointID uint64, userID uint64, action string,
 		CommandSource: domain.CommandSourceAdmin,
 		Extra:         &extra,
 	}
-	trimmedHex := strings.ToUpper(strings.TrimSpace(commandHex))
+	trimmedHex := normalizeHexCommand(commandHex)
 	if trimmedHex != "" {
 		if !isHexCommand(trimmedHex) {
 			return input, "", fmt.Errorf("command_hex must be hex")
@@ -908,6 +909,7 @@ func uint64Ptr(v uint64) *uint64 {
 }
 
 func isHexCommand(v string) bool {
+	v = normalizeHexCommand(v)
 	if v == "" {
 		return true
 	}
@@ -921,6 +923,10 @@ func isHexCommand(v string) bool {
 		return false
 	}
 	return true
+}
+
+func normalizeHexCommand(v string) string {
+	return strings.ToUpper(strings.Join(strings.Fields(strings.TrimSpace(v)), ""))
 }
 
 // handleFarmerBindings 处理 GET /api/v1/admin/farmers/{user_id}/bindings。
@@ -1196,6 +1202,9 @@ func (h *adminHandler) handlePayloadEventDetail(w http.ResponseWriter, r *http.R
 	if detail == nil {
 		writeCode(w, http.StatusNotFound, 404, "payload event not found")
 		return
+	}
+	if detail.PayloadHex != "" {
+		detail.ProtocolSummary = protocolsummary.Build(detail.PayloadHex)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"data": detail})

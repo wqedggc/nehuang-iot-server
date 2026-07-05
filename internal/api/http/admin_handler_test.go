@@ -31,6 +31,7 @@ type mockAdminRepo struct {
 	createdControlInput           domain.CreateControlCommandInput
 	createdControlCmd             *domain.ControlCommand
 	gatewayCandidates             []domain.GatewayBindCandidate
+	payloadEventDetail            *domain.PayloadEventDetail
 }
 
 func (m *mockAdminRepo) GetUserByUsername(ctx context.Context, username string) (*domain.User, error) {
@@ -131,7 +132,7 @@ func (m *mockAdminRepo) ListPayloadEvents(ctx context.Context, params domain.Pay
 	return nil, 0, nil
 }
 func (m *mockAdminRepo) GetPayloadEventDetail(ctx context.Context, rawEventID uint64) (*domain.PayloadEventDetail, error) {
-	return nil, nil
+	return m.payloadEventDetail, nil
 }
 
 // ─── Scenario 7: Admin login JWT contains aud="admin" ────────────────────────
@@ -607,6 +608,65 @@ func TestHandleAdminDevicePointControl_CreatesPendingCommand(t *testing.T) {
 	}
 }
 
+func TestHandleAdminDevicePointControl_CustomHex(t *testing.T) {
+	repo := &mockAdminRepo{
+		devicePointByID: &domain.DevicePoint{
+			PointID:          1001,
+			NodeID:           2001,
+			GatewayID:        9001,
+			Frequency:        433,
+			DeviceExternalID: "DEV-1",
+		},
+		createdControlCmd: &domain.ControlCommand{
+			CommandID:     7789,
+			CommandStatus: domain.CommandStatusCreated,
+			CommandHex:    "03030000000185E8",
+		},
+	}
+	handler := &adminHandler{repo: repo}
+	adminRoles := roleMiddleware(domain.RoleSuperAdmin, domain.RoleAdmin)
+	protected := authMiddleware([]byte(testSecret), adminRoles(http.HandlerFunc(handler.handleDevicePointControl)))
+	token := mustAdminToken(t)
+
+	req := httptest.NewRequest("POST", "/api/v1/admin/device-points/1001/control", strings.NewReader(`{"command_hex":"03 03 00 00 00 01 85 E8"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+
+	protected.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("device point control: want 202, got %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if repo.createdControlInput.CommandType != domain.CommandTypeCustomHex {
+		t.Fatalf("command type: want custom hex, got %d", repo.createdControlInput.CommandType)
+	}
+	if repo.createdControlInput.CommandHex != "03030000000185E8" {
+		t.Fatalf("command hex = %q", repo.createdControlInput.CommandHex)
+	}
+}
+
+func TestHandleAdminDevicePointControl_InvalidCustomHexReturns400(t *testing.T) {
+	repo := &mockAdminRepo{
+		devicePointByID: &domain.DevicePoint{PointID: 1001, NodeID: 2001},
+	}
+	handler := &adminHandler{repo: repo}
+	adminRoles := roleMiddleware(domain.RoleSuperAdmin, domain.RoleAdmin)
+	protected := authMiddleware([]byte(testSecret), adminRoles(http.HandlerFunc(handler.handleDevicePointControl)))
+	token := mustAdminToken(t)
+
+	req := httptest.NewRequest("POST", "/api/v1/admin/device-points/1001/control", strings.NewReader(`{"command_hex":"not-hex"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+
+	protected.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("invalid custom hex: want 400, got %d, body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestDevicePointControlMiniTokenReturns403(t *testing.T) {
 	repo := &mockAdminRepo{
 		devicePointByID: &domain.DevicePoint{PointID: 1001, NodeID: 2001},
@@ -636,6 +696,36 @@ func TestDevicePointControlMiniTokenReturns403(t *testing.T) {
 
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("mini token on admin control: want 403, got %d, body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestPayloadEventDetailIncludesProtocolSummary(t *testing.T) {
+	repo := &mockAdminRepo{
+		payloadEventDetail: &domain.PayloadEventDetail{
+			RawEventID:      9001,
+			EventType:       uint8(domain.RawEventUnknown),
+			ParseStatus:     uint8(domain.ParseStatusPending),
+			SourceType:      uint8(domain.SourceTypeGateway),
+			PayloadHex:      "03030000000185E8",
+			PayloadByteLen:  8,
+			PayloadSnapshot: `{"payload_hex":"03030000000185E8"}`,
+		},
+	}
+	handler := &adminHandler{repo: repo}
+
+	req := httptest.NewRequest("GET", "/api/v1/admin/payload-events/9001", nil)
+	rec := httptest.NewRecorder()
+
+	handler.handlePayloadEventDetail(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("payload detail: want 200, got %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if !contains(rec.Body.String(), `"payload_hex":"03030000000185E8"`) {
+		t.Fatalf("payload_hex missing: body=%s", rec.Body.String())
+	}
+	if !contains(rec.Body.String(), `"kind":"modbus_read_holding_registers"`) {
+		t.Fatalf("protocol summary missing: body=%s", rec.Body.String())
 	}
 }
 
@@ -669,4 +759,21 @@ func TestDevicePointUpdateMiniTokenReturns403(t *testing.T) {
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("mini token on admin patch: want 403, got %d, body=%s", rec.Code, rec.Body.String())
 	}
+}
+
+func mustAdminToken(t *testing.T) string {
+	t.Helper()
+	now := time.Now()
+	token, err := auth.Sign(auth.Claims{
+		UserID:   7,
+		UserType: domain.UserTypeAdmin,
+		Role:     domain.RoleAdmin,
+		Aud:      "admin",
+		IssuedAt: now.UnixMilli(),
+		ExpireAt: now.Add(time.Hour).UnixMilli(),
+	}, []byte(testSecret))
+	if err != nil {
+		t.Fatalf("sign token: %v", err)
+	}
+	return token
 }

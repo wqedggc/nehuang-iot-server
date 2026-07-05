@@ -289,6 +289,125 @@ tbody tr:last-child td { border-bottom: none; }
 .info-item { display: flex; flex-direction: column; gap: 2px; }
 .info-item label { font-size: 11px; color: var(--color-text-muted); text-transform: uppercase; letter-spacing: 0.3px; }
 .info-item span { font-size: 14px; font-weight: 500; }
+.detail-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.detail-grid-4 {
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+.detail-section {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--color-border);
+}
+.detail-section-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.detail-section-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+.detail-section-sub {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  margin-top: 2px;
+}
+.code-panel {
+  background: #f8faf6;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 12px;
+  font-size: 12px;
+  line-height: 1.55;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  white-space: pre-wrap;
+  word-break: break-all;
+  overflow: auto;
+  max-height: 320px;
+}
+.detail-mini-table {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+.detail-mini-row {
+  display: grid;
+  grid-template-columns: 180px 1fr;
+  gap: 12px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--color-border);
+  background: #fff;
+}
+.detail-mini-row:first-child { border-top: none; }
+.detail-mini-key {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  font-weight: 600;
+}
+.detail-mini-val {
+  font-size: 12px;
+  color: var(--color-text);
+  word-break: break-all;
+}
+.control-entry {
+  margin-top: 2px;
+  padding: 12px;
+  border: 1px dashed #c9d5bf;
+  border-radius: var(--radius-sm);
+  background: #fafcf8;
+}
+.control-entry-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.control-entry-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+.control-entry-sub {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  margin-top: 2px;
+}
+.form-textarea {
+  height: auto;
+  min-height: 84px;
+  padding-top: 8px;
+  padding-bottom: 8px;
+  resize: vertical;
+}
+.code-pill {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  font-size: 11px;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.log-target-cell {
+  min-width: 180px;
+  max-width: 320px;
+  word-break: break-word;
+}
+.log-result-cell {
+  max-width: 280px;
+  word-break: break-word;
+}
 
 /* ---------- 筛选栏 ---------- */
 .filter-bar {

@@ -13,6 +13,12 @@
 - Go HTTP 服务：Admin、Mini、MySQL、设备点位、绑定、控制命令。
 - Go TCP Adapter：接收硬件网关 TCP 连接，保存原始 bytes，识别注册/心跳，并支持 pending 命令下行 Mock。
 
+联调阶段口径：
+
+- 下行以自定义 Hex 为主（`command_hex` 优先）；`open`/`close`/`stop` 作为兼容入口。
+- 标准 `4 小时工作包` 作为硬件主动上报数据，不作为“云端查询即返回”的同步接口。
+- 临时读取为“云端下发读取 hex”后，MCU 返回工作包 raw，后续由协议稳定后再做字段级解析。
+
 当前第一阶段目标是先稳定硬件接入链路：
 
 ```text
@@ -151,13 +157,13 @@
 
 - Mini 控制会创建异步 `control_commands`。
 - Admin 可按功能点创建异步 `control_commands`。
+- Admin 设备管理可对可控功能点发送自定义 Hex 下行指令，用于联调。
 - Adapter 内部接口可拉取 pending、标记 sent、回写 result。
 - Adapter 已支持把 pending command 的 `command_hex` 写回当前 TCP 连接，并标记 `sent`。
 - 控制状态模型：`pending -> sent -> ack -> succeeded/failed/timeout`。
 
 未完成：
 
-- Admin 发起控制页面。
 - ACK 解析。
 - 控制结果驱动前端实时刷新。
 
@@ -205,6 +211,8 @@
 - 服务端已创建异步命令。
 - Adapter 可把命令 hex 写回当前 TCP 连接。
 - 真实硬件 ACK 未完成。
+- 联调阶段默认以自定义 hex 下行为主。
+- ACK/清缓存/工作包字段仍待确认，暂不写入业务结果。
 
 用户体验口径：
 
@@ -227,8 +235,8 @@ Adapter 当前可识别：
 | 报文 | 当前行为 |
 |------|----------|
 | 注册包 `FP_xxx` | 转成 register 事件 |
-| 心跳包 `HEARTBEAT/HB/PING/HEART` | 转成 heartbeat 事件 |
-| 工作包 | 只落 raw，等待真实样例补 parser |
+| 心跳包 `keepalive/keepalive message/HEARTBEAT/HB/PING/HEART` | 转成 heartbeat 事件 |
+| 工作包 | 只落 raw，等待真实样例补 parser；标准工作包固定为 MCU 主动上行 |
 | 告警包 | 只落 raw，等待真实样例补 parser 和去重 |
 | 未知包 | 只落 raw，不中断连接 |
 
@@ -296,10 +304,9 @@ node_id + function_type + channel_no
 - 真实工作包 parser。
 - 真实告警 parser 和去重。
 - 告警通知推送。
-- 真实下行 hex。
+- 真实下行指令模板（联调阶段已支持自定义 hex 流程）。
 - MCU ACK/清缓存解析。
 - 时隙调度。
-- Admin 控制页面。
 - Admin 点位编辑完整 UI。
 - 设备手动新增和批量导入。
 - 微信小程序真机端到端验收。
@@ -309,6 +316,9 @@ node_id + function_type + channel_no
 
 **Q: 现在硬件该怎么接云端？**  
 A: 硬件网关作为 TCP client 连接 `gateway-adapter` 的 `IP:PORT`，直接写原始 bytes。第一版不是让硬件调 HTTP JSON。
+
+**Q: 4 小时工作包是主动还是查询？**
+A: 已确认是标准 4 小时工作包由 MCU 主动上报；临时读取仍保持“下发读取 hex 后返回 raw”。
 
 **Q: 为什么工作包暂时不解析？**  
 A: 甲方文档仍有字段语义、长度、ACK/清缓存、CRC 覆盖范围等待确认点。当前先 raw 留痕，避免误解析造成错误入库。

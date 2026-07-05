@@ -71,10 +71,10 @@
 - runtime log 使用结构化 JSON。
 - debug/protocol log 通过 `NEHUANG_GATEWAY_DEBUG=true` 开启。
 - 识别 ASCII `FP_xxx` 注册包。
-- 识别 `HEARTBEAT/HB/PING/HEART` 心跳包。
+- 识别 `keepalive/keepalive message/HEARTBEAT/HB/PING/HEART` 心跳包。
 - 注册/心跳的业务解析由 Go 服务在 raw frame 落库后完成。
 - CRC-16/MODBUS 固定实现。
-- `cmd/gateway-adapter-mock` 可模拟注册、心跳、工作包、告警包、未知包。
+- `cmd/gateway-adapter-mock` 可模拟注册、keepalive 心跳、Modbus 读指令、工作包、告警包、未知包。
 - `cmd/gateway-adapter-mock` 可进入等待下行模式，打印 Adapter 写回 TCP 的 command hex。
 - `cmd/gateway-adapter-replay` 可回放 raw journal 并统计分类结果。
 - 识别出设备网关后，Adapter 会按 `gateway_external_id` 拉取 pending command。
@@ -94,6 +94,8 @@
 - `control_commands` / `control_results` 领域模型。
 - Mini 控制请求创建异步控制命令并返回 `command_id + pending`。
 - Admin 可按功能点创建异步控制命令，并返回 `command_id + pending`。
+- Admin 设备管理可对可控功能点发送自定义 Hex 下行指令，用于联调。
+- 控制日志已基于 `control_commands` 展示 command hex 和状态。
 - Adapter 内部接口：
   - 拉取 pending command。
   - 标记 sent。
@@ -102,7 +104,6 @@
 
 未实现：
 
-- Admin 控制发起页面。
 - MCU ACK 解析。
 - 命令超时扫描完整接入。
 - 控制结果驱动前端状态刷新。

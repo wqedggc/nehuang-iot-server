@@ -158,6 +158,40 @@ func TestHandleRawFramesKeepsUnknownPayloadPending(t *testing.T) {
 	}
 }
 
+func TestHandleRawFramesParsesKeepaliveHeartbeat(t *testing.T) {
+	repo := &mockAdapterRepo{}
+	handler := &adapterHandler{repo: repo, adapterToken: "test-token"}
+	body := `{"protocol_version":"nehuang-gateway-adapter-v1","source_type":"gateway_adapter","message_id":"conn-1-2","connection_id":"conn-1","gateway_name":"FP_TEST_ADMIN_001","remote_ip":"127.0.0.1","remote_port":63254,"direction":"inbound","payload_hex":"6B656570616C697665","received_at":"2026-07-04T18:08:05Z","raw_seq":2}`
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/adapter/raw-frames", strings.NewReader(body))
+	req.Header.Set("X-Adapter-Token", "test-token")
+	rec := httptest.NewRecorder()
+
+	handler.handleRawFrames(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("handleRawFrames: want 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if len(repo.insertedRawEvents) != 1 {
+		t.Fatalf("InsertRawEvent calls: want 1, got %d", len(repo.insertedRawEvents))
+	}
+	if repo.insertedRawEvents[0].EventType != domain.RawEventHeartbeat {
+		t.Fatalf("event type: want heartbeat, got %v", repo.insertedRawEvents[0].EventType)
+	}
+	if len(repo.upsertedGateways) != 1 {
+		t.Fatalf("UpsertGatewayByExternalID calls: want 1, got %d", len(repo.upsertedGateways))
+	}
+	if repo.upsertedGateways[0].GatewayExternalID != "TEST_ADMIN_001" {
+		t.Fatalf("gateway external id: want TEST_ADMIN_001, got %q", repo.upsertedGateways[0].GatewayExternalID)
+	}
+	if repo.parseStatus != domain.ParseStatusParsed {
+		t.Fatalf("parse status: want parsed, got %v", repo.parseStatus)
+	}
+	if repo.parseMetaType != domain.RawEventHeartbeat || repo.parseMetaCount != 1 || repo.parsedMetaCount != 1 {
+		t.Fatalf("parse meta mismatch: type=%v count=%d parsed=%d", repo.parseMetaType, repo.parseMetaCount, repo.parsedMetaCount)
+	}
+}
+
 func TestHandleRawFramesStoresAlarmPayloadAsAlarmPending(t *testing.T) {
 	repo := &mockAdapterRepo{}
 	handler := &adapterHandler{repo: repo, adapterToken: "test-token"}

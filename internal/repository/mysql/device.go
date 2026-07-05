@@ -3,6 +3,7 @@ package mysql
 import (
 	"context"
 	"database/sql"
+	"encoding/hex"
 	"log"
 	"strings"
 	"time"
@@ -160,9 +161,9 @@ func (r *Repository) ListPayloadEvents(ctx context.Context, params domain.Payloa
 		args = append(args, *params.End)
 	}
 	if params.Keyword != nil && *params.Keyword != "" {
-		conditions = append(conditions, "(gateway_name LIKE ? OR message_id LIKE ?)")
+		conditions = append(conditions, "(gateway_name LIKE ? OR message_id LIKE ? OR payload_hex LIKE ?)")
 		kw := "%" + *params.Keyword + "%"
-		args = append(args, kw, kw)
+		args = append(args, kw, kw, kw)
 	}
 
 	whereClause := ""
@@ -185,7 +186,7 @@ func (r *Repository) ListPayloadEvents(ctx context.Context, params domain.Payloa
 	listQuery := `SELECT raw_event_id, COALESCE(gateway_name,''), source_type, event_type, parse_status,
 		COALESCE(parse_error,''), COALESCE(message_id,''), event_count, parsed_count,
 		COALESCE(remote_ip,''), COALESCE(remote_port,0), received_at_ms,
-		COALESCE(payload_snapshot,'')
+		COALESCE(payload_hex,''), COALESCE(payload_snapshot,'')
 	FROM raw_device_events ` + whereClause +
 		` ORDER BY received_at_ms DESC LIMIT ? OFFSET ?`
 	listArgs := append(args, params.Size, offset)
@@ -199,12 +200,13 @@ func (r *Repository) ListPayloadEvents(ctx context.Context, params domain.Payloa
 	items := make([]domain.PayloadEventListItem, 0, params.Size)
 	for rows.Next() {
 		var item domain.PayloadEventListItem
+		var payloadHex string
 		var payloadSnapshot string
 		var receivedAt time.Time
 		if err := rows.Scan(
 			&item.RawEventID, &item.GatewayName, &item.SourceType, &item.EventType, &item.ParseStatus,
 			&item.ParseError, &item.MessageID, &item.EventCount, &item.ParsedCount,
-			&item.RemoteIP, &item.RemotePort, &receivedAt, &payloadSnapshot,
+			&item.RemoteIP, &item.RemotePort, &receivedAt, &payloadHex, &payloadSnapshot,
 		); err != nil {
 			return nil, 0, err
 		}
@@ -213,7 +215,7 @@ func (r *Repository) ListPayloadEvents(ctx context.Context, params domain.Payloa
 		item.EventTypeName = domain.RawEventType(item.EventType).RawEventTypeName()
 		item.ParseStatusName = domain.ParseStatus(item.ParseStatus).ParseStatusName()
 		item.ReceivedAtMS = receivedAt.Format("2006-01-02 15:04:05")
-		item.PayloadLen = len(payloadSnapshot)
+		item.PayloadLen = hexPayloadByteLen(payloadHex)
 		items = append(items, item)
 	}
 	return items, total, rows.Err()
@@ -223,6 +225,7 @@ func (r *Repository) ListPayloadEvents(ctx context.Context, params domain.Payloa
 func (r *Repository) GetPayloadEventDetail(ctx context.Context, rawEventID uint64) (*domain.PayloadEventDetail, error) {
 	var d domain.PayloadEventDetail
 	var gwID, nodeID, pointID sql.NullInt64
+	var payloadHex sql.NullString
 	var payloadSnapshot sql.NullString
 	var receivedAt, createdAt time.Time
 
@@ -230,13 +233,13 @@ func (r *Repository) GetPayloadEventDetail(ctx context.Context, rawEventID uint6
 SELECT raw_event_id, gateway_id, node_id, point_id,
   COALESCE(gateway_name,''), source_type, event_type, parse_status,
   COALESCE(parse_error,''), COALESCE(message_id,''), event_count, parsed_count,
-  COALESCE(remote_ip,''), COALESCE(remote_port,0), payload_snapshot,
+  COALESCE(remote_ip,''), COALESCE(remote_port,0), payload_hex, payload_snapshot,
   received_at_ms, created_at
 FROM raw_device_events WHERE raw_event_id = ?`, rawEventID,
 	).Scan(&d.RawEventID, &gwID, &nodeID, &pointID,
 		&d.GatewayName, &d.SourceType, &d.EventType, &d.ParseStatus,
 		&d.ParseError, &d.MessageID, &d.EventCount, &d.ParsedCount,
-		&d.RemoteIP, &d.RemotePort, &payloadSnapshot,
+		&d.RemoteIP, &d.RemotePort, &payloadHex, &payloadSnapshot,
 		&receivedAt, &createdAt)
 	if err != nil {
 		return nil, err
@@ -257,6 +260,10 @@ FROM raw_device_events WHERE raw_event_id = ?`, rawEventID,
 	if payloadSnapshot.Valid {
 		d.PayloadSnapshot = payloadSnapshot.String
 	}
+	if payloadHex.Valid {
+		d.PayloadHex = payloadHex.String
+		d.PayloadByteLen = hexPayloadByteLen(payloadHex.String)
+	}
 	d.EventTypeName = domain.RawEventType(d.EventType).RawEventTypeName()
 	d.SourceTypeName = domain.SourceType(d.SourceType).SourceTypeName()
 	d.IsMock = isMockPayloadEvent(d.SourceType, d.MessageID, d.PayloadSnapshot)
@@ -264,6 +271,18 @@ FROM raw_device_events WHERE raw_event_id = ?`, rawEventID,
 	d.ReceivedAtMS = receivedAt.Format("2006-01-02 15:04:05")
 	d.CreatedAt = createdAt.Format("2006-01-02 15:04:05")
 	return &d, nil
+}
+
+func hexPayloadByteLen(payloadHex string) int {
+	payloadHex = strings.TrimSpace(payloadHex)
+	if payloadHex == "" {
+		return 0
+	}
+	decoded, err := hex.DecodeString(payloadHex)
+	if err != nil {
+		return 0
+	}
+	return len(decoded)
 }
 
 func isMockPayloadEvent(sourceType uint8, messageID string, payloadSnapshot string) bool {
@@ -1448,13 +1467,20 @@ func (r *Repository) UnbindRelation(ctx context.Context, bindID uint64) error {
 
 const listControlLogsQuery = `
 SELECT
-  op_records.op_id, op_records.gateway_id, cg.gateway_name,
-  op_records.bind_user_name, op_records.frequency, op_records.device_external_id,
-  op_records.op_type, op_records.run_mode, 0 as cmd_status,
-  op_records.op_content, op_records.operated_at_ms
-FROM op_records
-LEFT JOIN cloud_gateways cg ON op_records.gateway_id = cg.gateway_id
-ORDER BY op_records.operated_at_ms DESC
+  cc.command_id, cc.gateway_id, COALESCE(cg.gateway_name, ''),
+  COALESCE(u.display_name, u.username, '') AS operator_name,
+  cc.frequency, cc.device_external_id,
+  COALESCE(dp.function_type, 0) AS function_type,
+  COALESCE(dp.point_name, '') AS point_name,
+  cc.command_type, cc.run_mode, cc.command_status,
+  cc.command_hex,
+  COALESCE(cc.gateway_response, cc.error_message, '') AS result,
+  cc.requested_at_ms
+FROM control_commands cc
+LEFT JOIN cloud_gateways cg ON cc.gateway_id = cg.gateway_id
+LEFT JOIN users u ON cc.requested_by = u.user_id
+LEFT JOIN device_points dp ON cc.point_id = dp.point_id
+ORDER BY cc.requested_at_ms DESC
 LIMIT ?`
 
 // ListControlLogs 返回控制日志列表。
@@ -1468,26 +1494,53 @@ func (r *Repository) ListControlLogs(ctx context.Context, limit int) ([]domain.C
 	logs := make([]domain.ControlLogSummary, 0)
 	for rows.Next() {
 		var l domain.ControlLogSummary
-		var opType uint8
-		var opContent sql.NullString
+		var commandType uint8
+		var functionType uint8
+		var pointName sql.NullString
+		var result sql.NullString
 		if err := rows.Scan(
-			&l.OpID, &l.GatewayID, &l.GatewayName,
+			&l.CommandID, &l.GatewayID, &l.GatewayName,
 			&l.BindUserName, &l.Frequency, &l.DevExternalID,
-			&opType, &l.RunMode, &l.CmdStatus,
-			&opContent, &l.OpTime,
+			&functionType, &pointName,
+			&commandType, &l.RunMode, &l.CmdStatus,
+			&l.CommandHex, &result, &l.OpTime,
 		); err != nil {
 			return nil, err
 		}
-		l.FunctionType = 0
-		l.FunctionName = ""
-		l.OpType = opTypeLabel(opType)
-		l.CmdStatusLabel = "unknown"
-		if opContent.Valid {
-			l.Result = opContent.String
+		l.OpID = l.CommandID
+		l.FunctionType = functionType
+		if pointName.Valid && pointName.String != "" {
+			l.FunctionName = pointName.String
+		} else {
+			l.FunctionName = domain.FunctionType(functionType).FunctionTypeName()
+		}
+		l.OpType = commandTypeLabel(commandType)
+		l.CmdStatusLabel = domain.CommandStatus(l.CmdStatus).Label()
+		if result.Valid {
+			l.Result = result.String
 		}
 		logs = append(logs, l)
 	}
 	return logs, rows.Err()
+}
+
+func commandTypeLabel(t uint8) string {
+	switch domain.CommandType(t) {
+	case domain.CommandTypeRelayOpen:
+		return "开启"
+	case domain.CommandTypeRelayClose:
+		return "关闭"
+	case domain.CommandTypeRelayStop:
+		return "停止"
+	case domain.CommandTypePoll:
+		return "轮询"
+	case domain.CommandTypeReadStatus:
+		return "读取状态"
+	case domain.CommandTypeCustomHex:
+		return "自定义 Hex"
+	default:
+		return "未知"
+	}
 }
 
 // ─── 用户列表 ───

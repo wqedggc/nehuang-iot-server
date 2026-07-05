@@ -16,6 +16,12 @@
 
 HTTP Adapter API 是 Go `gateway-adapter` 和 Go `nehuang-server` 之间的内部接口。甲方硬件网关第一版不直接调用这些 HTTP 接口，而是作为 TCP client 连接 `gateway-adapter`。硬件 TCP 交互见 `docs/gateway_adapter.md`。
 
+联调阶段新增口径：
+
+- 统一优先使用自定义 `command_hex` 下行，避免在联调期先把标准下行语义写死。
+- 标准 4 小时工作包按硬件主动上行保留；临时读取采用“云端下发读取 hex 后返回 raw”。
+- ACK/清缓存/完整工作包字段语义未最终冻结，当前只做原始留存与状态追踪。
+
 | Method | Path | Auth | Status |
 |--------|------|------|--------|
 | POST | `/api/v1/adapter/raw-frames` | `X-Adapter-Token` | 正式，硬件 TCP raw frame 主入口 |
@@ -63,7 +69,7 @@ HTTP Adapter API 是 Go `gateway-adapter` 和 Go `nehuang-server` 之间的内�
 | DELETE | `/api/v1/admin/bindings/{bind_id}` | 正式 |
 | GET | `/api/v1/admin/gateway-bind-candidates?keyword=` | 正式；返回未 active 绑定的设备网关候选 |
 | GET | `/api/v1/admin/raw-events?limit=` | 正式 |
-| GET | `/api/v1/admin/control-logs?limit=` | 占位视图，依赖 `op_records` |
+| GET | `/api/v1/admin/control-logs?limit=` | 正式；读取 `control_commands`，展示 command hex 和命令状态 |
 | GET | `/api/v1/admin/device-tree` | 正式 |
 | GET | `/api/v1/admin/device-points?keyword=&bind_status=` | 正式 |
 | PATCH | `/api/v1/admin/device-points/{point_id}` | 正式，更新点位配置 |
@@ -86,8 +92,9 @@ HTTP Adapter API 是 Go `gateway-adapter` 和 Go `nehuang-server` 之间的内�
 
 - `action`: `open`、`close`、`stop`
 - `command_hex`: 可选；传入后按自定义 hex 创建命令，优先于 `action`
+- `command_hex` 可承载“临时读取 hex”；临时读取返回仍先按 raw 上行入库。
 
-返回 `command_id`、`status=pending`、`command_hex`。该接口只创建异步控制命令，不等待真实硬件 ACK。
+返回 `command_id`、`status=pending`、`command_hex`。该接口只创建异步控制命令，不等待真实硬件 ACK；临时读取命令返回仍走 raw 回流链路，待联调确认字段语义后再入解析。
 
 ### PATCH `/api/v1/admin/device-points/{point_id}`
 
