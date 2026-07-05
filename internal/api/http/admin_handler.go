@@ -17,6 +17,8 @@ import (
 	"nehuang-iot-server/internal/protocolsummary"
 )
 
+const maxAdminLogPageSize = 200
+
 // adminRepository defines the data access methods required by admin handlers.
 type adminRepository interface {
 	GetUserByUsername(ctx context.Context, username string) (*domain.User, error)
@@ -59,9 +61,9 @@ type adminRepository interface {
 	// 管理端原始事件列表。
 	ListRawEvents(ctx context.Context, limit int) ([]domain.RawDeviceEvent, error)
 	// 管理端控制日志列表。
-	ListControlLogs(ctx context.Context, limit int) ([]domain.ControlLogSummary, error)
+	ListControlLogs(ctx context.Context, params domain.ControlLogQuery) ([]domain.ControlLogSummary, int, error)
 	// 管理端操作日志列表。
-	ListOperationLogs(ctx context.Context, limit int) ([]domain.OperationRecord, error)
+	ListOperationLogs(ctx context.Context, params domain.OperationLogQuery) ([]domain.OperationRecord, int, error)
 	// 设备树查询。
 	GetDeviceTree(ctx context.Context) ([]domain.DeviceTreeNode, error)
 	// 按 point_id 查询功能点。
@@ -765,20 +767,31 @@ func (h *adminHandler) recordBindingOperation(ctx context.Context, opType domain
 // handleOperationLogs 处理 GET /api/v1/admin/operation-logs。
 // 返回绑定、解绑、配置、控制等后台操作审计。
 func (h *adminHandler) handleOperationLogs(w http.ResponseWriter, r *http.Request) {
-	limit := 100
-	if raw := r.URL.Query().Get("limit"); raw != "" {
-		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 && parsed <= 200 {
-			limit = parsed
-		}
-	}
-
-	logs, err := h.repo.ListOperationLogs(r.Context(), limit)
+	params := parseOperationLogQuery(r.URL.Query())
+	logs, total, err := h.repo.ListOperationLogs(r.Context(), params)
 	if err != nil {
 		writeCode(w, http.StatusInternalServerError, 500, "internal error: "+err.Error())
 		return
 	}
+	if !params.Paginated {
+		if logs == nil {
+			logs = make([]domain.OperationRecord, 0)
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"data": logs})
+		return
+	}
+	if logs == nil {
+		logs = make([]domain.OperationRecord, 0)
+	}
 
-	writeJSON(w, http.StatusOK, map[string]any{"data": logs})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"data": map[string]any{
+			"items": logs,
+			"total": total,
+			"page":  params.Page,
+			"size":  params.Size,
+		},
+	})
 }
 
 // handleRawEvents 处理 GET /api/v1/admin/raw-events。
@@ -803,20 +816,127 @@ func (h *adminHandler) handleRawEvents(w http.ResponseWriter, r *http.Request) {
 // handleControlLogs 处理 GET /api/v1/admin/control-logs。
 // 返回控制日志列表。
 func (h *adminHandler) handleControlLogs(w http.ResponseWriter, r *http.Request) {
-	limit := 100
-	if raw := r.URL.Query().Get("limit"); raw != "" {
-		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 && parsed <= 200 {
-			limit = parsed
-		}
-	}
-
-	logs, err := h.repo.ListControlLogs(r.Context(), limit)
+	params := parseControlLogQuery(r.URL.Query())
+	logs, total, err := h.repo.ListControlLogs(r.Context(), params)
 	if err != nil {
 		writeCode(w, http.StatusInternalServerError, 500, "internal error: "+err.Error())
 		return
 	}
+	if !params.Paginated {
+		if logs == nil {
+			logs = make([]domain.ControlLogSummary, 0)
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"data": logs})
+		return
+	}
+	if logs == nil {
+		logs = make([]domain.ControlLogSummary, 0)
+	}
 
-	writeJSON(w, http.StatusOK, map[string]any{"data": logs})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"data": map[string]any{
+			"items": logs,
+			"total": total,
+			"page":  params.Page,
+			"size":  params.Size,
+		},
+	})
+}
+
+func parseOperationLogQuery(q map[string][]string) domain.OperationLogQuery {
+	params := domain.OperationLogQuery{}
+	page, size, paginated := parseLogPagination(q)
+	if paginated {
+		params.Page = page
+		params.Size = size
+		params.Paginated = true
+	}
+
+	if v := strings.TrimSpace(firstQueryValue(q, "start")); v != "" {
+		params.Start = &v
+	}
+	if v := strings.TrimSpace(firstQueryValue(q, "end")); v != "" {
+		params.End = &v
+	}
+	if v := strings.TrimSpace(firstQueryValue(q, "keyword")); v != "" {
+		params.Keyword = &v
+	}
+	if v := strings.TrimSpace(firstQueryValue(q, "op_type")); v != "" {
+		if parsed, ok := parseUint8Value(v); ok {
+			opType := parsed
+			params.OpType = &opType
+		}
+	}
+	return params
+}
+
+func parseControlLogQuery(q map[string][]string) domain.ControlLogQuery {
+	params := domain.ControlLogQuery{}
+	page, size, paginated := parseLogPagination(q)
+	if paginated {
+		params.Page = page
+		params.Size = size
+		params.Paginated = true
+	}
+
+	if v := strings.TrimSpace(firstQueryValue(q, "start")); v != "" {
+		params.Start = &v
+	}
+	if v := strings.TrimSpace(firstQueryValue(q, "end")); v != "" {
+		params.End = &v
+	}
+	if v := strings.TrimSpace(firstQueryValue(q, "keyword")); v != "" {
+		params.Keyword = &v
+	}
+	if v := strings.TrimSpace(firstQueryValue(q, "cmd_status")); v != "" {
+		if parsed, ok := parseUint8Value(v); ok {
+			cmdStatus := parsed
+			params.CmdStatus = &cmdStatus
+		}
+	}
+	if v := strings.TrimSpace(firstQueryValue(q, "source")); v != "" {
+		if parsed, ok := parseUint8Value(v); ok {
+			source := parsed
+			params.Source = &source
+		}
+	}
+	return params
+}
+
+func parseUint8Value(v string) (uint8, bool) {
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 0 || n > 255 {
+		return 0, false
+	}
+	return uint8(n), true
+}
+
+func parseLogPagination(q map[string][]string) (page int, size int, ok bool) {
+	rawPage := strings.TrimSpace(firstQueryValue(q, "page"))
+	rawSize := strings.TrimSpace(firstQueryValue(q, "size"))
+	if rawPage == "" || rawSize == "" {
+		return 0, 0, false
+	}
+	page, err := strconv.Atoi(rawPage)
+	if err != nil || page <= 0 {
+		return 0, 0, false
+	}
+	size, err = strconv.Atoi(rawSize)
+	if err != nil || size <= 0 {
+		return 0, 0, false
+	}
+	if size > maxAdminLogPageSize {
+		size = maxAdminLogPageSize
+	}
+	return page, size, true
+}
+
+func firstQueryValue(q map[string][]string, key string) string {
+	vals := q[key]
+	if len(vals) == 0 {
+		return ""
+	}
+	return vals[0]
 }
 
 // handleDeviceTree 处理 GET /api/v1/admin/device-tree。

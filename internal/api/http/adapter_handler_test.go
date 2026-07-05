@@ -2,6 +2,7 @@ package http
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -21,6 +22,10 @@ type mockAdapterRepo struct {
 	parseMetaCount    int
 	parsedMetaCount   int
 	parseMetaMessage  *string
+	upsertedNodes     []domain.CollectorNode
+	upsertedPoints    []domain.DevicePoint
+	sensorData        []domain.SensorData
+	realtimeUpdates   []domain.DevicePoint
 }
 
 func (m *mockAdapterRepo) InsertRawEvent(ctx context.Context, event *domain.RawDeviceEvent) (uint64, error) {
@@ -52,22 +57,103 @@ func (m *mockAdapterRepo) UpdateRawEventParseMeta(ctx context.Context, rawEventI
 }
 
 func (m *mockAdapterRepo) UpsertCollectorNode(ctx context.Context, node *domain.CollectorNode) (uint64, error) {
-	return 0, nil
+	m.upsertedNodes = append(m.upsertedNodes, *node)
+	return 3001, nil
 }
 func (m *mockAdapterRepo) UpsertDevicePoint(ctx context.Context, point *domain.DevicePoint) (uint64, error) {
-	return 0, nil
+	m.upsertedPoints = append(m.upsertedPoints, *point)
+	return 4001, nil
 }
 func (m *mockAdapterRepo) InsertSensorData(ctx context.Context, data *domain.SensorData) error {
+	m.sensorData = append(m.sensorData, *data)
 	return nil
 }
 func (m *mockAdapterRepo) UpdateDevicePointRealtime(ctx context.Context, pointID uint64, realValue *float64, valueStatus domain.ValueStatus, lastReportAt interface{}) error {
 	return nil
 }
 func (m *mockAdapterRepo) UpsertDeviceRealtimeMap(ctx context.Context, point *domain.DevicePoint) error {
+	m.realtimeUpdates = append(m.realtimeUpdates, *point)
 	return nil
 }
 func (m *mockAdapterRepo) FindGatewayByExternalID(ctx context.Context, externalID string) (*domain.Gateway, error) {
 	return nil, nil
+}
+
+func TestHandleRawFramesParsesMockTelemetry(t *testing.T) {
+	repo := &mockAdapterRepo{}
+	handler := &adapterHandler{repo: repo, adapterToken: "test-token"}
+	payload := "NH_TELEMETRY|frequency=1|device_external_id=1001|function_type=1|channel_no=1|value=26.5|unit=C"
+	body := `{"protocol_version":"nehuang-gateway-adapter-v1","source_type":"gateway_adapter","message_id":"conn-1-3","connection_id":"conn-1","gateway_name":"FP_TEST_ADMIN_001","remote_ip":"127.0.0.1","remote_port":63254,"direction":"inbound","payload_hex":"` + strings.ToUpper(hex.EncodeToString([]byte(payload))) + `","received_at":"2026-07-04T18:08:05Z","raw_seq":3}`
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/adapter/raw-frames", strings.NewReader(body))
+	req.Header.Set("X-Adapter-Token", "test-token")
+	rec := httptest.NewRecorder()
+
+	handler.handleRawFrames(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("handleRawFrames: want 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if repo.insertedRawEvents[0].EventType != domain.RawEventWork {
+		t.Fatalf("event type: want work, got %v", repo.insertedRawEvents[0].EventType)
+	}
+	if repo.parseStatus != domain.ParseStatusParsed {
+		t.Fatalf("parse status: want parsed, got %v err=%v", repo.parseStatus, repo.parseStatusErr)
+	}
+	if len(repo.upsertedGateways) != 1 {
+		t.Fatalf("gateway upserts: want 1, got %d", len(repo.upsertedGateways))
+	}
+	if len(repo.upsertedNodes) != 1 {
+		t.Fatalf("node upserts: want 1, got %d", len(repo.upsertedNodes))
+	}
+	if repo.upsertedNodes[0].DeviceExternalID != "1001" || repo.upsertedNodes[0].Frequency != 1 || repo.upsertedNodes[0].OnlineStatus != 1 {
+		t.Fatalf("node mismatch: %+v", repo.upsertedNodes[0])
+	}
+	if len(repo.upsertedPoints) != 1 {
+		t.Fatalf("point upserts: want 1, got %d", len(repo.upsertedPoints))
+	}
+	point := repo.upsertedPoints[0]
+	if point.FunctionType != domain.FuncTypeTemperature || point.ChannelNo != 1 || point.Unit != "C" || point.RealValue == nil || *point.RealValue != 26.5 || point.ValueStatus != domain.ValueStatusNormal {
+		t.Fatalf("point mismatch: %+v", point)
+	}
+	if len(repo.sensorData) != 1 {
+		t.Fatalf("sensor data inserts: want 1, got %d", len(repo.sensorData))
+	}
+	if repo.sensorData[0].PointID == nil || *repo.sensorData[0].PointID != 4001 {
+		t.Fatalf("sensor point id mismatch: %+v", repo.sensorData[0].PointID)
+	}
+	if len(repo.realtimeUpdates) != 1 || repo.realtimeUpdates[0].PointID != 4001 {
+		t.Fatalf("realtime update mismatch: %+v", repo.realtimeUpdates)
+	}
+	if repo.parseMetaType != domain.RawEventWork || repo.parseMetaCount != 1 || repo.parsedMetaCount != 1 {
+		t.Fatalf("parse meta mismatch: type=%v count=%d parsed=%d", repo.parseMetaType, repo.parseMetaCount, repo.parsedMetaCount)
+	}
+}
+
+func TestHandleRawFramesRejectsMockTelemetryMissingRequiredFields(t *testing.T) {
+	repo := &mockAdapterRepo{}
+	handler := &adapterHandler{repo: repo, adapterToken: "test-token"}
+	payload := "NH_TELEMETRY|frequency=1|function_type=1|channel_no=1|value=26.5|unit=C"
+	body := `{"protocol_version":"nehuang-gateway-adapter-v1","source_type":"gateway_adapter","message_id":"conn-1-3","connection_id":"conn-1","gateway_name":"FP_TEST_ADMIN_001","remote_ip":"127.0.0.1","remote_port":63254,"direction":"inbound","payload_hex":"` + strings.ToUpper(hex.EncodeToString([]byte(payload))) + `","received_at":"2026-07-04T18:08:05Z","raw_seq":3}`
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/adapter/raw-frames", strings.NewReader(body))
+	req.Header.Set("X-Adapter-Token", "test-token")
+	rec := httptest.NewRecorder()
+
+	handler.handleRawFrames(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("handleRawFrames should still store raw and return 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if repo.parseStatus != domain.ParseStatusFailed {
+		t.Fatalf("parse status: want failed, got %v", repo.parseStatus)
+	}
+	if repo.parseStatusErr == nil || !strings.Contains(*repo.parseStatusErr, "device_external_id") {
+		t.Fatalf("parse error should mention missing field, got %#v", repo.parseStatusErr)
+	}
+	if len(repo.upsertedNodes) != 0 || len(repo.upsertedPoints) != 0 || len(repo.sensorData) != 0 {
+		t.Fatalf("invalid telemetry must not project business data")
+	}
 }
 func (m *mockAdapterRepo) ListPendingControlCommands(ctx context.Context, gatewayExternalID string, limit int) ([]domain.ControlCommand, error) {
 	return nil, nil

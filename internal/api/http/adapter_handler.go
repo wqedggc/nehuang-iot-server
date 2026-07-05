@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -293,84 +294,11 @@ func (h *adapterHandler) handleDeviceEvents(w http.ResponseWriter, r *http.Reque
 			parsedCount++
 
 		case "telemetry":
-			// telemetry：处理传感器数据上报。
-			if ev.DeviceExternalID == "" || ev.FunctionType == 0 {
+			if err := h.projectTelemetryEvent(r.Context(), rawEventID, gatewayID, ev); err != nil {
 				parseFailed = true
-				parseError = "telemetry missing device_external_id or function_type"
+				parseError = err.Error()
 				break
 			}
-			if gatewayID == 0 {
-				parseFailed = true
-				parseError = "telemetry without known gateway"
-				break
-			}
-
-			// 3a. 创建或更新采集执行器节点。
-			node := &domain.CollectorNode{
-				GatewayID:        gatewayID,
-				Frequency:        ev.Frequency,
-				DeviceExternalID: ev.DeviceExternalID,
-				OnlineStatus:     1, // 有 telemetry 上报视为在线
-				NodeStatus:       1, // active
-			}
-			nodeID, err := h.repo.UpsertCollectorNode(r.Context(), node)
-			if err != nil {
-				parseFailed = true
-				parseError = "upsert collector node failed: " + err.Error()
-				break
-			}
-
-			// 3b. 创建或更新功能点。
-			point := &domain.DevicePoint{
-				NodeID:           nodeID,
-				GatewayID:        gatewayID,
-				Frequency:        ev.Frequency,
-				DeviceExternalID: ev.DeviceExternalID,
-				FunctionType:     domain.FunctionType(ev.FunctionType),
-				ChannelNo:        ev.ChannelNo,
-				Unit:             ev.Unit,
-				RealValue:        ev.Value,
-				PointStatus:      1, // active
-			}
-			// 根据功能类型设置 value_status。
-			if ev.Value != nil {
-				point.ValueStatus = domain.ValueStatusNormal
-				point.RealTemp = *ev.Value // 温度语义保留
-			}
-			pointID, err := h.repo.UpsertDevicePoint(r.Context(), point)
-			if err != nil {
-				parseFailed = true
-				parseError = "upsert device point failed: " + err.Error()
-				break
-			}
-			point.PointID = pointID // 回填 pointID，供后续 UpsertDeviceRealtimeMap 使用
-
-			// 3c. 插入传感器时序数据。
-			sd := &domain.SensorData{
-				GatewayID:        gatewayID,
-				NodeID:           &nodeID,
-				PointID:          &pointID,
-				Frequency:        ev.Frequency,
-				DeviceExternalID: ev.DeviceExternalID,
-				FunctionType:     domain.FunctionType(ev.FunctionType),
-				Unit:             ev.Unit,
-				RealValue:        ev.Value,
-				RawEventID:       &rawEventID,
-			}
-			if ev.Value != nil {
-				sd.RealTemp = *ev.Value
-			}
-			if err := h.repo.InsertSensorData(r.Context(), sd); err != nil {
-				parseFailed = true
-				parseError = "insert sensor data failed: " + err.Error()
-				break
-			}
-
-			// 3d. 更新功能点实时状态。
-			_ = h.repo.UpdateDevicePointRealtime(r.Context(), pointID, ev.Value, point.ValueStatus, nil)
-
-			// 3e. 同步 device_realtime_maps 兼容投影表。
-			_ = h.repo.UpsertDeviceRealtimeMap(r.Context(), point)
 
 			parsedCount++
 
@@ -468,7 +396,175 @@ func (h *adapterHandler) parseRawFrame(ctx context.Context, rawEventID uint64, e
 		return domain.ParseStatusParsed, nil
 	}
 
+	if ev, ok, err := parseMockTelemetryFrame(payload); ok {
+		if err != nil {
+			_ = h.repo.UpdateRawEventParseMeta(ctx, rawEventID, domain.RawEventWork, 1, 0, strPtr(envelope.MessageID))
+			return domain.ParseStatusFailed, err
+		}
+		gatewayName := strings.TrimSpace(envelope.GatewayName)
+		if gatewayName == "" {
+			_ = h.repo.UpdateRawEventParseMeta(ctx, rawEventID, domain.RawEventWork, 1, 0, strPtr(envelope.MessageID))
+			return domain.ParseStatusFailed, rawFrameParseError("mock telemetry missing gateway_name")
+		}
+		gatewayExternalID := gatewayExternalIDFromName(gatewayName)
+		gatewayID, err := h.repo.UpsertGatewayByExternalID(ctx, &domain.Gateway{
+			GatewayExternalID: gatewayExternalID,
+			GatewayName:       gatewayName,
+			IP:                envelope.RemoteIP,
+			Port:              envelope.RemotePort,
+			OnlineStatus:      1,
+			SourceType:        uint8(domain.SourceTypeGateway),
+		})
+		if err != nil {
+			_ = h.repo.UpdateRawEventParseMeta(ctx, rawEventID, domain.RawEventWork, 1, 0, strPtr(envelope.MessageID))
+			return domain.ParseStatusFailed, err
+		}
+		if err := h.projectTelemetryEvent(ctx, rawEventID, gatewayID, ev); err != nil {
+			_ = h.repo.UpdateRawEventParseMeta(ctx, rawEventID, domain.RawEventWork, 1, 0, strPtr(envelope.MessageID))
+			return domain.ParseStatusFailed, err
+		}
+		_ = h.repo.UpdateRawEventParseMeta(ctx, rawEventID, domain.RawEventWork, 1, 1, strPtr(envelope.MessageID))
+		_ = h.repo.UpdateRawEventParseStatus(ctx, rawEventID, domain.ParseStatusParsed, nil)
+		return domain.ParseStatusParsed, nil
+	} else if err != nil {
+		_ = h.repo.UpdateRawEventParseMeta(ctx, rawEventID, domain.RawEventWork, 1, 0, strPtr(envelope.MessageID))
+		return domain.ParseStatusFailed, err
+	}
+
 	return domain.ParseStatusPending, nil
+}
+
+func (h *adapterHandler) projectTelemetryEvent(ctx context.Context, rawEventID uint64, gatewayID uint64, ev deviceEvent) error {
+	if strings.TrimSpace(ev.DeviceExternalID) == "" {
+		return rawFrameParseError("telemetry missing device_external_id")
+	}
+	if ev.FunctionType == 0 {
+		return rawFrameParseError("telemetry missing function_type")
+	}
+	if ev.Frequency <= 0 {
+		return rawFrameParseError("telemetry missing frequency")
+	}
+	if ev.Value == nil {
+		return rawFrameParseError("telemetry missing value")
+	}
+	if gatewayID == 0 {
+		return rawFrameParseError("telemetry without known gateway")
+	}
+
+	node := &domain.CollectorNode{
+		GatewayID:        gatewayID,
+		Frequency:        ev.Frequency,
+		DeviceExternalID: strings.TrimSpace(ev.DeviceExternalID),
+		OnlineStatus:     1,
+		NodeStatus:       1,
+	}
+	nodeID, err := h.repo.UpsertCollectorNode(ctx, node)
+	if err != nil {
+		return rawFrameParseError("upsert collector node failed: " + err.Error())
+	}
+
+	point := &domain.DevicePoint{
+		NodeID:           nodeID,
+		GatewayID:        gatewayID,
+		Frequency:        ev.Frequency,
+		DeviceExternalID: strings.TrimSpace(ev.DeviceExternalID),
+		FunctionType:     domain.FunctionType(ev.FunctionType),
+		ChannelNo:        ev.ChannelNo,
+		Unit:             strings.TrimSpace(ev.Unit),
+		RealValue:        ev.Value,
+		ValueStatus:      domain.ValueStatusNormal,
+		PointStatus:      1,
+	}
+	point.RealTemp = *ev.Value
+	pointID, err := h.repo.UpsertDevicePoint(ctx, point)
+	if err != nil {
+		return rawFrameParseError("upsert device point failed: " + err.Error())
+	}
+	point.PointID = pointID
+
+	sd := &domain.SensorData{
+		GatewayID:        gatewayID,
+		NodeID:           &nodeID,
+		PointID:          &pointID,
+		Frequency:        ev.Frequency,
+		DeviceExternalID: point.DeviceExternalID,
+		FunctionType:     domain.FunctionType(ev.FunctionType),
+		Unit:             point.Unit,
+		RealValue:        ev.Value,
+		RealTemp:         *ev.Value,
+		RawEventID:       &rawEventID,
+	}
+	if err := h.repo.InsertSensorData(ctx, sd); err != nil {
+		return rawFrameParseError("insert sensor data failed: " + err.Error())
+	}
+
+	if err := h.repo.UpdateDevicePointRealtime(ctx, pointID, ev.Value, point.ValueStatus, nil); err != nil {
+		return rawFrameParseError("update device point realtime failed: " + err.Error())
+	}
+	if err := h.repo.UpsertDeviceRealtimeMap(ctx, point); err != nil {
+		return rawFrameParseError("upsert realtime map failed: " + err.Error())
+	}
+	return nil
+}
+
+func parseMockTelemetryFrame(payload []byte) (deviceEvent, bool, error) {
+	ascii := strings.TrimSpace(string(bytes.TrimSpace(payload)))
+	if !strings.HasPrefix(strings.ToUpper(ascii), "NH_TELEMETRY|") {
+		return deviceEvent{}, false, nil
+	}
+	ev := deviceEvent{EventType: "telemetry"}
+	parts := strings.Split(ascii, "|")
+	for _, part := range parts[1:] {
+		key, val, ok := strings.Cut(part, "=")
+		if !ok {
+			return deviceEvent{}, true, rawFrameParseError("invalid telemetry field: " + part)
+		}
+		key = strings.ToLower(strings.TrimSpace(key))
+		val = strings.TrimSpace(val)
+		switch key {
+		case "frequency":
+			n, err := strconv.Atoi(val)
+			if err != nil {
+				return deviceEvent{}, true, rawFrameParseError("invalid telemetry frequency")
+			}
+			ev.Frequency = n
+		case "device_external_id":
+			ev.DeviceExternalID = val
+		case "function_type":
+			n, err := strconv.Atoi(val)
+			if err != nil || n < 0 || n > 255 {
+				return deviceEvent{}, true, rawFrameParseError("invalid telemetry function_type")
+			}
+			ev.FunctionType = uint8(n)
+		case "channel_no":
+			n, err := strconv.Atoi(val)
+			if err != nil {
+				return deviceEvent{}, true, rawFrameParseError("invalid telemetry channel_no")
+			}
+			ev.ChannelNo = n
+		case "value":
+			f, err := strconv.ParseFloat(val, 64)
+			if err != nil {
+				return deviceEvent{}, true, rawFrameParseError("invalid telemetry value")
+			}
+			ev.Value = &f
+		case "unit":
+			ev.Unit = val
+		}
+	}
+	if strings.TrimSpace(ev.DeviceExternalID) == "" {
+		return deviceEvent{}, true, rawFrameParseError("telemetry missing device_external_id")
+	}
+	if ev.FunctionType == 0 {
+		return deviceEvent{}, true, rawFrameParseError("telemetry missing function_type")
+	}
+	if ev.Frequency <= 0 {
+		return deviceEvent{}, true, rawFrameParseError("telemetry missing frequency")
+	}
+	if ev.Value == nil {
+		return deviceEvent{}, true, rawFrameParseError("telemetry missing value")
+	}
+	return ev, true, nil
 }
 
 func rawFrameEventType(payload []byte) domain.RawEventType {

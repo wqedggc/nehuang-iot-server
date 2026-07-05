@@ -41,6 +41,12 @@ type mockAdminRepo struct {
 	seedGatewayResult             *domain.GatewayDeviceSeedResult
 	gatewayCandidates             []domain.GatewayBindCandidate
 	payloadEventDetail            *domain.PayloadEventDetail
+	operationLogs                 []domain.OperationRecord
+	operationTotal                int
+	operationLogQuery             domain.OperationLogQuery
+	controlLogs                   []domain.ControlLogSummary
+	controlTotal                  int
+	controlLogQuery               domain.ControlLogQuery
 }
 
 func (m *mockAdminRepo) GetUserByUsername(ctx context.Context, username string) (*domain.User, error) {
@@ -92,11 +98,13 @@ func (m *mockAdminRepo) CreateOperationRecord(ctx context.Context, record *domai
 func (m *mockAdminRepo) ListRawEvents(ctx context.Context, limit int) ([]domain.RawDeviceEvent, error) {
 	return nil, nil
 }
-func (m *mockAdminRepo) ListControlLogs(ctx context.Context, limit int) ([]domain.ControlLogSummary, error) {
-	return nil, nil
+func (m *mockAdminRepo) ListControlLogs(ctx context.Context, params domain.ControlLogQuery) ([]domain.ControlLogSummary, int, error) {
+	m.controlLogQuery = params
+	return m.controlLogs, m.controlTotal, nil
 }
-func (m *mockAdminRepo) ListOperationLogs(ctx context.Context, limit int) ([]domain.OperationRecord, error) {
-	return nil, nil
+func (m *mockAdminRepo) ListOperationLogs(ctx context.Context, params domain.OperationLogQuery) ([]domain.OperationRecord, int, error) {
+	m.operationLogQuery = params
+	return m.operationLogs, m.operationTotal, nil
 }
 func (m *mockAdminRepo) GetDeviceTree(ctx context.Context) ([]domain.DeviceTreeNode, error) {
 	return nil, nil
@@ -932,6 +940,199 @@ func TestDevicePointControlMiniTokenReturns403(t *testing.T) {
 
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("mini token on admin control: want 403, got %d, body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleOperationLogsLegacyFormatWithoutPagination(t *testing.T) {
+	repo := &mockAdminRepo{
+		operationLogs: []domain.OperationRecord{
+			{
+				OpID:         9001,
+				OperatorName: "admin",
+				BindUserName: "农户A",
+				GatewayName:  "GW-1",
+				OpContent:    "bind gateway",
+				OperatedAtMS: time.Date(2026, 7, 5, 10, 0, 0, 0, time.UTC),
+			},
+		},
+	}
+	handler := &adminHandler{repo: repo}
+
+	req := httptest.NewRequest("GET", "/api/v1/admin/operation-logs", nil)
+	rec := httptest.NewRecorder()
+
+	handler.handleOperationLogs(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("operation logs without pagination: want 200, got %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if repo.operationLogQuery.Paginated {
+		t.Fatalf("operation logs pagination should be false when page/size are absent")
+	}
+
+	var resp map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+	items, ok := resp["data"].([]any)
+	if !ok {
+		t.Fatalf("legacy operation logs response should be array, got %T", resp["data"])
+	}
+	if len(items) != 1 {
+		t.Fatalf("legacy operation logs item count: want 1, got %d", len(items))
+	}
+}
+
+func TestHandleOperationLogsPaginated(t *testing.T) {
+	repo := &mockAdminRepo{
+		operationLogs: []domain.OperationRecord{
+			{OpID: 9001, OperatorName: "admin", OpContent: "bind"},
+			{OpID: 9002, OperatorName: "admin", OpContent: "config"},
+		},
+		operationTotal: 20,
+	}
+	handler := &adminHandler{repo: repo}
+
+	req := httptest.NewRequest("GET", "/api/v1/admin/operation-logs?page=2&size=2&start=2026-07-01T00%3A00%3A00Z&end=2026-07-30T23%3A59%3A59Z&op_type=3&keyword=admin", nil)
+	rec := httptest.NewRecorder()
+
+	handler.handleOperationLogs(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("operation logs paginated: want 200, got %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if !repo.operationLogQuery.Paginated {
+		t.Fatalf("operation logs pagination should be enabled with page+size")
+	}
+	if repo.operationLogQuery.Page != 2 || repo.operationLogQuery.Size != 2 {
+		t.Fatalf("operation log pagination params: want page=2 size=2, got page=%d size=%d", repo.operationLogQuery.Page, repo.operationLogQuery.Size)
+	}
+	if repo.operationLogQuery.Start == nil || *repo.operationLogQuery.Start != "2026-07-01T00:00:00Z" {
+		t.Fatalf("operation log start filter not passed, got %#v", repo.operationLogQuery.Start)
+	}
+	if repo.operationLogQuery.End == nil || *repo.operationLogQuery.End != "2026-07-30T23:59:59Z" {
+		t.Fatalf("operation log end filter not passed, got %#v", repo.operationLogQuery.End)
+	}
+	if repo.operationLogQuery.OpType == nil || *repo.operationLogQuery.OpType != 3 {
+		t.Fatalf("operation log op_type filter not passed: %#v", repo.operationLogQuery.OpType)
+	}
+
+	var resp map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+	wrapper, ok := resp["data"].(map[string]any)
+	if !ok {
+		t.Fatalf("paginated operation logs should return object, got %T", resp["data"])
+	}
+	if got := int(wrapper["total"].(float64)); got != 20 {
+		t.Fatalf("operation logs total: want 20, got %d", got)
+	}
+	if got := int(wrapper["page"].(float64)); got != 2 {
+		t.Fatalf("operation logs page: want 2, got %d", got)
+	}
+	if got := int(wrapper["size"].(float64)); got != 2 {
+		t.Fatalf("operation logs size: want 2, got %d", got)
+	}
+	items, ok := wrapper["items"].([]any)
+	if !ok || len(items) != 2 {
+		t.Fatalf("operation logs items: want 2, got %d", len(items))
+	}
+}
+
+func TestHandleControlLogsLegacyFormatWithoutPagination(t *testing.T) {
+	repo := &mockAdminRepo{
+		controlLogs: []domain.ControlLogSummary{
+			{CommandID: 8001, GatewayID: 5001, BindUserName: "admin", CmdStatusLabel: "succeeded"},
+		},
+	}
+	handler := &adminHandler{repo: repo}
+
+	req := httptest.NewRequest("GET", "/api/v1/admin/control-logs", nil)
+	rec := httptest.NewRecorder()
+
+	handler.handleControlLogs(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("control logs without pagination: want 200, got %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if repo.controlLogQuery.Paginated {
+		t.Fatalf("control logs pagination should be false when page/size are absent")
+	}
+
+	var resp map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+	items, ok := resp["data"].([]any)
+	if !ok {
+		t.Fatalf("legacy control logs response should be array, got %T", resp["data"])
+	}
+	if len(items) != 1 {
+		t.Fatalf("legacy control logs item count: want 1, got %d", len(items))
+	}
+}
+
+func TestHandleControlLogsPaginated(t *testing.T) {
+	repo := &mockAdminRepo{
+		controlLogs: []domain.ControlLogSummary{
+			{CommandID: 8001, GatewayID: 5001},
+			{CommandID: 8002, GatewayID: 5002},
+		},
+		controlTotal: 15,
+	}
+	handler := &adminHandler{repo: repo}
+
+	req := httptest.NewRequest("GET", "/api/v1/admin/control-logs?page=1&size=2&cmd_status=4&source=1&keyword=8001", nil)
+	rec := httptest.NewRecorder()
+
+	handler.handleControlLogs(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("control logs paginated: want 200, got %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if !repo.controlLogQuery.Paginated {
+		t.Fatalf("control logs pagination should be enabled with page+size")
+	}
+	if repo.controlLogQuery.Page != 1 || repo.controlLogQuery.Size != 2 {
+		t.Fatalf("control log pagination params: want page=1 size=2, got page=%d size=%d", repo.controlLogQuery.Page, repo.controlLogQuery.Size)
+	}
+	if repo.controlLogQuery.CmdStatus == nil || *repo.controlLogQuery.CmdStatus != 4 {
+		t.Fatalf("control log cmd_status filter not passed: %#v", repo.controlLogQuery.CmdStatus)
+	}
+	if repo.controlLogQuery.Source == nil || *repo.controlLogQuery.Source != 1 {
+		t.Fatalf("control log source filter not passed: %#v", repo.controlLogQuery.Source)
+	}
+
+	var resp map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+	wrapper, ok := resp["data"].(map[string]any)
+	if !ok {
+		t.Fatalf("paginated control logs should return object, got %T", resp["data"])
+	}
+	if got := int(wrapper["total"].(float64)); got != 15 {
+		t.Fatalf("control logs total: want 15, got %d", got)
+	}
+	if got := int(wrapper["page"].(float64)); got != 1 {
+		t.Fatalf("control logs page: want 1, got %d", got)
+	}
+	if got := int(wrapper["size"].(float64)); got != 2 {
+		t.Fatalf("control logs size: want 2, got %d", got)
+	}
+	items, ok := wrapper["items"].([]any)
+	if !ok || len(items) != 2 {
+		t.Fatalf("control logs items: want 2, got %d", len(items))
+	}
+}
+
+func TestParseControlLogQueryEmptyEndMeansOpenEnded(t *testing.T) {
+	params := parseControlLogQuery(map[string][]string{
+		"end": {""},
+	})
+	if params.End != nil {
+		t.Fatalf("empty end should be open-ended, got %q", *params.End)
 	}
 }
 

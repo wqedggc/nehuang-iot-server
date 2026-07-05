@@ -19,17 +19,18 @@ import (
 )
 
 type Config struct {
-	TCPAddr             string
-	HealthAddr          string
-	APIBaseURL          string
-	AdapterToken        string
-	RawLogDir           string
-	Debug               bool
-	ReadBufferSize      int
-	ReadTimeout         time.Duration
-	CommandPollInterval time.Duration
-	CommandPollLimit    int
-	CommandWriteTimeout time.Duration
+	TCPAddr              string
+	HealthAddr           string
+	APIBaseURL           string
+	AdapterToken         string
+	RawLogDir            string
+	Debug                bool
+	ReadBufferSize       int
+	ReadTimeout          time.Duration
+	CommandPollInterval  time.Duration
+	CommandPollLimit     int
+	CommandWriteTimeout  time.Duration
+	ForwardUnknownFrames bool
 }
 
 type Server struct {
@@ -91,9 +92,10 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 	s.listener = ln
 	s.logger.Info("gateway_adapter_started", map[string]any{
-		"tcp_addr":    s.cfg.TCPAddr,
-		"health_addr": s.cfg.HealthAddr,
-		"raw_log_dir": s.cfg.RawLogDir,
+		"tcp_addr":               s.cfg.TCPAddr,
+		"health_addr":            s.cfg.HealthAddr,
+		"raw_log_dir":            s.cfg.RawLogDir,
+		"forward_unknown_frames": s.cfg.ForwardUnknownFrames,
 	})
 
 	healthSrv := &http.Server{
@@ -226,6 +228,15 @@ func (s *Server) handleConn(conn net.Conn) {
 			"crc_valid":     msg.CRCValid,
 			"raw_seq":       rawSeq,
 		})
+
+		if msg.Kind == protocol.MessageUnknown && !s.cfg.ForwardUnknownFrames {
+			s.logger.Debug(s.cfg.Debug, "gateway_unknown_frame_not_forwarded", map[string]any{
+				"connection_id": connectionID,
+				"gateway_name":  gatewayName,
+				"raw_seq":       rawSeq,
+			})
+			continue
+		}
 
 		if msg.Kind == protocol.MessageHeartbeat && gatewayName == "" {
 			gatewayName = msg.GatewayName

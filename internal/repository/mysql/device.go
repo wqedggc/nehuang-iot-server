@@ -1855,7 +1855,10 @@ VALUES
 
 // ─── 控制日志 ───
 
-const listControlLogsQuery = `
+const (
+	defaultAdminLogLimit = 100
+
+	controlLogSelectClause = `
 SELECT
   cc.command_id, cc.gateway_id, COALESCE(cg.gateway_name, ''),
   COALESCE(cc.node_id, 0), COALESCE(cc.point_id, 0),
@@ -1869,19 +1872,171 @@ SELECT
   COALESCE(cc.gateway_response, '') AS gateway_response,
   COALESCE(cc.error_message, '') AS error_message,
   COALESCE(cc.gateway_response, cc.error_message, '') AS result,
-  cc.requested_at_ms, cc.sent_at_ms, cc.finished_at_ms
+  cc.requested_at_ms, cc.sent_at_ms, cc.finished_at_ms`
+
+	controlLogFromClause = `
 FROM control_commands cc
 LEFT JOIN cloud_gateways cg ON cc.gateway_id = cg.gateway_id
 LEFT JOIN users u ON cc.requested_by = u.user_id
-LEFT JOIN device_points dp ON cc.point_id = dp.point_id
+LEFT JOIN device_points dp ON cc.point_id = dp.point_id`
+
+	listControlLogsQuery = controlLogSelectClause + controlLogFromClause + `
 ORDER BY cc.requested_at_ms DESC
 LIMIT ?`
+)
+
+const listOperationLogsQuery = `
+SELECT
+  op.op_id, op.gateway_id, COALESCE(cg.gateway_name, ''),
+  op.realtime_id, op.node_id, op.point_id,
+  op.user_id, COALESCE(u.display_name, u.username, '') AS operator_name,
+  op.bind_user_name, op.operator_role,
+  op.frequency, op.device_external_id,
+  op.run_mode, op.rel1_status, op.rel2_status,
+  op.op_type, COALESCE(op.op_content, ''),
+  op.command_id, op.operated_at_ms, op.created_at
+FROM op_records op
+LEFT JOIN cloud_gateways cg ON op.gateway_id = cg.gateway_id
+LEFT JOIN users u ON op.user_id = u.user_id`
+
+func buildOperationLogFilterQuery(params domain.OperationLogQuery) (string, []interface{}) {
+	conditions := make([]string, 0)
+	args := make([]interface{}, 0)
+
+	if params.Start != nil {
+		conditions = append(conditions, "op.operated_at_ms >= ?")
+		args = append(args, *params.Start)
+	}
+	if params.End != nil {
+		conditions = append(conditions, "op.operated_at_ms <= ?")
+		args = append(args, *params.End)
+	}
+	if params.OpType != nil {
+		conditions = append(conditions, "op.op_type = ?")
+		args = append(args, *params.OpType)
+	}
+	if params.Keyword != nil && *params.Keyword != "" {
+		conditions = append(conditions, "(COALESCE(u.display_name, u.username, '') LIKE ? OR op.bind_user_name LIKE ? OR COALESCE(cg.gateway_name, '') LIKE ? OR COALESCE(op.op_content, '') LIKE ?)")
+		kw := "%" + strings.TrimSpace(*params.Keyword) + "%"
+		args = append(args, kw, kw, kw, kw)
+	}
+
+	if len(conditions) == 0 {
+		return "", args
+	}
+	return " WHERE " + strings.Join(conditions, " AND "), args
+}
+
+func buildControlLogFilterQuery(params domain.ControlLogQuery) (string, []interface{}) {
+	conditions := make([]string, 0)
+	args := make([]interface{}, 0)
+
+	if params.Start != nil {
+		conditions = append(conditions, "cc.requested_at_ms >= ?")
+		args = append(args, *params.Start)
+	}
+	if params.End != nil {
+		conditions = append(conditions, "cc.requested_at_ms <= ?")
+		args = append(args, *params.End)
+	}
+	if params.CmdStatus != nil {
+		conditions = append(conditions, "cc.command_status = ?")
+		args = append(args, *params.CmdStatus)
+	}
+	if params.Source != nil {
+		conditions = append(conditions, "cc.command_source = ?")
+		args = append(args, *params.Source)
+	}
+	if params.Keyword != nil && *params.Keyword != "" {
+		kw := "%" + strings.TrimSpace(*params.Keyword) + "%"
+		conditions = append(conditions, "(CAST(cc.command_id AS CHAR) LIKE ? OR CAST(cc.gateway_id AS CHAR) LIKE ? OR CAST(cc.point_id AS CHAR) LIKE ? OR cc.command_hex LIKE ? OR COALESCE(dp.point_name, '') LIKE ?)")
+		args = append(args, kw, kw, kw, kw, kw)
+	}
+
+	if len(conditions) == 0 {
+		return "", args
+	}
+	return " WHERE " + strings.Join(conditions, " AND "), args
+}
 
 // ListControlLogs 返回控制日志列表。
-func (r *Repository) ListControlLogs(ctx context.Context, limit int) ([]domain.ControlLogSummary, error) {
-	rows, err := r.db.QueryContext(ctx, listControlLogsQuery, limit)
+func (r *Repository) ListControlLogs(ctx context.Context, params domain.ControlLogQuery) ([]domain.ControlLogSummary, int, error) {
+	whereClause, args := buildControlLogFilterQuery(params)
+	listQuery := controlLogSelectClause + controlLogFromClause + whereClause + `
+ORDER BY cc.requested_at_ms DESC`
+	listArgs := append([]interface{}{}, args...)
+	if params.Paginated {
+		totalQuery := "SELECT COUNT(*) " + controlLogFromClause + whereClause
+		var total int
+		err := r.db.QueryRowContext(ctx, totalQuery, args...).Scan(&total)
+		if err != nil {
+			return nil, 0, err
+		}
+		listQuery += " LIMIT ? OFFSET ?"
+		offset := (params.Page - 1) * params.Size
+		listArgs = append(listArgs, params.Size, offset)
+		rows, err := r.db.QueryContext(ctx, listQuery, listArgs...)
+		if err != nil {
+			return nil, 0, err
+		}
+		defer rows.Close()
+
+		logs := make([]domain.ControlLogSummary, 0)
+		for rows.Next() {
+			var l domain.ControlLogSummary
+			var commandType uint8
+			var commandSource uint8
+			var functionType uint8
+			var pointName sql.NullString
+			var result sql.NullString
+			var sentAt sql.NullTime
+			var finishedAt sql.NullTime
+			if err := rows.Scan(
+				&l.CommandID, &l.GatewayID, &l.GatewayName,
+				&l.NodeID, &l.PointID,
+				&l.BindUserName, &l.RequestedBy, &commandSource,
+				&l.Frequency, &l.DevExternalID,
+				&functionType, &pointName,
+				&commandType, &l.RunMode, &l.CmdStatus,
+				&l.CommandHex, &l.GatewayResponse, &l.ErrorMessage,
+				&result, &l.OpTime, &sentAt, &finishedAt,
+			); err != nil {
+				return nil, 0, err
+			}
+			l.OpID = l.CommandID
+			l.CommandSource = commandSource
+			l.SourceLabel = domain.CommandSource(commandSource).Label()
+			l.FunctionType = functionType
+			if pointName.Valid && pointName.String != "" {
+				l.FunctionName = pointName.String
+			} else {
+				l.FunctionName = domain.FunctionType(functionType).FunctionTypeName()
+			}
+			l.OpType = commandTypeLabel(commandType)
+			l.CmdStatusLabel = domain.CommandStatus(l.CmdStatus).Label()
+			if result.Valid {
+				l.Result = result.String
+			}
+			if sentAt.Valid {
+				l.SentAt = &sentAt.Time
+			}
+			if finishedAt.Valid {
+				l.FinishedAt = &finishedAt.Time
+			}
+			logs = append(logs, l)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, 0, err
+		}
+		return logs, total, nil
+	}
+
+	// Compatibility mode: return latest records with default limit.
+	listQuery += " LIMIT ?"
+	listArgs = append(listArgs, defaultAdminLogLimit)
+	rows, err := r.db.QueryContext(ctx, listQuery, listArgs...)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer rows.Close()
 
@@ -1905,7 +2060,7 @@ func (r *Repository) ListControlLogs(ctx context.Context, limit int) ([]domain.C
 			&l.CommandHex, &l.GatewayResponse, &l.ErrorMessage,
 			&result, &l.OpTime, &sentAt, &finishedAt,
 		); err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		l.OpID = l.CommandID
 		l.CommandSource = commandSource
@@ -1929,28 +2084,76 @@ func (r *Repository) ListControlLogs(ctx context.Context, limit int) ([]domain.C
 		}
 		logs = append(logs, l)
 	}
-	return logs, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	return logs, 0, nil
 }
 
 // ListOperationLogs 返回后台操作审计日志列表。
-func (r *Repository) ListOperationLogs(ctx context.Context, limit int) ([]domain.OperationRecord, error) {
-	rows, err := r.db.QueryContext(ctx, `
-SELECT
-  op.op_id, op.gateway_id, COALESCE(cg.gateway_name, ''),
-  op.realtime_id, op.node_id, op.point_id,
-  op.user_id, COALESCE(u.display_name, u.username, '') AS operator_name,
-  op.bind_user_name, op.operator_role,
-  op.frequency, op.device_external_id,
-  op.run_mode, op.rel1_status, op.rel2_status,
-  op.op_type, COALESCE(op.op_content, ''),
-  op.command_id, op.operated_at_ms, op.created_at
-FROM op_records op
-LEFT JOIN cloud_gateways cg ON op.gateway_id = cg.gateway_id
-LEFT JOIN users u ON op.user_id = u.user_id
-ORDER BY op.operated_at_ms DESC
-LIMIT ?`, limit)
+func (r *Repository) ListOperationLogs(ctx context.Context, params domain.OperationLogQuery) ([]domain.OperationRecord, int, error) {
+	whereClause, args := buildOperationLogFilterQuery(params)
+	listQuery := listOperationLogsQuery + whereClause + `
+ORDER BY op.operated_at_ms DESC`
+	listArgs := append([]interface{}{}, args...)
+	if params.Paginated {
+		totalQuery := "SELECT COUNT(*) " + listOperationLogsQuery + whereClause
+		var total int
+		err := r.db.QueryRowContext(ctx, totalQuery, args...).Scan(&total)
+		if err != nil {
+			return nil, 0, err
+		}
+		listQuery += " LIMIT ? OFFSET ?"
+		offset := (params.Page - 1) * params.Size
+		listArgs = append(listArgs, params.Size, offset)
+		rows, err := r.db.QueryContext(ctx, listQuery, listArgs...)
+		if err != nil {
+			return nil, 0, err
+		}
+		defer rows.Close()
+
+		logs := make([]domain.OperationRecord, 0)
+		for rows.Next() {
+			var l domain.OperationRecord
+			var realtimeID sql.NullInt64
+			var nodeID sql.NullInt64
+			var pointID sql.NullInt64
+			var userID sql.NullInt64
+			var commandID sql.NullInt64
+			var opType uint8
+			if err := rows.Scan(
+				&l.OpID, &l.GatewayID, &l.GatewayName,
+				&realtimeID, &nodeID, &pointID,
+				&userID, &l.OperatorName,
+				&l.BindUserName, &l.OperatorRole,
+				&l.Frequency, &l.DeviceExternalID,
+				&l.RunMode, &l.Rel1Status, &l.Rel2Status,
+				&opType, &l.OpContent,
+				&commandID, &l.OperatedAtMS, &l.CreatedAt,
+			); err != nil {
+				return nil, 0, err
+			}
+			l.RealtimeID = uint64PtrFromNullInt64(realtimeID)
+			l.NodeID = uint64PtrFromNullInt64(nodeID)
+			l.PointID = uint64PtrFromNullInt64(pointID)
+			l.UserID = uint64PtrFromNullInt64(userID)
+			l.CommandID = uint64PtrFromNullInt64(commandID)
+			l.OpType = domain.OpType(opType)
+			l.OpTypeLabel = l.OpType.Label()
+			logs = append(logs, l)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, 0, err
+		}
+		return logs, total, nil
+	}
+
+	// Compatibility mode: return latest records with default limit.
+	listQuery += " LIMIT ?"
+	listArgs = append(listArgs, defaultAdminLogLimit)
+	rows, err := r.db.QueryContext(ctx, listQuery, listArgs...)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer rows.Close()
 
@@ -1973,7 +2176,7 @@ LIMIT ?`, limit)
 			&opType, &l.OpContent,
 			&commandID, &l.OperatedAtMS, &l.CreatedAt,
 		); err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		l.RealtimeID = uint64PtrFromNullInt64(realtimeID)
 		l.NodeID = uint64PtrFromNullInt64(nodeID)
@@ -1984,7 +2187,10 @@ LIMIT ?`, limit)
 		l.OpTypeLabel = l.OpType.Label()
 		logs = append(logs, l)
 	}
-	return logs, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	return logs, 0, nil
 }
 
 func commandTypeLabel(t uint8) string {

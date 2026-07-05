@@ -87,26 +87,28 @@
 - 健康检查端口，默认 `NEHUANG_GATEWAY_HEALTH_ADDR=:18081`。
 - 每个 TCP 连接生成 `connection_id`。
 - 收到任何 bytes 后立即写 raw frame journal。
-- 将每次 TCP read 到的原始 bytes 上报到 `POST /api/v1/adapter/raw-frames`。
+- 未识别为 register/heartbeat 的 unknown raw 默认只保留本地 journal；如需联调排障可通过 `NEHUANG_GATEWAY_FORWARD_UNKNOWN_FRAMES=true` 打开该开关，透传到 `raw-frames`。
+- 心跳仅刷新网关在线状态；工作包/telemetry 才会推动采集执行器与功能点在线/实时值更新口径。
+- 示例联调文本包：`NH_TELEMETRY|frequency=1|device_external_id=1001|function_type=1|channel_no=1|value=26.5|unit=C`（文本帧联调约定）。
 - runtime log 使用结构化 JSON。
 - debug/protocol log 通过 `NEHUANG_GATEWAY_DEBUG=true` 开启。
 - 识别 ASCII `FP_xxx` 注册包。
 - 识别 `keepalive/keepalive message/HEARTBEAT/HB/PING/HEART` 心跳包。
 - 注册/心跳的业务解析由 Go 服务在 raw frame 落库后完成。
 - CRC-16/MODBUS 固定实现。
-- `cmd/gateway-adapter-mock` 可模拟注册、keepalive 心跳、Modbus 读指令、工作包、告警包、未知包。
-- `cmd/gateway-adapter-mock` 当前支持一次性发送注册、keepalive 心跳、Modbus 读指令、工作包、告警包、未知包，并可通过 `-repeat/-delay` 做短时重复发送。
-- 为联调，`gateway-adapter-mock` 可通过重复发送实现持续 keepalive 测试；长周期 loop 化脚本仍属于下一轮工具优化。
+- `cmd/gateway-adapter-mock` 可模拟注册、keepalive 心跳、mock telemetry、Modbus 读指令、二进制工作包、告警包、未知包。
+- `cmd/gateway-adapter-mock` loop 模式默认持续发送注册、心跳和 3 个 mock telemetry 点位；unknown 只在显式指定时发送。
+- mock telemetry 文本帧会被 Go 服务解析并投影为采集执行器、功能点、实时值和时序数据。
 - `cmd/gateway-adapter-mock` 可进入等待下行模式，打印 Adapter 写回 TCP 的 command hex。
-- “注册一次后长期 keepalive、定期发送模拟包”的 loop 模式属于下一轮工具增强（当前通过 `-repeat/-delay` 组合临时模拟）。
 - `cmd/gateway-adapter-replay` 可回放 raw journal 并统计分类结果。
 - 识别出设备网关后，Adapter 会按 `gateway_external_id` 拉取 pending command。
 - Adapter 能把 pending command 的 `command_hex` 写回当前 TCP 连接，并在成功写回后标记 `sent`。
 
 当前限制：
 
-- 工作包已经能进入 Go 服务 `raw_device_events`，但仍不解析字段。
+- mock telemetry 工作数据已经能进入业务投影；真实 `AA AA...` 二进制工作包仍只进入 Go 服务 `raw_device_events`，字段解析待真实协议确认。
 - 告警包已经能进入 Go 服务 `raw_device_events`，但仍不入业务告警。
+- `payload-events`、`control-logs`、`operation-logs` 日志接口已支持分页与筛选；`raw-events` 仍为 `limit` 模式。
 - 下行 hex 写回已经具备 Mock 演示能力；真实硬件 ACK 语义仍待确认。
 - 未实现 2026-07-05 TDMA 口径下行 6 字节时分秒生成、上行 6 字节时分秒解析与业务数据时间反填（仅保留口径定义，暂不入业务）。
 

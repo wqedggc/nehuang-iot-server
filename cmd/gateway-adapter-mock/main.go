@@ -25,13 +25,13 @@ type sampleFrame struct {
 func main() {
 	addr := flag.String("addr", "127.0.0.1:8081", "gateway adapter TCP address")
 	gatewayName := flag.String("gateway", "FP_TEST_ADMIN_002", "gateway name used in the register frame")
-	frameName := flag.String("frame", "all", "frame to send: all, register, heartbeat, heartbeat-message, modbus-read, work, alarm, unknown")
+	frameName := flag.String("frame", "all", "frame to send: all, register, heartbeat, heartbeat-message, telemetry, telemetry-temp, telemetry-soil, telemetry-relay, modbus-read, binary-work, alarm, unknown")
 	repeat := flag.Int("repeat", 1, "repeat count")
 	delay := flag.Duration("delay", 300*time.Millisecond, "delay between frames")
 	loop := flag.Bool("loop", false, "keep the TCP connection open and send periodic mock frames")
 	duration := flag.Duration("duration", 0, "loop duration; 0 means run until interrupted")
 	heartbeatInterval := flag.Duration("heartbeat-interval", 10*time.Second, "heartbeat interval in loop mode")
-	workInterval := flag.Duration("work-interval", 0, "work frame interval in loop mode; 0 disables periodic work frames")
+	workInterval := flag.Duration("work-interval", 30*time.Second, "mock telemetry interval in loop mode; 0 disables periodic telemetry frames")
 	alarmInterval := flag.Duration("alarm-interval", 0, "alarm frame interval in loop mode; 0 disables periodic alarm frames")
 	unknownInterval := flag.Duration("unknown-interval", 0, "unknown frame interval in loop mode; 0 disables periodic unknown frames")
 	modbusReadInterval := flag.Duration("modbus-read-interval", 0, "modbus-read frame interval in loop mode; 0 disables periodic modbus-read frames")
@@ -110,7 +110,22 @@ func selectFrames(name string, gatewayName string) ([]sampleFrame, error) {
 			note:    "Modbus read holding register command sample; Server shows protocol summary only",
 		},
 		{
-			name:    "work",
+			name:    "telemetry-temp",
+			payload: []byte("NH_TELEMETRY|frequency=1|device_external_id=1001|function_type=1|channel_no=1|value=26.5|unit=C"),
+			note:    "mock telemetry temperature frame; Server projects it to collector/device point data",
+		},
+		{
+			name:    "telemetry-soil",
+			payload: []byte("NH_TELEMETRY|frequency=1|device_external_id=1001|function_type=2|channel_no=1|value=42.0|unit=%"),
+			note:    "mock telemetry soil moisture frame; Server projects it to collector/device point data",
+		},
+		{
+			name:    "telemetry-relay",
+			payload: []byte("NH_TELEMETRY|frequency=1|device_external_id=1001|function_type=4|channel_no=1|value=1|unit=state"),
+			note:    "mock telemetry relay state frame; Server projects it to collector/device point data",
+		},
+		{
+			name:    "binary-work",
 			payload: protocol.AppendCRC16Modbus(mustHex("AAAA0B010203")),
 			note:    "CRC-valid placeholder work frame; Server keeps it pending until protocol fields freeze",
 		},
@@ -130,6 +145,9 @@ func selectFrames(name string, gatewayName string) ([]sampleFrame, error) {
 	if key == "" || key == "all" {
 		return all, nil
 	}
+	if key == "telemetry" || key == "work" {
+		key = "telemetry-temp,telemetry-soil,telemetry-relay"
+	}
 	byName := make(map[string]sampleFrame, len(all))
 	for _, frame := range all {
 		byName[frame.name] = frame
@@ -140,7 +158,7 @@ func selectFrames(name string, gatewayName string) ([]sampleFrame, error) {
 		part = strings.TrimSpace(part)
 		frame, ok := byName[part]
 		if !ok {
-			return nil, fmt.Errorf("unknown frame %q; use all, register, heartbeat, heartbeat-message, modbus-read, work, alarm, or unknown", part)
+			return nil, fmt.Errorf("unknown frame %q; use all, register, heartbeat, heartbeat-message, telemetry, telemetry-temp, telemetry-soil, telemetry-relay, modbus-read, binary-work, alarm, or unknown", part)
 		}
 		selected = append(selected, frame)
 	}
@@ -159,7 +177,7 @@ func runLoop(conn net.Conn, gatewayName string, duration time.Duration, heartbea
 		defer cancel()
 	}
 
-	frames, err := selectFrames("register,heartbeat,work,alarm,unknown,modbus-read", gatewayName)
+	frames, err := selectFrames("register,heartbeat,telemetry,binary-work,alarm,unknown,modbus-read", gatewayName)
 	if err != nil {
 		return err
 	}
@@ -178,6 +196,11 @@ func runLoop(conn net.Conn, gatewayName string, duration time.Duration, heartbea
 	if err := sendFrame(conn, byName["heartbeat"]); err != nil {
 		return err
 	}
+	for _, name := range []string{"telemetry-temp", "telemetry-soil", "telemetry-relay"} {
+		if err := sendFrame(conn, byName[name]); err != nil {
+			return err
+		}
+	}
 
 	type periodicFrame struct {
 		frame  sampleFrame
@@ -187,7 +210,11 @@ func runLoop(conn net.Conn, gatewayName string, duration time.Duration, heartbea
 		{frame: byName["heartbeat"], ticker: time.NewTicker(heartbeatInterval)},
 	}
 	if workInterval > 0 {
-		periodic = append(periodic, periodicFrame{frame: byName["work"], ticker: time.NewTicker(workInterval)})
+		periodic = append(periodic,
+			periodicFrame{frame: byName["telemetry-temp"], ticker: time.NewTicker(workInterval)},
+			periodicFrame{frame: byName["telemetry-soil"], ticker: time.NewTicker(workInterval)},
+			periodicFrame{frame: byName["telemetry-relay"], ticker: time.NewTicker(workInterval)},
+		)
 	}
 	if alarmInterval > 0 {
 		periodic = append(periodic, periodicFrame{frame: byName["alarm"], ticker: time.NewTicker(alarmInterval)})

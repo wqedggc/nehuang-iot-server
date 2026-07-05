@@ -56,15 +56,21 @@ TCP Port: 8081
 
 1. 注册包：发送一个以 `FP_` 开头的 ASCII 名称，例如 `FP_NB114`。
 2. 心跳包：发送 `keepalive` 或 `keepalive message`。
-3. 真实工作包：发送 MCU 透传出来的原始二进制包。
-4. 真实告警包：发送 MCU 透传出来的原始告警包。
-5. 等待下行：保持 TCP 连接不断开，云端在 Admin 创建下行命令后会把 `command_hex` 写回同一条 TCP 连接。
+3. mock telemetry 文本联调：发送 `NH_TELEMETRY|...` 文本帧（见下方示例）。
+4. 真实工作包：发送 MCU 透传出来的原始二进制包。
+5. 真实告警包：发送 MCU 透传出来的原始告警包。
+6. 等待下行：保持 TCP 连接不断开，云端在 Admin 创建下行命令后会把 `command_hex` 写回同一条 TCP 连接。
 
 注意：
 
 - `FP_` 前缀用于云端识别设备网关名称；不带 `FP_` 的公网扫描包会进入原始报文排查，但不会被当作正式设备网关注册。
 - 心跳包会刷新设备网关在线时间；当前离线扫描默认 35 秒未上报后标记离线。
 - 工作包、告警包当前先进入原始报文排查，不承诺立刻解析成温度、告警或曲线。
+- mock telemetry 文本帧示例：
+
+  ```text
+  NH_TELEMETRY|frequency=1|device_external_id=1001|function_type=1|channel_no=1|value=26.5|unit=C
+  ```
 
 ### 4. 平台侧查看位置
 
@@ -152,6 +158,7 @@ Admin/Mini 创建控制命令
 
 - 接收硬件网关 TCP 连接，默认监听 `NEHUANG_GATEWAY_TCP_ADDR=:8081`。
 - 收到任意 bytes 后立即写 raw frame journal。
+- 联调默认不透传 unknown raw 包到 Server，仅保存本地 journal；如需排障可通过 `NEHUANG_GATEWAY_FORWARD_UNKNOWN_FRAMES=true` 开关透传 unknown。
 - 将每次 TCP read 到的原始 bytes 上报到 `POST /api/v1/adapter/raw-frames`。
 - 保留旧网关 `FP_xxx` 注册包和显式心跳包的最小分类，用于连接维度 `gateway_name` 和 debug 日志；业务解析由 Go 服务完成。
 - 识别出设备网关后，按 `gateway_external_id` 拉取 Server 中的 pending control command。
@@ -181,6 +188,7 @@ go build ./cmd/gateway-adapter-replay
 ```bash
 NEHUANG_GATEWAY_TCP_ADDR=:8081 \
 NEHUANG_GATEWAY_HEALTH_ADDR=:18081 \
+NEHUANG_GATEWAY_FORWARD_UNKNOWN_FRAMES=false \
 NEHUANG_GATEWAY_API_BASE_URL=http://43.143.208.153:8080 \
 NEHUANG_ADAPTER_TOKEN=nehuang-adapter-dev-token \
 go run ./cmd/gateway-adapter
@@ -193,6 +201,7 @@ go run ./cmd/gateway-adapter
 | `NEHUANG_GATEWAY_COMMAND_POLL_INTERVAL_SECONDS` | `2` | 每个已识别设备网关连接拉取 pending command 的间隔 |
 | `NEHUANG_GATEWAY_COMMAND_POLL_LIMIT` | `20` | 每次拉取命令数量上限 |
 | `NEHUANG_GATEWAY_COMMAND_WRITE_TIMEOUT_SECONDS` | `5` | 写回 TCP 连接的超时时间 |
+| `NEHUANG_GATEWAY_FORWARD_UNKNOWN_FRAMES` | `false` | unknown 包是否透传到 `/api/v1/adapter/raw-frames`；默认 `false` 时仅保留本地 journal |
 
 回放 raw journal：
 
@@ -214,11 +223,11 @@ go run ./cmd/gateway-adapter-replay -raw-log data/gateway-adapter/raw-frames/raw
 2. 连接建立后，直接向 socket 写入原始 bytes。可以是 ASCII 注册包，也可以是 MCU 透传出来的二进制包。
 3. 第一版不要求硬件网关先组 JSON，也不要求硬件网关调用 HTTP。
 4. 每次写入的 bytes 都会被 Adapter 立即写入 raw frame journal，用于后续确认真实协议和解析规则。
-5. 当前所有 bytes 都会被 Adapter 上报到 Go 服务的 `/api/v1/adapter/raw-frames`；Go 服务第一版只解析注册和心跳，工作包/告警包保持 pending。
+5. 除已识别注册/心跳外，unknown 包默认仅保留本地 journal；如需排障可通过 `NEHUANG_GATEWAY_FORWARD_UNKNOWN_FRAMES=true` 将 unknown 透传到 Go 服务。Go 服务第一版只解析注册和心跳，工作包/告警包和未透传 unknown 保持 pending。
 
 业务解析边界：
 
-- TCP 接收循环只负责连接、读写、raw journal、全量 raw 上报和最小分类。
+- TCP 接收循环只负责连接、读写、raw journal、raw 上传策略（unknown 默认仅本地保留 + 可选透传）和最小分类。
 - 工作包、告警包、ACK 的业务字段解析必须基于真实 raw 样例和 replay 回归。
 - 不把 MCU 温控算法、时隙策略、告警去重规则写死在 TCP 接收循环中。
 
@@ -228,9 +237,10 @@ go run ./cmd/gateway-adapter-replay -raw-log data/gateway-adapter/raw-frames/raw
 |------|------|--------------|
 | 注册 | ASCII `FP_TEST_ADMIN_001\n` | Adapter 上报 raw；Go 服务解析为 `register` 并刷新 gateway |
 | 心跳 | ASCII `keepalive`、`keepalive message`、`HEARTBEAT\n`、`HB`、`PING`、`HEART` | Adapter 上报 raw；Go 服务解析为 `heartbeat` 并刷新 gateway |
+| Mock 工作数据 | ASCII `NH_TELEMETRY|frequency=1|device_external_id=1001|function_type=1|channel_no=1|value=26.5|unit=C` | Adapter 上报 raw；Go 服务解析并投影采集执行器、功能点、实时值和时序数据 |
 | 工作包 | 二进制 `AA AA ... CRC_LO CRC_HI` | Adapter 上报 raw；Go 服务保持 pending，字段解析等真实样例确认后补 |
 | 告警包 | 二进制 `AA AA ... FF FF ... CRC_LO CRC_HI` | Adapter 上报 raw；Go 服务保持 pending，去重和告警入库等真实样例确认后补 |
-| 未知包 | 任意无法识别 bytes | Adapter 上报 raw，不中断连接 |
+| 未知包 | 任意无法识别 bytes | 默认仅写 local journal；`NEHUANG_GATEWAY_FORWARD_UNKNOWN_FRAMES=true` 时上报 raw；不中断连接 |
 
 ### 云端内部调试工具：gateway-adapter-mock
 

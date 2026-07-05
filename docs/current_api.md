@@ -22,6 +22,10 @@ HTTP Adapter API 是 Go `gateway-adapter` 和 Go `nehuang-server` 之间的内�
 - 最新沟通口径倾向于云端点名读取实时数据和周期累计记录；此前“硬件主动上行标准工作包”的口径需以最终协议样例统一。
 - 临时读取采用“云端下发读取 hex 后返回 raw”。
 - 工作/告警/ACK/清缓存/4 小时读取字段语义未最终冻结，当前只做原始留存与状态追踪。
+- `mock telemetry` 联调文本帧示例：
+  `NH_TELEMETRY|frequency=1|device_external_id=1001|function_type=1|channel_no=1|value=26.5|unit=C`。
+- raw 入口默认不转发未知包到 Server，仅保留本地 journal；如需联调时透传 unknown，可打开 `NEHUANG_GATEWAY_FORWARD_UNKNOWN_FRAMES=true`。
+- 在线口径：心跳只刷新设备网关在线状态；只有工作/telemetry 才会刷新采集执行器与功能点状态、实时值。
 
 API 与展示口径（当前）：
 
@@ -37,7 +41,7 @@ API 与展示口径（当前）：
 | POST | `/api/v1/adapter/commands/{command_id}/sent` | `X-Adapter-Token` | 新增，Adapter 标记已下发 |
 | POST | `/api/v1/adapter/commands/{command_id}/result` | `X-Adapter-Token` | 新增，Adapter 回写 ACK/成功/失败/超时 |
 
-说明：`gateway-adapter` 的 TCP 主链路会把每次收到的 bytes 上报到 `/api/v1/adapter/raw-frames`，Server 先写 `raw_device_events`。第一版解析 `FP_` 注册包，以及 `keepalive/keepalive message/HEARTBEAT/HB/PING/HEART` 心跳包；工作包、告警包、未知包会先按 `event_type=3/6/7` 分开展示，但业务解析仍保持 pending，等真实协议稳定后补 parser。`/api/v1/adapter/device-events` 保留给已结构化 JSON 上报和旧联调脚本。
+说明：`gateway-adapter` 的 TCP 主链路会把收到的 bytes 写入 raw journal，并按联调策略上报到 `/api/v1/adapter/raw-frames`（unknown 包默认本地留存，`NEHUANG_GATEWAY_FORWARD_UNKNOWN_FRAMES=true` 可透传）；Server 先写 `raw_device_events`。第一版解析 `FP_` 注册包，以及 `keepalive/keepalive message/HEARTBEAT/HB/PING/HEART` 心跳包；心跳只刷新网关在线状态，工作/telemetry 才会刷新采集执行器与功能点。工作包、告警包、未知包会先按 `event_type=3/6/7` 分开展示，但业务解析仍保持 pending，等真实协议稳定后补 parser。`/api/v1/adapter/device-events` 保留给已结构化 JSON 上报和旧联调脚本（可作为 telemetry mock 联调输入）。
 
 ### POST `/api/v1/adapter/raw-frames`
 
@@ -56,6 +60,48 @@ API 与展示口径（当前）：
 - `raw_seq`
 
 返回 `raw_event_id` 和 `parse_status`。该接口不要求同步完成业务解析。
+
+### POST `/api/v1/adapter/device-events`
+
+请求字段：
+
+- `protocol_version`
+- `source_type`
+- `message_id`
+- `gateway_name`
+- `gateway_external_id`
+- `remote_ip`
+- `remote_port`
+- `reported_at_ms`
+- `events`
+
+返回 `raw_event_id` 和 `parse_status`。该接口用于结构化事件上报（如 `telemetry` / `register` / `heartbeat`），可用于联调场景回放真实字段。
+
+`telemetry` 联调最小例子：
+
+```json
+{
+  "protocol_version":"nehuang-gateway-adapter-v1",
+  "source_type":"gateway_adapter",
+  "message_id":"mock-telemetry-001",
+  "gateway_name":"FP_TEST_ADMIN_001",
+  "gateway_external_id":"TEST_001",
+  "remote_ip":"127.0.0.1",
+  "remote_port":12345,
+  "reported_at_ms":"2026-07-06T10:00:00.000Z",
+  "events":[
+    {
+      "event_type":"telemetry",
+      "frequency":1,
+      "device_external_id":"1001",
+      "function_type":1,
+      "channel_no":1,
+      "value":26.5,
+      "unit":"C"
+    }
+  ]
+}
+```
 
 ## Admin
 
@@ -79,14 +125,21 @@ API 与展示口径（当前）：
 | POST | `/api/v1/admin/gateways/{gateway_id}/collectors` | 正式建档；给已注册设备网关创建/更新采集执行器和默认功能点 |
 | POST | `/api/v1/admin/gateways/{gateway_id}/seed-points` | 兼容旧路径；内部等同 `/collectors` |
 | GET | `/api/v1/admin/raw-events?limit=` | 正式 |
-| GET | `/api/v1/admin/control-logs?limit=` | 正式；读取 `control_commands`，展示来源、command hex、命令状态、下发/完成时间 |
-| GET | `/api/v1/admin/operation-logs?limit=` | 正式；读取 `op_records`，展示绑定、解绑、配置、控制等操作审计 |
+| GET | `/api/v1/admin/control-logs` | 正式；读取 `control_commands`，展示来源、command hex、命令状态、下发/完成时间 |
+| GET | `/api/v1/admin/operation-logs` | 正式；读取 `op_records`，展示绑定、解绑、配置、控制等操作审计 |
 | GET | `/api/v1/admin/device-tree` | 正式 |
 | GET | `/api/v1/admin/device-points?keyword=&bind_status=` | 正式 |
 | PATCH | `/api/v1/admin/device-points/{point_id}` | 正式，更新点位配置 |
 | POST | `/api/v1/admin/device-points/{point_id}/control` | 正式创建异步控制命令，最终下发和 ACK 由 Adapter 完成 |
 | GET | `/api/v1/admin/payload-events` | 正式 |
 | GET | `/api/v1/admin/payload-events/{raw_event_id}` | 正式 |
+
+说明：日志类接口分页/筛选能力说明：
+
+- `payload-events` 支持分页+筛选：`page`、`size`、`event_type`、`parse_status`、`start`、`end`、`keyword`。
+- `control-logs` 支持分页+筛选：`page`、`size`、`start`、`end`、`keyword`、`cmd_status`、`source`；不带 `page/size` 时兼容旧数组响应。
+- `operation-logs` 支持分页+筛选：`page`、`size`、`start`、`end`、`keyword`、`op_type`；不带 `page/size` 时兼容旧数组响应。
+- `raw-events` 当前保留 `limit` 模式。
 
 ### POST `/api/v1/admin/bindings`
 

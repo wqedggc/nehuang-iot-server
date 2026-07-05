@@ -17,7 +17,7 @@ import (
 	"nehuang-iot-server/internal/gatewayadapter/protocol"
 )
 
-func TestHandleConnForwardsEveryReadAsRawFrame(t *testing.T) {
+func TestHandleConnForwardsRecognizedReadsAsRawFrameAndSkipsUnknownByDefault(t *testing.T) {
 	var mu sync.Mutex
 	var received []RawFrameEnvelope
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -70,6 +70,7 @@ func TestHandleConnForwardsEveryReadAsRawFrame(t *testing.T) {
 	frames := [][]byte{
 		[]byte("FP_TEST_ADMIN_001\n"),
 		[]byte("HEARTBEAT\n"),
+		[]byte("NH_TELEMETRY|frequency=1|device_external_id=1001|function_type=1|channel_no=1|value=26.5|unit=C"),
 		protocol.AppendCRC16Modbus([]byte{0xAA, 0xAA, 0x0B, 0x01, 0x02, 0x03}),
 		protocol.AppendCRC16Modbus([]byte{0xAA, 0xAA, 0x0B, 0xFF, 0xFF, 0xFF, 0x01}),
 		{0x01, 0x02, 0x03, 0x04},
@@ -84,8 +85,8 @@ func TestHandleConnForwardsEveryReadAsRawFrame(t *testing.T) {
 
 	mu.Lock()
 	defer mu.Unlock()
-	if len(received) != len(frames) {
-		t.Fatalf("raw frame posts: want %d, got %d", len(frames), len(received))
+	if len(received) != len(frames)-1 {
+		t.Fatalf("raw frame posts: want %d, got %d", len(frames)-1, len(received))
 	}
 	if received[0].GatewayName != "FP_TEST_ADMIN_001" {
 		t.Fatalf("register gateway name: want FP_TEST_ADMIN_001, got %q", received[0].GatewayName)
@@ -103,6 +104,51 @@ func TestHandleConnForwardsEveryReadAsRawFrame(t *testing.T) {
 		if envelope.Direction != string(journal.DirectionInbound) {
 			t.Fatalf("frame %d direction: want inbound, got %q", i, envelope.Direction)
 		}
+	}
+}
+
+func TestHandleConnForwardsUnknownWhenEnabled(t *testing.T) {
+	var received atomic.Int32
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/api/v1/adapter/raw-frames":
+			received.Add(1)
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer api.Close()
+
+	jw, err := journal.NewWriter(t.TempDir(), 1024*1024)
+	if err != nil {
+		t.Fatalf("new journal writer: %v", err)
+	}
+	defer jw.Close()
+
+	srv := NewServer(Config{
+		APIBaseURL:           api.URL,
+		AdapterToken:         "test-token",
+		ReadBufferSize:       64,
+		ReadTimeout:          time.Second,
+		ForwardUnknownFrames: true,
+	}, jw, NewLogger(io.Discard))
+
+	serverConn, clientConn := net.Pipe()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		srv.handleConn(serverConn)
+	}()
+
+	if _, err := clientConn.Write([]byte{0x01, 0x02, 0x03, 0x04}); err != nil {
+		t.Fatalf("write unknown: %v", err)
+	}
+	_ = clientConn.Close()
+	<-done
+
+	if received.Load() != 1 {
+		t.Fatalf("raw frame posts: want 1, got %d", received.Load())
 	}
 }
 

@@ -889,7 +889,7 @@
 
   function renderHelpCenter(container) {
     var activeSection = normalizeHelpSection(getHashParam('section'));
-    container.innerHTML = '<div class="page-header"><h2>帮助中心</h2><span class="table-count">管理员 / C 端 / 硬件联调说明</span></div>' +
+    container.innerHTML = '<div class="page-header"><span class="table-count">管理员 / C 端 / 硬件联调说明</span></div>' +
       '<div class="help-tabs">' +
         helpTab('overview', '总览', activeSection) +
         helpTab('flow', '最小流程图', activeSection) +
@@ -1145,8 +1145,7 @@
       }).join('');
       var ingestTotal = (toNum(ingest.raw_event_count) || 0) + (toNum(ingest.telemetry_count) || 0);
 
-      var html = '<div class="page-header" style="display:flex;align-items:center;justify-content:space-between">' +
-        '<h2>Dashboard</h2>' +
+      var html = '<div class="page-header" style="display:flex;align-items:center;justify-content:flex-end">' +
         '<div style="display:flex;gap:6px">' + rangeBtns + '</div>' +
       '</div>' +
       '<div class="stat-grid">' +
@@ -1168,10 +1167,82 @@
         '<div class="stat-card"><div class="stat-card-label">注册 / 遥测</div><div class="stat-card-value">' + countText(ingest.register_count) + ' / ' + countText(ingest.telemetry_count) + '</div><div class="stat-card-sub">原始报文 ' + countText(ingest.raw_event_count) + '</div></div>' +
       '</div>';
 
+      // 图表区域
+      html += renderDashboardCharts(d);
+
       container.innerHTML = html;
     } catch (e) {
       container.innerHTML = '<div class="error-state"><p>加载失败</p><button class="btn btn-outline btn-sm" onclick="renderPage()">重试</button></div>';
     }
+  }
+
+  function renderDashboardCharts(d) {
+    var devices = d.devices || {};
+    var ingest = d.ingest || {};
+    var control = d.control || {};
+
+    function barRow(label, value, total, cls) {
+      var pct = 0;
+      if (total > 0) pct = Math.round((value / total) * 100);
+      return '<div class="bar-row">' +
+        '<span class="bar-label">' + escHtml(label) + '</span>' +
+        '<div class="bar-track"><div class="bar-fill ' + cls + '" style="width:' + pct + '%"></div></div>' +
+        '<span class="bar-value">' + (value != null ? value : 0) + '</span>' +
+      '</div>';
+    }
+
+    // 设备状态
+    var normalCount = toNum(devices.normal_point_count) || 0;
+    var abnormalCount = toNum(devices.abnormal_point_count) || 0;
+    var offlineCount = toNum(devices.offline_point_count) || 0;
+    var deviceTotal = normalCount + abnormalCount + offlineCount;
+
+    // 数据接入
+    var registerCount = toNum(ingest.register_count) || 0;
+    var heartbeatCount = toNum(ingest.heartbeat_count) || toNum(ingest.heartbeat_success) || 0;
+    var telemetryCount = toNum(ingest.telemetry_count) || toNum(ingest.work_data_count) || 0;
+    var ingestTotal = registerCount + heartbeatCount + telemetryCount;
+
+    // 控制命令
+    var pendingCount = toNum(control.control_pending_count) || 0;
+    var sentCount = toNum(control.control_sent_count) || 0;
+    var succeededCount = toNum(control.control_succeeded_count) || 0;
+    var failedCount = (toNum(control.control_failed_count) || 0) + (toNum(control.control_timeout_count) || 0);
+    var controlTotal = pendingCount + sentCount + succeededCount + failedCount;
+
+    var html = '<div class="chart-section">' +
+      '<h3>数据概览</h3>' +
+      '<p class="chart-section-note">统计以当前接口返回为准</p>' +
+      '<div class="chart-row">' +
+        '<div class="chart-card">' +
+          '<h4>设备状态</h4>' +
+          '<div class="bar-chart" id="chart-device-status">' +
+            barRow('正常', normalCount, deviceTotal, 'bar-fill-success') +
+            barRow('异常', abnormalCount, deviceTotal, 'bar-fill-danger') +
+            barRow('离线', offlineCount, deviceTotal, 'bar-fill-muted') +
+          '</div>' +
+        '</div>' +
+        '<div class="chart-card">' +
+          '<h4>数据接入</h4>' +
+          '<div class="bar-chart" id="chart-data-ingest">' +
+            barRow('注册', registerCount, ingestTotal, 'bar-fill-info') +
+            barRow('心跳', heartbeatCount, ingestTotal, 'bar-fill-success') +
+            barRow('工作数据', telemetryCount, ingestTotal, 'bar-fill-warning') +
+          '</div>' +
+        '</div>' +
+        '<div class="chart-card">' +
+          '<h4>控制命令</h4>' +
+          '<div class="bar-chart" id="chart-control-cmd">' +
+            barRow('pending', pendingCount, controlTotal, 'bar-fill-warning') +
+            barRow('sent', sentCount, controlTotal, 'bar-fill-info') +
+            barRow('succeeded', succeededCount, controlTotal, 'bar-fill-success') +
+            barRow('failed/timeout', failedCount, controlTotal, 'bar-fill-danger') +
+          '</div>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+
+    return html;
   }
 
   async function switchDashboardRange(range) {
@@ -1309,7 +1380,6 @@
 
       var html = '<div class="page-header">' +
         '<button class="btn btn-outline btn-sm" onclick="navigate(\'users\')">← 返回用户列表</button>' +
-        '<h2>农户详情</h2>' +
       '</div>' +
       '<div class="info-card">' +
         '<h3>基本信息</h3>' +
@@ -2749,178 +2819,344 @@
   }
 
   // ---------- 操作日志 ----------
+  var operationLogFilter = { page: 1, size: 20, range: '24h', start: null, end: null, keyword: '' };
+
+  function computeTimeRange(range) {
+    var now = new Date();
+    var end = null;
+    var start = null;
+    var label = '';
+    if (range === '1h') { start = new Date(now.getTime() - 1 * 60 * 60 * 1000); label = '最近 1 小时 · 至今'; }
+    else if (range === '24h') { start = new Date(now.getTime() - 24 * 60 * 60 * 1000); label = '最近 24 小时 · 至今'; }
+    else if (range === '7d') { start = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000); label = '最近 7 天 · 至今'; }
+    else if (range === '30d') { start = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000); label = '最近 30 天 · 至今'; }
+    else { label = '全部时间'; }
+    return { start: start, end: end, label: label };
+  }
+
+  function formatFilterTime(date) {
+    if (!date) return null;
+    function pad(n) { return String(n).padStart(2, '0'); }
+    return date.getFullYear() + '-' + pad(date.getMonth() + 1) + '-' + pad(date.getDate()) + ' ' + pad(date.getHours()) + ':' + pad(date.getMinutes()) + ':' + pad(date.getSeconds());
+  }
+
+  function resetOperationLogFilters() {
+    operationLogFilter = { page: 1, size: 20, range: '24h', start: null, end: null, keyword: '' };
+    renderPage();
+  }
+
+  function filterByKeyword(items, keyword, fields) {
+    if (!keyword) return items;
+    var q = keyword.toLowerCase();
+    return items.filter(function (item) {
+      return fields.some(function (f) { return (item[f] || '').toLowerCase().indexOf(q) !== -1; });
+    });
+  }
+
+  function filterByTimeRange(items, range) {
+    var tr = computeTimeRange(range);
+    if (!tr.start) return items;
+    var startTs = tr.start.getTime();
+    return items.filter(function (item) {
+      var ts = item.operatedAt || item.opTime || '';
+      if (!ts) return true;
+      return new Date(ts).getTime() >= startTs;
+    });
+  }
+
+  function paginateItems(items, page, size) {
+    var total = items.length;
+    var totalPages = Math.max(1, Math.ceil(total / size));
+    var startIdx = (page - 1) * size;
+    var paged = items.slice(startIdx, startIdx + size);
+    return { items: paged, total: total, page: page, totalPages: totalPages };
+  }
+
+  function renderPaginationBar(state, totalPages, onChangeFn) {
+    return '<div class="pagination-bar">' +
+      '<button class="btn btn-outline btn-sm" ' + (state.page <= 1 ? 'disabled' : '') + ' onclick="' + onChangeFn + '(' + (state.page - 1) + ')">上一页</button>' +
+      '<span>第 ' + state.page + '/' + totalPages + ' 页</span>' +
+      '<button class="btn btn-outline btn-sm" ' + (state.page >= totalPages ? 'disabled' : '') + ' onclick="' + onChangeFn + '(' + (state.page + 1) + ')">下一页</button>' +
+      '<span>每页 ' + state.size + ' 条</span>' +
+    '</div>';
+  }
+
+  function renderFilterBar(state, searchId, placeholder, resetFnName) {
+    var tr = computeTimeRange(state.range);
+    var ranges = ['1h', '24h', '7d', '30d', 'all'];
+    var rangeLabels = { '1h': '最近 1 小时', '24h': '最近 24 小时', '7d': '最近 7 天', '30d': '最近 30 天', 'all': '全部' };
+    var rangeBtns = ranges.map(function (r) {
+      var active = r === state.range ? ' btn-primary' : ' btn-outline';
+      return '<button class="btn btn-sm' + active + '" data-range="' + r + '">' + rangeLabels[r] + '</button>';
+    }).join('');
+    return '<div class="filter-bar">' +
+      '<div class="filter-time-shortcuts">' + rangeBtns + '</div>' +
+      '<span class="filter-time-label">' + escHtml(tr.label) + '</span>' +
+      '<input type="text" class="table-search" id="' + searchId + '" placeholder="' + escHtml(placeholder) + '" value="' + escHtml(state.keyword || '') + '">' +
+      '<button class="btn btn-outline btn-sm" onclick="' + resetFnName + '()">重置筛选</button>' +
+    '</div>';
+  }
+
+  function bindFilterBarEvents(state, searchId, renderFn, resetFnName) {
+    var searchEl = document.getElementById(searchId);
+    if (!searchEl) return;
+    var searchTimer = null;
+    searchEl.oninput = function () {
+      clearTimeout(searchTimer);
+      var val = this.value;
+      searchTimer = setTimeout(function () {
+        state.keyword = val || '';
+        state.page = 1;
+        renderFn();
+      }, 400);
+    };
+
+    // Bind range buttons
+    var filterBar = searchEl.parentElement;
+    if (filterBar) {
+      filterBar.querySelectorAll('.filter-time-shortcuts .btn').forEach(function (btn) {
+        btn.onclick = function () {
+          var range = this.dataset.range;
+          if (range === state.range) return;
+          state.range = range;
+          state.page = 1;
+          renderFn();
+        };
+      });
+    }
+  }
+
   async function renderOperationLogs(container) {
     container.innerHTML = '<div class="loading-state"><div class="loading-spinner"></div><p>加载操作日志...</p></div>';
     try {
       var res = await NHApi.getOperationLogs();
       if (!res.data) { container.innerHTML = '<div class="error-state"><p>加载失败</p><button class="btn btn-outline btn-sm" onclick="renderPage()">重试</button></div>'; return; }
-      var logs = (res.data || []).map(normalizeOperationLogRecord);
+      var allLogs = (res.data || []).map(normalizeOperationLogRecord);
 
+      function renderFiltered() {
+        var tr = computeTimeRange(operationLogFilter.range);
+        var filtered = allLogs;
+        // 时间筛选
+        if (tr.start) {
+          var startTs = tr.start.getTime();
+          filtered = filtered.filter(function (l) {
+            var ts = l.operatedAt || '';
+            if (!ts) return true;
+            return new Date(ts).getTime() >= startTs;
+          });
+        }
+        // 关键词筛选
+        if (operationLogFilter.keyword) {
+          var q = operationLogFilter.keyword.toLowerCase();
+          filtered = filtered.filter(function (l) {
+            return ['operatorName', 'bindUserName', 'targetSummary', 'content', 'opId', 'gatewayName', 'nodeId', 'pointId']
+              .some(function (f) { return (l[f] || '').toLowerCase().indexOf(q) !== -1; });
+          });
+        }
+        var pg = paginateItems(filtered, operationLogFilter.page, operationLogFilter.size);
+        var tbody = document.getElementById('operation-log-tbody');
+        if (!tbody) return;
+        tbody.innerHTML = pg.items.map(function (l) {
+          var badgeClass = l.opType === '绑定' ? 'badge-info' :
+            l.opType === '解绑' ? 'badge-danger' :
+            l.opType === '配置' ? 'badge-warning' :
+            l.opType === '控制' ? 'badge-success' : 'badge-muted';
+          var detailParts = [];
+          if (l.nodeId) detailParts.push('采集执行器 ' + l.nodeId);
+          if (l.pointId) detailParts.push('功能点 ' + l.pointId);
+          if (l.frequency) detailParts.push('频点 ' + l.frequency);
+          if (l.devid) detailParts.push('DevID ' + l.devid);
+          return '<tr>' +
+            '<td style="font-family:monospace;font-size:12px">' + escHtml(l.opId || '--') + '</td>' +
+            '<td><span class="badge ' + badgeClass + '">' + escHtml(l.opType || '--') + '</span></td>' +
+            '<td>' + escHtml(l.operatorName || '--') + '</td>' +
+            '<td>' + escHtml(l.bindUserName || '--') + '</td>' +
+            '<td>' + escHtml(l.targetSummary || '--') + '</td>' +
+            '<td>' + escHtml(detailParts.join(' · ') || '--') + '</td>' +
+            '<td class="log-result-cell">' + escHtml(l.content || '--') + '</td>' +
+            '<td style="white-space:nowrap">' + formatFullTime(l.operatedAt) + '</td>' +
+          '</tr>';
+        }).join('');
+
+        // Update count
+        var countEl = document.getElementById('operation-log-count');
+        if (countEl) countEl.textContent = '共 ' + pg.total + ' 条';
+
+        // Update pagination
+        var pagEl = document.getElementById('operation-log-pagination');
+        if (pagEl) {
+          pagEl.innerHTML = renderPaginationBar(operationLogFilter, pg.totalPages, 'operationLogGoPage');
+        }
+      }
+
+      window.operationLogGoPage = function (p) {
+        operationLogFilter.page = p;
+        renderFiltered();
+      };
+
+      var tr = computeTimeRange(operationLogFilter.range);
       var html = '<div class="table-section">' +
         '<div class="table-header">' +
           '<h3>操作日志</h3>' +
-          '<div class="table-header-right">' +
-            '<input class="table-search" id="operation-log-search" type="text" placeholder="搜索操作人/农户/设备网关/内容...">' +
-            '<span class="table-count">共 ' + toText(logs.length) + ' 条</span>' +
-          '</div>' +
+          '<span class="table-count" id="operation-log-count">共 ' + toText(allLogs.length) + ' 条</span>' +
         '</div>' +
+        renderFilterBar(operationLogFilter, 'operation-log-search', '搜索操作人 / 农户 / 设备网关 / 内容', 'resetOperationLogFilters') +
         '<div class="table-wrap"><table>' +
           '<thead><tr><th>操作ID</th><th>类型</th><th>操作人</th><th>农户</th><th>对象</th><th>采集执行器/功能点</th><th>内容</th><th>时间</th></tr></thead>' +
-          '<tbody id="operation-log-tbody">' +
-            logs.map(function (l) {
-              var badgeClass = l.opType === '绑定' ? 'badge-info' :
-                l.opType === '解绑' ? 'badge-danger' :
-                l.opType === '配置' ? 'badge-warning' :
-                l.opType === '控制' ? 'badge-success' : 'badge-muted';
-              var detailParts = [];
-              if (l.nodeId) detailParts.push('采集执行器 ' + l.nodeId);
-              if (l.pointId) detailParts.push('功能点 ' + l.pointId);
-              if (l.frequency) detailParts.push('频点 ' + l.frequency);
-              if (l.devid) detailParts.push('DevID ' + l.devid);
-              return '<tr>' +
-                '<td style="font-family:monospace;font-size:12px">' + escHtml(l.opId || '--') + '</td>' +
-                '<td><span class="badge ' + badgeClass + '">' + escHtml(l.opType || '--') + '</span></td>' +
-                '<td>' + escHtml(l.operatorName || '--') + '</td>' +
-                '<td>' + escHtml(l.bindUserName || '--') + '</td>' +
-                '<td>' + escHtml(l.targetSummary || '--') + '</td>' +
-                '<td>' + escHtml(detailParts.join(' · ') || '--') + '</td>' +
-                '<td class="log-result-cell">' + escHtml(l.content || '--') + '</td>' +
-                '<td style="white-space:nowrap">' + formatFullTime(l.operatedAt) + '</td>' +
-              '</tr>';
-            }).join('') +
-          '</tbody>' +
+          '<tbody id="operation-log-tbody"></tbody>' +
         '</table></div>' +
+        '<div id="operation-log-pagination"></div>' +
       '</div>';
 
       container.innerHTML = html;
-
-      $('#operation-log-search').oninput = function () {
-        var q = this.value.toLowerCase();
-        $$('#operation-log-tbody tr').forEach(function (tr) {
-          tr.style.display = tr.textContent.toLowerCase().includes(q) ? '' : 'none';
-        });
-      };
+      renderFiltered();
+      bindFilterBarEvents(operationLogFilter, 'operation-log-search', renderFiltered, 'resetOperationLogFilters');
     } catch (e) {
       container.innerHTML = '<div class="error-state"><p>加载失败</p><button class="btn btn-outline btn-sm" onclick="renderPage()">重试</button></div>';
     }
   }
 
   // ---------- 控制日志 ----------
+  var controlLogFilter = { page: 1, size: 20, range: '24h', start: null, end: null, keyword: '' };
+
+  function resetControlLogFilters() {
+    controlLogFilter = { page: 1, size: 20, range: '24h', start: null, end: null, keyword: '' };
+    renderPage();
+  }
+
   async function renderLogs(container) {
     container.innerHTML = '<div class="loading-state"><div class="loading-spinner"></div><p>加载控制日志...</p></div>';
     try {
       var res = await NHApi.getControlLogs();
       if (!res.data) { container.innerHTML = '<div class="error-state"><p>加载失败</p><button class="btn btn-outline btn-sm" onclick="renderPage()">重试</button></div>'; return; }
-      var logs = (res.data || []).map(normalizeControlLogRecord);
+      var allLogs = (res.data || []).map(normalizeControlLogRecord);
+
+      function renderFiltered() {
+        var tr = computeTimeRange(controlLogFilter.range);
+        var filtered = allLogs;
+        if (tr.start) {
+          var startTs = tr.start.getTime();
+          filtered = filtered.filter(function (l) {
+            var ts = l.opTime || '';
+            if (!ts) return true;
+            return new Date(ts).getTime() >= startTs;
+          });
+        }
+        if (controlLogFilter.keyword) {
+          var q = controlLogFilter.keyword.toLowerCase();
+          filtered = filtered.filter(function (l) {
+            return ['commandId', 'gatewayName', 'pointName', 'commandHex', 'opId', 'bindUserName', 'funcName', 'cmdStatusLabel']
+              .some(function (f) { return (l[f] || '').toLowerCase().indexOf(q) !== -1; });
+          });
+        }
+        var pg = paginateItems(filtered, controlLogFilter.page, controlLogFilter.size);
+        var tbody = document.getElementById('log-tbody');
+        if (!tbody) return;
+        tbody.innerHTML = pg.items.map(function (l) {
+          var statusClass = l.cmdStatusLabel === '成功' || l.cmdStatusLabel === '已完成' || l.cmdStatusLabel === 'succeeded' ? 'badge-success' :
+            l.cmdStatusLabel === '失败' || l.cmdStatusLabel === 'failed' ? 'badge-danger' :
+            l.cmdStatusLabel === '超时' || l.cmdStatusLabel === 'timeout' ? 'badge-warning' :
+            l.cmdStatusLabel === 'pending' ? 'badge-warning' :
+            l.cmdStatusLabel === 'sent' || l.cmdStatusLabel === 'ack' ? 'badge-info' : 'badge-muted';
+          var targetHtml = '<div>' + escHtml(l.targetSummary || '--') + '</div>';
+          if (l.pointId || l.gatewayName) {
+            var fallbackLine = [];
+            if (l.pointId && l.pointId !== l.targetSummary) fallbackLine.push('点 ' + l.pointId);
+            if (l.nodeId) fallbackLine.push('采集执行器 ' + l.nodeId);
+            if (l.gatewayName) fallbackLine.push(l.gatewayName);
+            if (l.frequency) fallbackLine.push('频点 ' + l.frequency);
+            if (l.devid) fallbackLine.push('DevID ' + l.devid);
+            if (fallbackLine.length) {
+              targetHtml += '<div style="font-size:11px;color:var(--color-text-muted);margin-top:2px">' + escHtml(fallbackLine.join(' · ')) + '</div>';
+            }
+          }
+          var resultParts = [];
+          if (l.gatewayResponse) resultParts.push('响应：' + l.gatewayResponse);
+          if (l.errorMessage) resultParts.push('错误：' + l.errorMessage);
+          if (!resultParts.length && l.result) resultParts.push(l.result);
+          var timeHtml = '<div style="white-space:nowrap">' + formatFullTime(l.opTime) + '</div>';
+          var timeParts = [];
+          if (l.sentAt) timeParts.push('下发 ' + formatFullTime(l.sentAt));
+          if (l.finishedAt) timeParts.push('完成 ' + formatFullTime(l.finishedAt));
+          if (timeParts.length) {
+            timeHtml += '<div style="font-size:11px;color:var(--color-text-muted);margin-top:2px">' + escHtml(timeParts.join(' · ')) + '</div>';
+          }
+          return '<tr>' +
+            '<td style="font-family:monospace;font-size:12px">' + escHtml(l.opId || '--') + '</td>' +
+            '<td><span class="badge badge-muted">' + escHtml(l.sourceLabel || '--') + '</span></td>' +
+            '<td class="log-target-cell">' + targetHtml + '</td>' +
+            '<td>' + escHtml(l.bindUserName || '--') + '</td>' +
+            '<td>' + escHtml(l.funcName || '--') + '</td>' +
+            '<td>' + escHtml(l.opType || '--') + '</td>' +
+            '<td><code class="code-pill">' + escHtml(formatHexDisplay(l.commandHex) || '--') + '</code></td>' +
+            '<td><span class="badge ' + statusClass + '">' + escHtml(l.cmdStatusLabel || '--') + '</span></td>' +
+            '<td class="log-result-cell">' + escHtml(resultParts.join('；') || '--') + '</td>' +
+            '<td>' + timeHtml + '</td>' +
+          '</tr>';
+        }).join('');
+
+        var countEl = document.getElementById('control-log-count');
+        if (countEl) countEl.textContent = '共 ' + pg.total + ' 条';
+        var pagEl = document.getElementById('control-log-pagination');
+        if (pagEl) {
+          pagEl.innerHTML = renderPaginationBar(controlLogFilter, pg.totalPages, 'controlLogGoPage');
+        }
+      }
+
+      window.controlLogGoPage = function (p) {
+        controlLogFilter.page = p;
+        renderFiltered();
+      };
 
       var html = '<div class="table-section">' +
         '<div class="table-header">' +
           '<h3>控制日志</h3>' +
-          '<div class="table-header-right">' +
-            '<input class="table-search" id="log-search" type="text" placeholder="搜索操作人/设备/Hex...">' +
-            '<span class="table-count">共 ' + toText(logs.length) + ' 条</span>' +
-          '</div>' +
+          '<span class="table-count" id="control-log-count">共 ' + toText(allLogs.length) + ' 条</span>' +
         '</div>' +
+        renderFilterBar(controlLogFilter, 'control-log-search', '搜索命令 ID / 设备网关 / 功能点 / Hex', 'resetControlLogFilters') +
         '<div class="table-wrap"><table>' +
           '<thead><tr><th>ID</th><th>来源</th><th>目标功能点 / 设备网关</th><th>操作人</th><th>功能</th><th>操作类型</th><th>command_hex</th><th>命令状态</th><th>结果</th><th>时间</th></tr></thead>' +
-          '<tbody id="log-tbody">' +
-            logs.map(function (l) {
-              var statusClass = l.cmdStatusLabel === '成功' || l.cmdStatusLabel === '已完成' || l.cmdStatusLabel === 'succeeded' ? 'badge-success' :
-                l.cmdStatusLabel === '失败' || l.cmdStatusLabel === 'failed' ? 'badge-danger' :
-                l.cmdStatusLabel === '超时' || l.cmdStatusLabel === 'timeout' ? 'badge-warning' :
-                l.cmdStatusLabel === 'pending' ? 'badge-warning' :
-                l.cmdStatusLabel === 'sent' || l.cmdStatusLabel === 'ack' ? 'badge-info' : 'badge-muted';
-              var targetHtml = '<div>' + escHtml(l.targetSummary || '--') + '</div>';
-              if (l.pointId || l.gatewayName) {
-                var fallbackLine = [];
-                if (l.pointId && l.pointId !== l.targetSummary) fallbackLine.push('点 ' + l.pointId);
-                if (l.nodeId) fallbackLine.push('采集执行器 ' + l.nodeId);
-                if (l.gatewayName) fallbackLine.push(l.gatewayName);
-                if (l.frequency) fallbackLine.push('频点 ' + l.frequency);
-                if (l.devid) fallbackLine.push('DevID ' + l.devid);
-                if (fallbackLine.length) {
-                  targetHtml += '<div style="font-size:11px;color:var(--color-text-muted);margin-top:2px">' + escHtml(fallbackLine.join(' · ')) + '</div>';
-                }
-              }
-              var resultParts = [];
-              if (l.gatewayResponse) resultParts.push('响应：' + l.gatewayResponse);
-              if (l.errorMessage) resultParts.push('错误：' + l.errorMessage);
-              if (!resultParts.length && l.result) resultParts.push(l.result);
-              var timeHtml = '<div style="white-space:nowrap">' + formatFullTime(l.opTime) + '</div>';
-              var timeParts = [];
-              if (l.sentAt) timeParts.push('下发 ' + formatFullTime(l.sentAt));
-              if (l.finishedAt) timeParts.push('完成 ' + formatFullTime(l.finishedAt));
-              if (timeParts.length) {
-                timeHtml += '<div style="font-size:11px;color:var(--color-text-muted);margin-top:2px">' + escHtml(timeParts.join(' · ')) + '</div>';
-              }
-              return '<tr>' +
-                '<td style="font-family:monospace;font-size:12px">' + escHtml(l.opId || '--') + '</td>' +
-                '<td><span class="badge badge-muted">' + escHtml(l.sourceLabel || '--') + '</span></td>' +
-                '<td class="log-target-cell">' + targetHtml + '</td>' +
-                '<td>' + escHtml(l.bindUserName || '--') + '</td>' +
-                '<td>' + escHtml(l.funcName || '--') + '</td>' +
-                '<td>' + escHtml(l.opType || '--') + '</td>' +
-                '<td><code class="code-pill">' + escHtml(formatHexDisplay(l.commandHex) || '--') + '</code></td>' +
-                '<td><span class="badge ' + statusClass + '">' + escHtml(l.cmdStatusLabel || '--') + '</span></td>' +
-                '<td class="log-result-cell">' + escHtml(resultParts.join('；') || '--') + '</td>' +
-                '<td>' + timeHtml + '</td>' +
-              '</tr>';
-            }).join('') +
-          '</tbody>' +
+          '<tbody id="log-tbody"></tbody>' +
         '</table></div>' +
+        '<div id="control-log-pagination"></div>' +
       '</div>';
 
       container.innerHTML = html;
-
-      $('#log-search').oninput = function () {
-        var q = this.value.toLowerCase();
-        $$('#log-tbody tr').forEach(function (tr) {
-          tr.style.display = tr.textContent.toLowerCase().includes(q) ? '' : 'none';
-        });
-      };
+      renderFiltered();
+      bindFilterBarEvents(controlLogFilter, 'control-log-search', renderFiltered, 'resetControlLogFilters');
     } catch (e) {
       container.innerHTML = '<div class="error-state"><p>加载失败</p><button class="btn btn-outline btn-sm" onclick="renderPage()">重试</button></div>';
     }
   }
 
   // ---------- 原始报文排查 ----------
-  function formatDateTimeLocal(date) {
-    function pad(n) { return String(n).padStart(2, '0'); }
-    return date.getFullYear() + '-' +
-      pad(date.getMonth() + 1) + '-' +
-      pad(date.getDate()) + 'T' +
-      pad(date.getHours()) + ':' +
-      pad(date.getMinutes());
-  }
 
   function createDefaultPayloadState() {
-    var end = new Date();
-    var start = new Date(end.getTime() - 24 * 60 * 60 * 1000);
     return {
       page: 1,
       size: 20,
+      range: '24h',
       event_type: null,
       parse_status: null,
-      start: formatDateTimeLocal(start),
-      end: formatDateTimeLocal(end),
+      start: null,
+      end: null,
       keyword: null
     };
   }
 
-  function payloadDateTimeQueryValue(value) {
-    var text = toText(value).trim();
-    if (!text) return null;
-    text = text.replace('T', ' ');
-    if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(text)) {
-      text += ':00';
-    }
-    return text;
+  function payloadResetFilters() {
+    payloadState = createDefaultPayloadState();
+    renderPage();
   }
 
   var payloadState = createDefaultPayloadState();
 
   async function renderPayloadEvents(container) {
     container.innerHTML = '<div class="loading-state"><div class="loading-spinner"></div><p>加载原始报文...</p></div>';
+
+    var tr = computeTimeRange(payloadState.range);
+    payloadState.start = tr.start ? formatFilterTime(tr.start) : null;
+    payloadState.end = null;
 
     var params = { page: payloadState.page, size: payloadState.size };
     var useServerEventTypeFilter = payloadState.event_type ? payloadFilterSupportsServer(payloadState.event_type) : false;
@@ -2977,18 +3213,14 @@
           '<h3>原始报文</h3>' +
           '<span class="table-count">共 ' + toText(total) + ' 条</span>' +
         '</div>' +
-        '<div class="filter-bar" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">' +
+        renderFilterBar(payloadState, 'pe-filter-keyword', '搜索设备网关 / 消息 ID / Hex', 'payloadResetFilters') +
+        '<div class="filter-bar" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding-top:0">' +
           '<select class="form-input" id="pe-filter-type" style="width:120px;height:32px;font-size:13px">' +
             eventTypeOptions.map(function (o) { return '<option value="' + o.val + '"' + (selectedET === o.val ? ' selected' : '') + '>' + o.label + '</option>'; }).join('') +
           '</select>' +
           '<select class="form-input" id="pe-filter-status" style="width:120px;height:32px;font-size:13px">' +
             parseStatusOptions.map(function (o) { return '<option value="' + o.val + '"' + (selectedPS === o.val ? ' selected' : '') + '>' + o.label + '</option>'; }).join('') +
           '</select>' +
-          '<input type="datetime-local" class="form-input" id="pe-filter-start" style="width:180px;height:32px;font-size:13px" value="' + (payloadState.start || '') + '" placeholder="开始时间">' +
-          '<input type="datetime-local" class="form-input" id="pe-filter-end" style="width:180px;height:32px;font-size:13px" value="' + (payloadState.end || '') + '" placeholder="结束时间">' +
-          '<input type="text" class="table-search" id="pe-filter-keyword" style="width:200px;height:32px" value="' + escHtml(payloadState.keyword || '') + '" placeholder="搜索设备网关/消息ID/Hex...">' +
-          '<button class="btn btn-outline btn-sm" onclick="payloadResetFilters()">重置</button>' +
-          '<button class="btn btn-outline btn-sm" onclick="payloadClearTimeRange()">清空时间</button>' +
         '</div>' +
         '<div class="table-wrap"><table>' +
           '<thead><tr>' +
@@ -3027,11 +3259,8 @@
               }).join('')) +
           '</tbody>' +
         '</table></div>' +
-        '<div style="display:flex;align-items:center;justify-content:center;gap:8px;padding:12px;border-top:1px solid var(--color-border)">' +
-          '<button class="btn btn-outline btn-sm" ' + (page <= 1 ? 'disabled' : '') + ' onclick="payloadGoPage(' + (page - 1) + ')">上一页</button>' +
-          '<span style="font-size:13px;color:var(--color-text-muted)">第 ' + page + '/' + totalPages + ' 页</span>' +
-          '<button class="btn btn-outline btn-sm" ' + (page >= totalPages ? 'disabled' : '') + ' onclick="payloadGoPage(' + (page + 1) + ')">下一页</button>' +
-          '<span style="font-size:12px;color:var(--color-text-muted);margin-left:8px">每页 ' + size + ' 条</span>' +
+        '<div id="payload-pagination">' +
+          renderPaginationBar(payloadState, totalPages, 'payloadGoPage') +
         '</div>' +
       '</div>';
 
@@ -3040,35 +3269,12 @@
       // 绑定筛选事件
       $('#pe-filter-type').onchange = function () { var v = this.value; payloadState.event_type = v === '' ? null : v; payloadState.page = 1; renderPage(); };
       $('#pe-filter-status').onchange = function () { var v = this.value; payloadState.parse_status = v === '' ? null : parseInt(v); payloadState.page = 1; renderPage(); };
-      $('#pe-filter-start').onchange = function () { payloadState.start = this.value || null; payloadState.page = 1; renderPage(); };
-      $('#pe-filter-end').onchange = function () { payloadState.end = this.value || null; payloadState.page = 1; renderPage(); };
 
-      var searchTimer = null;
-      $('#pe-filter-keyword').oninput = function () {
-        clearTimeout(searchTimer);
-        var val = this.value;
-        searchTimer = setTimeout(function () {
-          payloadState.keyword = val || null;
-          payloadState.page = 1;
-          renderPage();
-        }, 400);
-      };
+      bindFilterBarEvents(payloadState, 'pe-filter-keyword', function () { renderPage(); }, 'payloadResetFilters');
 
     } catch (e) {
       container.innerHTML = '<div class="error-state"><p>加载失败</p><button class="btn btn-outline btn-sm" onclick="renderPage()">重试</button></div>';
     }
-  }
-
-  function payloadResetFilters() {
-    payloadState = createDefaultPayloadState();
-    renderPage();
-  }
-
-  function payloadClearTimeRange() {
-    payloadState.start = null;
-    payloadState.end = null;
-    payloadState.page = 1;
-    renderPage();
   }
 
   function payloadGoPage(p) {
@@ -3293,8 +3499,9 @@
   window.doBindFromAddModal = doBindFromAddModal;
   window.switchDashboardRange = switchDashboardRange;
   window.payloadResetFilters = payloadResetFilters;
-  window.payloadClearTimeRange = payloadClearTimeRange;
   window.payloadGoPage = payloadGoPage;
+  window.resetOperationLogFilters = resetOperationLogFilters;
+  window.resetControlLogFilters = resetControlLogFilters;
   window.payloadCopySnapshot = payloadCopySnapshot;
   window.payloadViewDetail = payloadViewDetail;
   window.openPointEditModal = openPointEditModal;

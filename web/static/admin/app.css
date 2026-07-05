@@ -585,8 +585,53 @@ tbody tr:last-child td { border-bottom: none; }
 
 /* ---------- 筛选栏 ---------- */
 .filter-bar {
-  padding: 0 18px 14px;
+  padding: 12px 18px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--color-border);
 }
+.filter-time-shortcuts {
+  display: flex;
+  gap: 4px;
+}
+.filter-time-label {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+
+/* ---------- 分页 ---------- */
+.pagination-bar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px;
+  border-top: 1px solid var(--color-border);
+  font-size: 13px;
+  color: var(--color-text-muted);
+}
+
+/* ---------- Dashboard 图表 ---------- */
+.chart-section { margin-top: 20px; }
+.chart-section h3 { font-size: 15px; font-weight: 600; margin-bottom: 4px; }
+.chart-section-note { font-size: 11px; color: var(--color-text-muted); margin-bottom: 14px; }
+.chart-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; }
+.chart-card { background: var(--color-surface); border-radius: var(--radius-md); box-shadow: var(--shadow-sm); padding: 16px 18px; }
+.chart-card h4 { font-size: 13px; font-weight: 600; color: var(--color-text-secondary); margin-bottom: 12px; }
+.bar-chart { display: flex; flex-direction: column; gap: 8px; }
+.bar-row { display: flex; align-items: center; gap: 8px; }
+.bar-label { width: 60px; font-size: 12px; color: var(--color-text-secondary); text-align: right; flex-shrink: 0; }
+.bar-track { flex: 1; height: 16px; background: var(--color-bg); border-radius: 4px; overflow: hidden; }
+.bar-fill { height: 100%; border-radius: 4px; transition: width 0.3s; min-width: 2px; }
+.bar-value { width: 40px; font-size: 12px; color: var(--color-text); font-weight: 500; text-align: left; flex-shrink: 0; }
+.bar-fill-success { background: var(--color-success); }
+.bar-fill-danger { background: var(--color-danger); }
+.bar-fill-warning { background: var(--color-warning); }
+.bar-fill-info { background: var(--color-info); }
+.bar-fill-muted { background: var(--color-offline); }
 
 /* ---------- 空状态 / 加载 / 错误 ---------- */
 .empty-state {

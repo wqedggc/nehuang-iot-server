@@ -481,6 +481,17 @@ type OperationRecord struct {
 	CreatedAt        time.Time `json:"created_at"`
 }
 
+// OperationLogQuery is query args for admin operation logs list.
+type OperationLogQuery struct {
+	Page      int
+	Size      int
+	Paginated bool
+	Start     *string `json:"start"`
+	End       *string `json:"end"`
+	Keyword   *string `json:"keyword"`
+	OpType    *uint8  `json:"op_type"`
+}
+
 // ─── 控制命令日志（简化视图，用于管理端控制日志列表） ───
 
 // ControlLogSummary 控制日志列表摘要，供管理端控制日志页使用。
@@ -510,6 +521,18 @@ type ControlLogSummary struct {
 	OpTime          time.Time  `json:"op_time"`
 	SentAt          *time.Time `json:"sent_at_ms,omitempty"`
 	FinishedAt      *time.Time `json:"finished_at_ms,omitempty"`
+}
+
+// ControlLogQuery is query args for admin control logs list.
+type ControlLogQuery struct {
+	Page      int
+	Size      int
+	Paginated bool
+	Start     *string `json:"start"`
+	End       *string `json:"end"`
+	Keyword   *string `json:"keyword"`
+	CmdStatus *uint8  `json:"cmd_status"`
+	Source    *uint8  `json:"source"`
 }
 
 // ─── C 端设备视图（聚合绑定+功能点） ───

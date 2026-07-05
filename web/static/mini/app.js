@@ -373,6 +373,10 @@
   }
 
   // ---------- 设备详情 ----------
+  var deviceDetailData = null;
+  var deviceDetailPointId = null;
+  var deviceDetailActiveTab = 'info';
+
   async function renderDeviceDetail(container, id) {
     if (!id) { navigate('devices'); return; }
     container.innerHTML = '<div class="loading-state"><div class="loading-spinner"></div><p>加载设备详情...</p></div>';
@@ -385,11 +389,64 @@
       }
       var d = res.data;
       var pointID = devicePointID(d) || String(id);
+      deviceDetailData = d;
+      deviceDetailPointId = pointID;
+      deviceDetailActiveTab = 'info';
 
-      var controlHtml = '';
+      var status = valueStatusClass(d.value_status);
+      var statusClass = 'status-' + status;
+      var statusTextClass = 'status-text-' + status;
+
+      var html = '<div class="tab-bar">' +
+        '<button class="tab-btn active" data-tab="info">基本信息</button>' +
+        '<button class="tab-btn" data-tab="realtime">实时数据</button>' +
+        '<button class="tab-btn" data-tab="history">数据曲线</button>' +
+        '<button class="tab-btn" data-tab="control">控制</button>' +
+      '</div>';
+
+      // Tab: 基本信息
+      html += '<div class="tab-panel active" id="tab-info">' +
+        '<div class="detail-section">' +
+          '<h3>基本信息</h3>' +
+          '<div class="detail-grid">' +
+            '<div class="detail-item"><div class="detail-item-label">设备名称</div><div class="detail-item-value">' + escHtml(d.func_name) + '</div></div>' +
+            '<div class="detail-item"><div class="detail-item-label">设备网关</div><div class="detail-item-value">' + escHtml(d.gateway_name || '--') + '</div></div>' +
+            '<div class="detail-item"><div class="detail-item-label">采集执行器</div><div class="detail-item-value">' + escHtml(d.devid || '--') + '</div></div>' +
+            '<div class="detail-item"><div class="detail-item-label">棚号</div><div class="detail-item-value">' + escHtml(d.shed_no || '--') + '</div></div>' +
+            '<div class="detail-item"><div class="detail-item-label">频点</div><div class="detail-item-value">' + escHtml(d.freq) + '</div></div>' +
+            '<div class="detail-item"><div class="detail-item-label">在线状态</div><div class="detail-item-value"><span class="device-card-status ' + statusClass + '"><span class="status-dot"></span><span class="' + statusTextClass + '">' + escHtml(d.value_status_label || '--') + '</span></span></div></div>' +
+            '<div class="detail-item"><div class="detail-item-label">最近更新</div><div class="detail-item-value">' + formatFullTime(d.updated_at) + '</div></div>' +
+            '<div class="detail-item"><div class="detail-item-label">运行模式</div><div class="detail-item-value">' + escHtml(d.run_mode_label) + '</div></div>' +
+          '</div>' +
+        '</div>' +
+      '</div>';
+
+      // Tab: 实时数据
+      var rangeHint = '';
+      if (d.best_min != null && d.best_max != null) {
+        rangeHint = '适宜范围：' + d.best_min + ' ~ ' + d.best_max + ' ' + escHtml(d.unit);
+      }
+      html += '<div class="tab-panel" id="tab-realtime">' +
+        '<div class="detail-section">' +
+          '<h3>实时数据</h3>' +
+          '<div class="detail-real-value">' +
+            '<span class="big-value">' + (d.real_value != null ? d.real_value : '--') + '</span>' +
+            '<span class="big-unit">' + escHtml(d.unit) + '</span>' +
+            '<p class="range-hint">' + rangeHint + '</p>' +
+            '<p style="margin-top:4px"><span class="device-card-status ' + statusClass + '"><span class="status-dot"></span><span class="' + statusTextClass + '">' + escHtml(d.value_status_label || '--') + '</span></span></p>' +
+          '</div>' +
+        '</div>' +
+      '</div>';
+
+      // Tab: 历史曲线 (placeholder, loaded on tab switch)
+      html += '<div class="tab-panel" id="tab-history">' +
+        '<div class="loading-state"><div class="loading-spinner"></div><p>点击标签加载历史数据...</p></div>' +
+      '</div>';
+
+      // Tab: 控制
+      html += '<div class="tab-panel" id="tab-control">';
       if (d.func === 4 || d.func === 5 || d.func === 6) {
-        // 水泵、风机、继电器：开启/关闭
-        controlHtml = '<div class="detail-section">' +
+        html += '<div class="detail-section">' +
           '<h3>设备控制</h3>' +
           '<div class="detail-controls">' +
             '<button class="btn btn-primary" onclick="doControl(\'' + pointID + '\',\'start\')">开启</button>' +
@@ -398,95 +455,63 @@
           '</div>' +
         '</div>';
       } else if (d.func === 1 || d.func === 2) {
-        // 温度/墒情：显示状态即可，无控制
-        controlHtml = '<div class="detail-section">' +
+        html += '<div class="detail-section">' +
           '<h3>设备状态</h3>' +
           '<p style="font-size:13px;color:var(--color-text-muted)">' +
             '运行模式：<strong>' + escHtml(d.run_mode_label) + '</strong> · 采集周期：' + (d.poll_interval || '--') + 's' +
           '</p>' +
         '</div>';
       } else {
-        // 限位等：只读
-        controlHtml = '<div class="detail-section">' +
+        html += '<div class="detail-section">' +
           '<h3>设备状态</h3>' +
           '<p style="font-size:13px;color:var(--color-text-muted)">当前值：' + (d.real_value != null ? d.real_value : '--') + '</p>' +
         '</div>';
       }
-
-      var rangeHint = '';
-      if (d.best_min != null && d.best_max != null) {
-        rangeHint = '适宜范围：' + d.best_min + ' ~ ' + d.best_max + ' ' + escHtml(d.unit);
-      }
-
-      var status = valueStatusClass(d.value_status);
-      var statusClass = 'status-' + status;
-      var statusTextClass = 'status-text-' + status;
-
-      var html = '<div class="detail-section">' +
-        '<h3>实时数据</h3>' +
-        '<div class="detail-real-value">' +
-          '<span class="big-value">' + (d.real_value != null ? d.real_value : '--') + '</span>' +
-          '<span class="big-unit">' + escHtml(d.unit) + '</span>' +
-          '<p class="range-hint">' + rangeHint + '</p>' +
-          '<p style="margin-top:4px"><span class="device-card-status ' + statusClass + '"><span class="status-dot"></span><span class="' + statusTextClass + '">' + escHtml(d.value_status_label || '--') + '</span></span></p>' +
-        '</div>' +
-      '</div>' +
-
-      '<div class="detail-section">' +
-        '<h3>基本信息</h3>' +
-        '<div class="detail-grid">' +
-          '<div class="detail-item"><div class="detail-item-label">棚号</div><div class="detail-item-value">' + escHtml(d.shed_no) + '</div></div>' +
-          '<div class="detail-item"><div class="detail-item-label">设备 ID</div><div class="detail-item-value">' + escHtml(d.devid || '--') + '</div></div>' +
-          '<div class="detail-item"><div class="detail-item-label">频点</div><div class="detail-item-value">' + d.freq + '</div></div>' +
-          '<div class="detail-item"><div class="detail-item-label">Point ID</div><div class="detail-item-value">' + escHtml(pointID) + '</div></div>' +
-          '<div class="detail-item"><div class="detail-item-label">功能</div><div class="detail-item-value">' + escHtml(d.func_name) + '</div></div>' +
-          '<div class="detail-item"><div class="detail-item-label">运行模式</div><div class="detail-item-value">' + escHtml(d.run_mode_label) + '</div></div>' +
-        '</div>' +
-      '</div>' +
-
-      controlHtml +
-
-      '<div class="detail-section">' +
-        '<h3>最近更新</h3>' +
-        '<p style="font-size:13px;color:var(--color-text-secondary)">' + formatFullTime(d.updated_at) + '</p>' +
-      '</div>' +
-
-      '<div style="margin-top:8px">' +
-        '<button class="btn btn-outline btn-block" onclick="navigate(\'history/' + pointID + '\')">查看历史曲线</button>' +
-      '</div>';
+      html += '</div>';
 
       container.innerHTML = html;
+
+      // Bind tab clicks
+      $$('.tab-btn').forEach(function (btn) {
+        btn.onclick = function () {
+          var tab = this.dataset.tab;
+          switchTab(tab);
+        };
+      });
     } catch (e) {
       container.innerHTML = '<div class="error-state"><p>加载失败</p><button class="btn btn-outline btn-sm" onclick="renderPage()">重试</button></div>';
     }
   }
 
-  async function doControl(id, action) {
-    var actionLabels = { start: '开启', stop: '停止', close: '关闭' };
-    showToast('正在' + (actionLabels[action] || action) + '...', 'info');
-    try {
-      var res = await NHApi.controlDevice(id, action);
-      if (res.data && (res.data.status === 'pending' || res.data.status === 'sent' || res.data.status === 'ack' || res.data.status === 'succeeded' || res.data.status === 'created')) {
-        showToast(res.data.message || '控制命令已创建，等待设备执行', res.data.status === 'succeeded' ? 'success' : 'info');
-        // 刷新详情
-        setTimeout(function () { renderPage(); }, 500);
-      } else {
-        showToast(res.data ? res.data.message : '操作失败', 'error');
+  function switchTab(tab) {
+    deviceDetailActiveTab = tab;
+    // Update tab buttons
+    $$('.tab-btn').forEach(function (btn) {
+      btn.classList.toggle('active', btn.dataset.tab === tab);
+    });
+    // Update tab panels
+    $$('.tab-panel').forEach(function (panel) {
+      panel.classList.toggle('active', panel.id === 'tab-' + tab);
+    });
+
+    // Load history on demand
+    if (tab === 'history' && deviceDetailPointId) {
+      var historyPanel = document.getElementById('tab-history');
+      if (historyPanel && historyPanel.querySelector('.loading-state')) {
+        loadHistoryInTab(deviceDetailPointId);
       }
-    } catch (e) {
-      showToast('操作异常，请重试', 'error');
     }
   }
 
-  // ---------- 历史曲线 ----------
-  async function renderHistory(container, id) {
-    if (!id) { navigate('devices'); return; }
-    container.innerHTML = '<div class="loading-state"><div class="loading-spinner"></div><p>加载历史数据...</p></div>';
+  async function loadHistoryInTab(pointID) {
+    var panel = document.getElementById('tab-history');
+    if (!panel) return;
+    panel.innerHTML = '<div class="loading-state"><div class="loading-spinner"></div><p>加载历史数据...</p></div>';
 
     try {
-      var res = await NHApi.getDeviceHistory(id, '1d');
+      var res = await NHApi.getDeviceHistory(pointID, '1d');
       if (!res.data) {
-        container.innerHTML = '<div class="error-state"><p>设备不存在</p><button class="btn btn-outline btn-sm" onclick="navigate(\'device/' + id + '\')">返回详情</button></div>';
+        panel.innerHTML = '<div class="error-state"><p>暂无数据</p></div>';
         return;
       }
 
@@ -512,35 +537,60 @@
         rangeText +
       '</p>';
 
-      container.innerHTML = html;
+      panel.innerHTML = html;
 
-      // 绑定 range tab 点击
-      $$('.range-tab').forEach(function (tab) {
+      // Bind range tabs
+      panel.querySelectorAll('.range-tab').forEach(function (tab) {
         tab.onclick = function () {
           var range = this.dataset.range;
           if (range === activeRange) return;
           activeRange = range;
-          $$('.range-tab').forEach(function (t) { t.classList.remove('active'); });
+          panel.querySelectorAll('.range-tab').forEach(function (t) { t.classList.remove('active'); });
           this.classList.add('active');
-          loadHistoryData(id, range, d);
+          loadHistoryDataInTab(pointID, range, d);
         };
       });
 
       drawChart(points, d);
     } catch (e) {
-      container.innerHTML = '<div class="error-state"><p>加载失败</p><button class="btn btn-outline btn-sm" onclick="renderPage()">重试</button></div>';
+      panel.innerHTML = '<div class="error-state"><p>加载失败</p><button class="btn btn-outline btn-sm" onclick="switchTab(\'history\')">重试</button></div>';
     }
   }
 
-  async function loadHistoryData(id, range, info) {
+  async function loadHistoryDataInTab(pointID, range, info) {
     try {
-      var res = await NHApi.getDeviceHistory(id, range);
+      var res = await NHApi.getDeviceHistory(pointID, range);
       if (res.data && res.data.points) {
         drawChart(res.data.points, info);
       }
     } catch (e) {
       showToast('加载历史数据失败', 'error');
     }
+  }
+
+  async function doControl(id, action) {
+    var actionLabels = { start: '开启', stop: '停止', close: '关闭' };
+    showToast('正在' + (actionLabels[action] || action) + '...', 'info');
+    try {
+      var res = await NHApi.controlDevice(id, action);
+      if (res.data && (res.data.status === 'pending' || res.data.status === 'sent' || res.data.status === 'ack' || res.data.status === 'succeeded' || res.data.status === 'created')) {
+        showToast(res.data.message || '控制命令已创建，等待设备执行', res.data.status === 'succeeded' ? 'success' : 'info');
+        // 刷新详情
+        setTimeout(function () { renderPage(); }, 500);
+      } else {
+        showToast(res.data ? res.data.message : '操作失败', 'error');
+      }
+    } catch (e) {
+      showToast('操作异常，请重试', 'error');
+    }
+  }
+
+  // ---------- 历史曲线（独立页面路由保留，重定向到设备详情页的 history tab） ----------
+  async function renderHistory(container, id) {
+    // Redirect to device detail with history tab active
+    if (!id) { navigate('devices'); return; }
+    deviceDetailActiveTab = 'history';
+    navigate('device/' + id);
   }
 
   function drawChart(points, info) {
@@ -957,5 +1007,6 @@
   window.renderPage = renderPage;
   window.doControl = doControl;
   window.doLogout = doLogout;
+  window.switchTab = switchTab;
 
 })();

@@ -43,6 +43,10 @@ func ClassifyPayload(payload []byte) Message {
 			msg.GatewayName = msg.ASCII
 			return msg
 		}
+		if strings.HasPrefix(upper, "NH_TELEMETRY|") {
+			msg.Kind = MessageWorkData
+			return msg
+		}
 		switch upper {
 		case "HB", "PING", "HEART", "HEARTBEAT", "KEEPALIVE", "KEEPALIVE MESSAGE":
 			msg.Kind = MessageHeartbeat
