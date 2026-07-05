@@ -30,7 +30,7 @@ go run ./cmd/server
 | `go build ./cmd/gateway-adapter-replay` | 编译 raw frame 回放工具 |
 | `go build ./cmd/hash_password` | 编译部署脚本使用的密码哈希工具 |
 | `bash -n deploy.sh` | 检查部署脚本语法 |
-| `./deploy.sh` | 加载 `.env`、执行迁移、创建管理员、编译并启动服务 |
+| `bash deploy.sh` | 加载 `.env`、执行迁移、创建管理员、编译并启动 HTTP 服务 |
 
 ## Architecture
 
@@ -40,6 +40,7 @@ go run ./cmd/server
 - Auth：Admin/Mini 使用不同 JWT audience；Adapter 使用 `X-Adapter-Token`。
 - Device model：`cloud_gateways -> collector_nodes -> device_points` 是主模型，`device_realtime_maps` 只做兼容投影。
 - Gateway Adapter：`cmd/gateway-adapter` 独立接收硬件 TCP，先落 raw frame journal，再转发可识别事件。
+- Deploy：腾讯云当前是双进程部署，`deploy.sh` 管 HTTP 服务；`gateway-adapter` 独立构建和启动。完整流程见 `docs/deploy_guide.md`。
 
 ## Docs
 
