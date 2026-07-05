@@ -12,6 +12,11 @@ func TestListControlLogsQueryUsesControlCommandsAndQualifiesGatewayID(t *testing
 	if !strings.Contains(listControlLogsQuery, "cc.gateway_id") {
 		t.Fatalf("control logs query must qualify gateway_id from control_commands")
 	}
+	for _, field := range []string{"cc.command_source", "cc.sent_at_ms", "cc.finished_at_ms", "cc.gateway_response", "cc.error_message"} {
+		if !strings.Contains(listControlLogsQuery, field) {
+			t.Fatalf("control logs query must expose %s", field)
+		}
+	}
 	if strings.Contains(listControlLogsQuery, " op_id, gateway_id,") {
 		t.Fatalf("control logs query uses ambiguous bare gateway_id")
 	}

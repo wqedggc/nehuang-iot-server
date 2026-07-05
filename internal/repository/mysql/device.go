@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"log"
+	"strconv"
 	"strings"
 	"time"
 
@@ -510,6 +511,137 @@ VALUES
 		return 0, err
 	}
 	return pointID, nil
+}
+
+// SeedGatewayDevicePoints creates or updates one collector node and its test
+// points under a gateway. It is an admin 联调 helper used before the hardware
+// work-data parser can create the same structure from real packets.
+func (r *Repository) SeedGatewayDevicePoints(ctx context.Context, gatewayID uint64, input domain.GatewayDeviceSeedInput) (*domain.GatewayDeviceSeedResult, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	var exists uint64
+	if err := tx.QueryRowContext(ctx, `SELECT gateway_id FROM cloud_gateways WHERE gateway_id = ? FOR UPDATE`, gatewayID).Scan(&exists); err != nil {
+		return nil, err
+	}
+
+	now := time.Now()
+	var nodeID uint64
+	err = tx.QueryRowContext(ctx, `
+SELECT node_id
+FROM collector_nodes
+WHERE gateway_id = ? AND frequency = ? AND device_external_id = ?
+LIMIT 1 FOR UPDATE`, gatewayID, input.Frequency, input.DeviceExternalID).Scan(&nodeID)
+	if err != nil && err != sql.ErrNoRows {
+		return nil, err
+	}
+	if err == sql.ErrNoRows {
+		nodeID = idgen.NextID()
+		_, err = tx.ExecContext(ctx, `
+INSERT INTO collector_nodes
+  (node_id, gateway_id, frequency, device_external_id,
+   node_name, shed_no, base_name, area_name,
+   node_status, online_status, last_report_at_ms,
+   remark, extra, created_at, updated_at)
+VALUES
+  (?, ?, ?, ?, ?, ?, '', '', 1, 0, NULL, ?, ?, ?, ?)`,
+			nodeID, gatewayID, input.Frequency, input.DeviceExternalID,
+			input.NodeName, input.ShedNo, nullableString(emptyToNil(input.Remark)), nullableString(strPtr(`{"source":"admin_seed"}`)),
+			now, now,
+		)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		_, err = tx.ExecContext(ctx, `
+UPDATE collector_nodes
+SET node_name = ?, shed_no = ?, remark = ?, extra = ?, updated_at = ?
+WHERE node_id = ?`,
+			input.NodeName, input.ShedNo, nullableString(emptyToNil(input.Remark)), nullableString(strPtr(`{"source":"admin_seed"}`)),
+			now, nodeID,
+		)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	result := &domain.GatewayDeviceSeedResult{
+		GatewayID: gatewayID,
+		NodeID:    nodeID,
+		PointIDs:  make([]string, 0, len(input.Points)),
+	}
+	for _, p := range input.Points {
+		var pointID uint64
+		err = tx.QueryRowContext(ctx, `
+SELECT point_id
+FROM device_points
+WHERE node_id = ? AND function_type = ? AND channel_no = ?
+LIMIT 1 FOR UPDATE`, nodeID, uint8(p.FunctionType), p.ChannelNo).Scan(&pointID)
+		if err != nil && err != sql.ErrNoRows {
+			return nil, err
+		}
+
+		realTemp := 0.0
+		if p.FunctionType == domain.FuncTypeTemperature && p.RealValue != nil {
+			realTemp = *p.RealValue
+		}
+		pollCmd := emptyToNil(p.PollCmd)
+		remark := emptyToNil(p.Remark)
+		extra := strPtr(`{"source":"admin_seed"}`)
+		if err == sql.ErrNoRows {
+			pointID = idgen.NextID()
+			_, err = tx.ExecContext(ctx, `
+INSERT INTO device_points
+  (point_id, node_id, gateway_id, frequency, device_external_id,
+   function_type, channel_no, point_name, unit,
+   best_min, best_max, real_value, real_temp,
+   value_status, run_mode, controllable_status,
+   rel1_status, rel2_status, operation_state,
+   poll_interval, poll_cmd, point_status, last_report_at_ms,
+   remark, extra, created_at, updated_at)
+VALUES
+  (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?, NULL, ?, ?, ?, ?)`,
+				pointID, nodeID, gatewayID, input.Frequency, input.DeviceExternalID,
+				uint8(p.FunctionType), p.ChannelNo, p.PointName, p.Unit,
+				nullableFloat64(p.BestMin), nullableFloat64(p.BestMax), nullableFloat64(p.RealValue), realTemp,
+				uint8(p.ValueStatus), uint8(p.RunMode), p.ControllableStatus,
+				uint8(domain.OpStateUnknown), p.PollInterval, nullableString(pollCmd), p.PointStatus,
+				nullableString(remark), nullableString(extra), now, now,
+			)
+			if err != nil {
+				return nil, err
+			}
+			result.CreatedPoints++
+		} else {
+			_, err = tx.ExecContext(ctx, `
+UPDATE device_points
+SET point_name = ?, unit = ?, best_min = ?, best_max = ?,
+    real_value = ?, real_temp = ?, value_status = ?,
+    run_mode = ?, controllable_status = ?, operation_state = ?,
+    poll_interval = ?, poll_cmd = ?, point_status = ?,
+    remark = ?, extra = ?, updated_at = ?
+WHERE point_id = ?`,
+				p.PointName, p.Unit, nullableFloat64(p.BestMin), nullableFloat64(p.BestMax),
+				nullableFloat64(p.RealValue), realTemp, uint8(p.ValueStatus),
+				uint8(p.RunMode), p.ControllableStatus, uint8(domain.OpStateUnknown),
+				p.PollInterval, nullableString(pollCmd), p.PointStatus,
+				nullableString(remark), nullableString(extra), now, pointID,
+			)
+			if err != nil {
+				return nil, err
+			}
+			result.UpdatedPoints++
+		}
+		result.PointIDs = append(result.PointIDs, strconv.FormatUint(pointID, 10))
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 // UpdateDevicePointRealtime 更新功能点实时状态。
@@ -1535,14 +1667,18 @@ func (r *Repository) UnbindRelation(ctx context.Context, bindID uint64) error {
 const listControlLogsQuery = `
 SELECT
   cc.command_id, cc.gateway_id, COALESCE(cg.gateway_name, ''),
+  COALESCE(cc.node_id, 0), COALESCE(cc.point_id, 0),
   COALESCE(u.display_name, u.username, '') AS operator_name,
+  COALESCE(cc.requested_by, 0), cc.command_source,
   cc.frequency, cc.device_external_id,
   COALESCE(dp.function_type, 0) AS function_type,
   COALESCE(dp.point_name, '') AS point_name,
   cc.command_type, cc.run_mode, cc.command_status,
   cc.command_hex,
+  COALESCE(cc.gateway_response, '') AS gateway_response,
+  COALESCE(cc.error_message, '') AS error_message,
   COALESCE(cc.gateway_response, cc.error_message, '') AS result,
-  cc.requested_at_ms
+  cc.requested_at_ms, cc.sent_at_ms, cc.finished_at_ms
 FROM control_commands cc
 LEFT JOIN cloud_gateways cg ON cc.gateway_id = cg.gateway_id
 LEFT JOIN users u ON cc.requested_by = u.user_id
@@ -1562,19 +1698,27 @@ func (r *Repository) ListControlLogs(ctx context.Context, limit int) ([]domain.C
 	for rows.Next() {
 		var l domain.ControlLogSummary
 		var commandType uint8
+		var commandSource uint8
 		var functionType uint8
 		var pointName sql.NullString
 		var result sql.NullString
+		var sentAt sql.NullTime
+		var finishedAt sql.NullTime
 		if err := rows.Scan(
 			&l.CommandID, &l.GatewayID, &l.GatewayName,
-			&l.BindUserName, &l.Frequency, &l.DevExternalID,
+			&l.NodeID, &l.PointID,
+			&l.BindUserName, &l.RequestedBy, &commandSource,
+			&l.Frequency, &l.DevExternalID,
 			&functionType, &pointName,
 			&commandType, &l.RunMode, &l.CmdStatus,
-			&l.CommandHex, &result, &l.OpTime,
+			&l.CommandHex, &l.GatewayResponse, &l.ErrorMessage,
+			&result, &l.OpTime, &sentAt, &finishedAt,
 		); err != nil {
 			return nil, err
 		}
 		l.OpID = l.CommandID
+		l.CommandSource = commandSource
+		l.SourceLabel = domain.CommandSource(commandSource).Label()
 		l.FunctionType = functionType
 		if pointName.Valid && pointName.String != "" {
 			l.FunctionName = pointName.String
@@ -1585,6 +1729,12 @@ func (r *Repository) ListControlLogs(ctx context.Context, limit int) ([]domain.C
 		l.CmdStatusLabel = domain.CommandStatus(l.CmdStatus).Label()
 		if result.Valid {
 			l.Result = result.String
+		}
+		if sentAt.Valid {
+			l.SentAt = &sentAt.Time
+		}
+		if finishedAt.Valid {
+			l.FinishedAt = &finishedAt.Time
 		}
 		logs = append(logs, l)
 	}
@@ -1911,6 +2061,18 @@ func nullableFloat64(v *float64) interface{} {
 		return nil
 	}
 	return *v
+}
+
+func strPtr(s string) *string {
+	return &s
+}
+
+func emptyToNil(s string) *string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil
+	}
+	return &s
 }
 
 // scanNullUint64 返回一个可被 Scan 写入的值，Scan 后自动回填到 dest。

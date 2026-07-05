@@ -236,6 +236,43 @@ type DevicePointUpdateInput struct {
 	Remark             *string
 }
 
+// GatewayDeviceSeedInput is an admin-only 联调 helper for creating a collector
+// node and several device points under a registered gateway before the hardware
+// work package parser is finalized.
+type GatewayDeviceSeedInput struct {
+	Frequency        int                           `json:"frequency"`
+	DeviceExternalID string                        `json:"device_external_id"`
+	NodeName         string                        `json:"node_name"`
+	ShedNo           string                        `json:"shed_no"`
+	Remark           string                        `json:"remark"`
+	Points           []GatewayDeviceSeedPointInput `json:"points"`
+}
+
+type GatewayDeviceSeedPointInput struct {
+	FunctionType       FunctionType `json:"function_type"`
+	ChannelNo          int          `json:"channel_no"`
+	PointName          string       `json:"point_name"`
+	Unit               string       `json:"unit"`
+	BestMin            *float64     `json:"best_min"`
+	BestMax            *float64     `json:"best_max"`
+	RealValue          *float64     `json:"real_value"`
+	ValueStatus        ValueStatus  `json:"value_status"`
+	RunMode            RunMode      `json:"run_mode"`
+	ControllableStatus uint8        `json:"controllable_status"`
+	PollInterval       int          `json:"poll_interval"`
+	PollCmd            string       `json:"poll_cmd"`
+	PointStatus        uint8        `json:"point_status"`
+	Remark             string       `json:"remark"`
+}
+
+type GatewayDeviceSeedResult struct {
+	GatewayID     uint64   `json:"gateway_id,string"`
+	NodeID        uint64   `json:"node_id,string"`
+	PointIDs      []string `json:"point_ids"`
+	CreatedPoints int      `json:"created_points"`
+	UpdatedPoints int      `json:"updated_points"`
+}
+
 // FunctionType 功能类型。
 type FunctionType uint8
 
@@ -393,22 +430,31 @@ const (
 
 // ControlLogSummary 控制日志列表摘要，供管理端控制日志页使用。
 type ControlLogSummary struct {
-	CommandID      uint64    `json:"command_id,string,omitempty"`
-	OpID           uint64    `json:"op_id,string"`
-	GatewayID      uint64    `json:"gateway_id,string"`
-	GatewayName    string    `json:"gateway_name"`
-	BindUserName   string    `json:"bind_usr_name"`
-	Frequency      int       `json:"freq"`
-	DevExternalID  string    `json:"devid"`
-	FunctionType   uint8     `json:"func"`
-	FunctionName   string    `json:"func_name"`
-	OpType         string    `json:"op_type"`
-	RunMode        uint8     `json:"run_mode"`
-	CmdStatus      uint8     `json:"cmd_status"`
-	CmdStatusLabel string    `json:"cmd_status_label"`
-	CommandHex     string    `json:"command_hex"`
-	Result         string    `json:"result"`
-	OpTime         time.Time `json:"op_time"`
+	CommandID       uint64     `json:"command_id,string,omitempty"`
+	OpID            uint64     `json:"op_id,string"`
+	GatewayID       uint64     `json:"gateway_id,string"`
+	GatewayName     string     `json:"gateway_name"`
+	NodeID          uint64     `json:"node_id,string,omitempty"`
+	PointID         uint64     `json:"point_id,string,omitempty"`
+	BindUserName    string     `json:"bind_usr_name"`
+	RequestedBy     uint64     `json:"requested_by,string,omitempty"`
+	CommandSource   uint8      `json:"command_source"`
+	SourceLabel     string     `json:"command_source_label"`
+	Frequency       int        `json:"freq"`
+	DevExternalID   string     `json:"devid"`
+	FunctionType    uint8      `json:"func"`
+	FunctionName    string     `json:"func_name"`
+	OpType          string     `json:"op_type"`
+	RunMode         uint8      `json:"run_mode"`
+	CmdStatus       uint8      `json:"cmd_status"`
+	CmdStatusLabel  string     `json:"cmd_status_label"`
+	CommandHex      string     `json:"command_hex"`
+	Result          string     `json:"result"`
+	GatewayResponse string     `json:"gateway_response"`
+	ErrorMessage    string     `json:"error_message"`
+	OpTime          time.Time  `json:"op_time"`
+	SentAt          *time.Time `json:"sent_at_ms,omitempty"`
+	FinishedAt      *time.Time `json:"finished_at_ms,omitempty"`
 }
 
 // ─── C 端设备视图（聚合绑定+功能点） ───

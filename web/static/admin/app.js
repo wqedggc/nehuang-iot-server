@@ -316,10 +316,13 @@
       opId: toText(item.op_id || item.opId || ''),
       gatewayId: toText(item.gateway_id || item.gatewayId || ''),
       gatewayName: toText(item.gateway_name || item.gatewayName || ''),
+      nodeId: toText(item.node_id || item.nodeId || ''),
       pointId: targetPointId,
       pointName: targetPointName,
       targetSummary: targetPointName || targetPointId || gatewaySummary || '--',
       bindUserName: toText(item.bind_usr_name || item.bindUserName || ''),
+      requestedBy: toText(item.requested_by || item.requestedBy || ''),
+      sourceLabel: toText(item.command_source_label || item.commandSourceLabel || item.source_label || ''),
       frequency: toText(item.freq || item.frequency || ''),
       devid: toText(item.devid || item.device_external_id || ''),
       funcName: toText(item.func_name || item.function_name || ''),
@@ -329,7 +332,11 @@
       cmdStatusLabel: statusText || '--',
       commandHex: normalizeHexText(item.command_hex || item.commandHex || ''),
       result: toText(item.result || ''),
-      opTime: item.op_time || item.opTime || ''
+      gatewayResponse: toText(item.gateway_response || item.gatewayResponse || ''),
+      errorMessage: toText(item.error_message || item.errorMessage || ''),
+      opTime: item.op_time || item.opTime || '',
+      sentAt: item.sent_at_ms || item.sentAtMS || item.sent_at || '',
+      finishedAt: item.finished_at_ms || item.finishedAtMS || item.finished_at || ''
     };
   }
 
@@ -1354,6 +1361,7 @@
         '<div class="table-header">' +
           '<h3 id="gateway-detail-title">设备详情</h3>' +
           '<div class="table-header-right">' +
+            '<button class="btn btn-primary btn-sm" onclick="openGatewaySeedModal(window.__adminSelectedGatewayId || \'\')">+ 联调点位</button>' +
             '<input class="table-search" id="gateway-point-search" style="width:240px" type="text" placeholder="搜索采集执行器/功能点...">' +
           '</div>' +
         '</div>' +
@@ -1408,13 +1416,14 @@
         }
         if (!gateway) return;
 
+        window.__adminSelectedGatewayId = gateway.gatewayId || '';
         detailTitle.textContent = (gateway.gatewayName || '未命名网关') + '（功能结构）';
 
         window.__gatewayPagePointCache = {};
         var keyword = (gatewayDetailState.keyword || '').trim().toLowerCase();
         var collectors = gateway.collectors || [];
         if (collectors.length === 0) {
-          detailWrap.innerHTML = '<div class="empty-state"><p>该网关暂无采集执行器与功能点</p><p style="font-size:12px;color:var(--color-text-muted);margin-top:6px">当前只完成设备网关注册；需要工作包解析或点位配置写入后，才会在这里和农户端展示具体设备。</p></div>';
+          detailWrap.innerHTML = '<div class="empty-state"><p>该网关暂无采集执行器与功能点</p><p style="font-size:12px;color:var(--color-text-muted);margin-top:6px">当前只完成设备网关注册；真实工作包解析或联调点位写入后，才会在这里和农户端展示具体设备。</p><button class="btn btn-primary btn-sm" style="margin-top:12px" onclick="openGatewaySeedModal(\'' + escHtml(gateway.gatewayId) + '\')">+ 添加联调点位</button></div>';
           return;
         }
 
@@ -1502,6 +1511,100 @@
       renderGatewayDetail(gatewayDetailState.gatewayId);
     } catch (e) {
       container.innerHTML = '<div class="error-state"><p>加载失败</p><button class="btn btn-outline btn-sm" onclick="renderPage()">重试</button></div>';
+    }
+  }
+
+  function getGatewayItemFromPageData(gatewayId) {
+    var key = toText(gatewayId);
+    var gateways = window.__adminGatewayPageData || [];
+    for (var i = 0; i < gateways.length; i++) {
+      if (toText(gateways[i].gatewayId) === key) return gateways[i];
+    }
+    return null;
+  }
+
+  function openGatewaySeedModal(gatewayId) {
+    gatewayId = toText(gatewayId).trim();
+    var gateway = getGatewayItemFromPageData(gatewayId);
+    if (!gateway) {
+      showToast('请先选择一个设备网关', 'error');
+      return;
+    }
+    var overlay = $('#modal-overlay');
+    overlay.style.display = 'flex';
+    overlay.innerHTML = '<div class="modal" style="max-width:640px">' +
+      '<div class="modal-header">' +
+        '<h3>添加联调点位</h3>' +
+        '<button class="modal-close" onclick="closeModal()">×</button>' +
+      '</div>' +
+      '<div class="modal-body">' +
+        '<div class="info-card control-point-card">' +
+          '<div class="info-grid">' +
+            '<div class="info-item"><label>设备网关</label><span>' + escHtml(gateway.gatewayName || '--') + '</span></div>' +
+            '<div class="info-item"><label>网关ID</label><span style="font-family:monospace;font-size:12px">' + escHtml(gateway.gatewayId || '--') + '</span></div>' +
+          '</div>' +
+        '</div>' +
+        '<div class="form-row">' +
+          '<div class="form-group"><label class="form-label">采样频点</label><input class="form-input" id="seed-frequency" type="number" min="1" step="1" value="1"></div>' +
+          '<div class="form-group"><label class="form-label">DevID</label><input class="form-input" id="seed-device-external-id" type="text" value="1001" placeholder="采集执行器设备ID"></div>' +
+        '</div>' +
+        '<div class="form-row">' +
+          '<div class="form-group"><label class="form-label">棚号</label><input class="form-input" id="seed-shed-no" type="text" value="联调棚"></div>' +
+          '<div class="form-group"><label class="form-label">采集执行器名称</label><input class="form-input" id="seed-node-name" type="text" value="联调采集执行器 1001"></div>' +
+        '</div>' +
+        '<div class="form-group"><label class="form-label">备注</label><input class="form-input" id="seed-remark" type="text" value="后台联调生成"></div>' +
+        '<div class="hint-text">将创建或更新 4 个默认功能点：联调温度、联调墒情、联调水泵、联调风机。真实硬件工作包解析确认后，可由上报链路自动创建或更新。</div>' +
+      '</div>' +
+      '<div class="modal-actions">' +
+        '<button class="btn btn-outline" onclick="closeModal()">取消</button>' +
+        '<button class="btn btn-primary" onclick="submitGatewaySeedPoints(\'' + escHtml(gateway.gatewayId) + '\')">创建联调点位</button>' +
+      '</div>' +
+    '</div>';
+    var devidInput = $('#seed-device-external-id');
+    var nodeNameInput = $('#seed-node-name');
+    if (devidInput && nodeNameInput) {
+      devidInput.oninput = function () {
+        nodeNameInput.value = '联调采集执行器 ' + (this.value || '').trim();
+      };
+    }
+  }
+
+  async function submitGatewaySeedPoints(gatewayId) {
+    var frequency = toNum($('#seed-frequency').value);
+    var deviceExternalId = toText($('#seed-device-external-id').value || '').trim();
+    var nodeName = toText($('#seed-node-name').value || '').trim();
+    var shedNo = toText($('#seed-shed-no').value || '').trim();
+    var remark = toText($('#seed-remark').value || '').trim();
+    if (!frequency || frequency <= 0) {
+      showToast('请输入有效采样频点', 'error');
+      return;
+    }
+    if (!deviceExternalId) {
+      showToast('请输入 DevID', 'error');
+      return;
+    }
+
+    var btn = $('#modal-overlay .modal-actions .btn-primary');
+    if (btn) btn.disabled = true;
+    try {
+      var res = await NHApi.seedGatewayPoints(gatewayId, {
+        frequency: frequency,
+        device_external_id: deviceExternalId,
+        node_name: nodeName,
+        shed_no: shedNo,
+        remark: remark
+      });
+      if (res && res.data) {
+        showToast('联调点位已创建：新增 ' + (res.data.created_points || 0) + '，更新 ' + (res.data.updated_points || 0), 'success');
+        closeModal();
+        renderPage();
+        return;
+      }
+      showToast((res && res.message) || '创建联调点位失败', 'error');
+    } catch (e) {
+      showToast((e && e.message) || '创建联调点位失败', 'error');
+    } finally {
+      if (btn) btn.disabled = false;
     }
   }
 
@@ -2169,7 +2272,7 @@
           '</div>' +
         '</div>' +
         '<div class="table-wrap"><table>' +
-          '<thead><tr><th>ID</th><th>目标功能点 / 设备网关</th><th>操作人</th><th>功能</th><th>操作类型</th><th>command_hex</th><th>命令状态</th><th>结果</th><th>操作时间</th></tr></thead>' +
+          '<thead><tr><th>ID</th><th>来源</th><th>目标功能点 / 设备网关</th><th>操作人</th><th>功能</th><th>操作类型</th><th>command_hex</th><th>命令状态</th><th>结果</th><th>时间</th></tr></thead>' +
           '<tbody id="log-tbody">' +
             logs.map(function (l) {
               var statusClass = l.cmdStatusLabel === '成功' || l.cmdStatusLabel === '已完成' || l.cmdStatusLabel === 'succeeded' ? 'badge-success' :
@@ -2181,6 +2284,7 @@
               if (l.pointId || l.gatewayName) {
                 var fallbackLine = [];
                 if (l.pointId && l.pointId !== l.targetSummary) fallbackLine.push('点 ' + l.pointId);
+                if (l.nodeId) fallbackLine.push('采集执行器 ' + l.nodeId);
                 if (l.gatewayName) fallbackLine.push(l.gatewayName);
                 if (l.frequency) fallbackLine.push('频点 ' + l.frequency);
                 if (l.devid) fallbackLine.push('DevID ' + l.devid);
@@ -2188,16 +2292,28 @@
                   targetHtml += '<div style="font-size:11px;color:var(--color-text-muted);margin-top:2px">' + escHtml(fallbackLine.join(' · ')) + '</div>';
                 }
               }
+              var resultParts = [];
+              if (l.gatewayResponse) resultParts.push('响应：' + l.gatewayResponse);
+              if (l.errorMessage) resultParts.push('错误：' + l.errorMessage);
+              if (!resultParts.length && l.result) resultParts.push(l.result);
+              var timeHtml = '<div style="white-space:nowrap">' + formatFullTime(l.opTime) + '</div>';
+              var timeParts = [];
+              if (l.sentAt) timeParts.push('下发 ' + formatFullTime(l.sentAt));
+              if (l.finishedAt) timeParts.push('完成 ' + formatFullTime(l.finishedAt));
+              if (timeParts.length) {
+                timeHtml += '<div style="font-size:11px;color:var(--color-text-muted);margin-top:2px">' + escHtml(timeParts.join(' · ')) + '</div>';
+              }
               return '<tr>' +
                 '<td style="font-family:monospace;font-size:12px">' + escHtml(l.opId || '--') + '</td>' +
+                '<td><span class="badge badge-muted">' + escHtml(l.sourceLabel || '--') + '</span></td>' +
                 '<td class="log-target-cell">' + targetHtml + '</td>' +
                 '<td>' + escHtml(l.bindUserName || '--') + '</td>' +
                 '<td>' + escHtml(l.funcName || '--') + '</td>' +
                 '<td>' + escHtml(l.opType || '--') + '</td>' +
                 '<td><code class="code-pill">' + escHtml(formatHexDisplay(l.commandHex) || '--') + '</code></td>' +
                 '<td><span class="badge ' + statusClass + '">' + escHtml(l.cmdStatusLabel || '--') + '</span></td>' +
-                '<td class="log-result-cell">' + escHtml(l.result || '--') + '</td>' +
-                '<td style="white-space:nowrap">' + formatFullTime(l.opTime) + '</td>' +
+                '<td class="log-result-cell">' + escHtml(resultParts.join('；') || '--') + '</td>' +
+                '<td>' + timeHtml + '</td>' +
               '</tr>';
             }).join('') +
           '</tbody>' +
@@ -2591,6 +2707,8 @@
   window.payloadViewDetail = payloadViewDetail;
   window.openPointEditModal = openPointEditModal;
   window.openPointControlModal = openPointControlModal;
+  window.openGatewaySeedModal = openGatewaySeedModal;
+  window.submitGatewaySeedPoints = submitGatewaySeedPoints;
   window.savePointConfig = savePointConfig;
   window.sendPointControlCommand = sendPointControlCommand;
 

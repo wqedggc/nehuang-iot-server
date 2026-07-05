@@ -30,6 +30,9 @@ type mockAdminRepo struct {
 	createdBinding                *domain.BindRelation
 	createdControlInput           domain.CreateControlCommandInput
 	createdControlCmd             *domain.ControlCommand
+	seedGatewayID                 uint64
+	seedGatewayInput              domain.GatewayDeviceSeedInput
+	seedGatewayResult             *domain.GatewayDeviceSeedResult
 	gatewayCandidates             []domain.GatewayBindCandidate
 	payloadEventDetail            *domain.PayloadEventDetail
 }
@@ -113,6 +116,14 @@ func (m *mockAdminRepo) UpdateDevicePointConfig(ctx context.Context, pointID uin
 	m.updatedPointID = pointID
 	m.updatedPointInput = input
 	return m.updateDevicePointErr
+}
+func (m *mockAdminRepo) SeedGatewayDevicePoints(ctx context.Context, gatewayID uint64, input domain.GatewayDeviceSeedInput) (*domain.GatewayDeviceSeedResult, error) {
+	m.seedGatewayID = gatewayID
+	m.seedGatewayInput = input
+	if m.seedGatewayResult != nil {
+		return m.seedGatewayResult, nil
+	}
+	return &domain.GatewayDeviceSeedResult{GatewayID: gatewayID, NodeID: 456, PointIDs: []string{"789"}, CreatedPoints: 1}, nil
 }
 func (m *mockAdminRepo) CreateControlCommandForPoint(ctx context.Context, input domain.CreateControlCommandInput) (*domain.ControlCommand, error) {
 	m.createdControlInput = input
@@ -550,6 +561,37 @@ func TestHandleGatewayBindCandidates_ReturnsUnboundGateways(t *testing.T) {
 	}
 	if !contains(rec.Body.String(), `"gateway_external_id":"GW-9001"`) {
 		t.Fatalf("gateway candidates should include external id, body=%s", rec.Body.String())
+	}
+}
+
+func TestHandleGatewaySeedPoints_Defaults(t *testing.T) {
+	repo := &mockAdminRepo{
+		gatewayByID: &domain.Gateway{
+			GatewayID:   9001,
+			GatewayName: "FP_GW_9001",
+		},
+	}
+	handler := &adminHandler{repo: repo}
+
+	req := httptest.NewRequest("POST", "/api/v1/admin/gateways/9001/seed-points", strings.NewReader(`{"frequency":2,"device_external_id":"1002"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	handler.handleGatewaySeedPoints(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("gateway seed: want 200, got %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if repo.seedGatewayID != 9001 {
+		t.Fatalf("gateway id: want 9001, got %d", repo.seedGatewayID)
+	}
+	if repo.seedGatewayInput.Frequency != 2 || repo.seedGatewayInput.DeviceExternalID != "1002" {
+		t.Fatalf("unexpected seed input: %#v", repo.seedGatewayInput)
+	}
+	if len(repo.seedGatewayInput.Points) != 4 {
+		t.Fatalf("default points: want 4, got %d", len(repo.seedGatewayInput.Points))
+	}
+	if repo.seedGatewayInput.Points[2].ControllableStatus != 1 {
+		t.Fatalf("pump preset should be controllable")
 	}
 }
 

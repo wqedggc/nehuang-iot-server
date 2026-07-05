@@ -137,6 +137,14 @@ func (s *Server) Routes() http.Handler {
 		authMiddleware(secret, adminRoles(http.HandlerFunc(ah.handleControlLogs))))
 	mux.Handle("/api/v1/admin/gateway-bind-candidates",
 		authMiddleware(secret, adminRoles(http.HandlerFunc(ah.handleGatewayBindCandidates))))
+	mux.Handle("/api/v1/admin/gateways/",
+		authMiddleware(secret, adminRoles(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodPost && hasSuffix(r.URL.Path, "/seed-points") {
+				ah.handleGatewaySeedPoints(w, r)
+			} else {
+				writeCode(w, http.StatusMethodNotAllowed, 405, "method not allowed")
+			}
+		}))))
 	mux.Handle("/api/v1/admin/device-tree",
 		authMiddleware(secret, adminRoles(http.HandlerFunc(ah.handleDeviceTree))))
 	mux.Handle("/api/v1/admin/device-points",

@@ -11,6 +11,21 @@ const (
 	CommandSourceSystem CommandSource = 4
 )
 
+func (s CommandSource) Label() string {
+	switch s {
+	case CommandSourceAdmin:
+		return "Admin"
+	case CommandSourceMini:
+		return "Mini"
+	case CommandSourceAuto:
+		return "自动"
+	case CommandSourceSystem:
+		return "系统"
+	default:
+		return "未知"
+	}
+}
+
 type CommandType uint8
 
 const (

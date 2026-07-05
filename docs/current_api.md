@@ -68,8 +68,9 @@ HTTP Adapter API 是 Go `gateway-adapter` 和 Go `nehuang-server` 之间的内�
 | POST | `/api/v1/admin/bindings` | 正式；支持 `binding_type=gateway/point` |
 | DELETE | `/api/v1/admin/bindings/{bind_id}` | 正式 |
 | GET | `/api/v1/admin/gateway-bind-candidates?keyword=` | 正式；返回未 active 绑定的设备网关候选 |
+| POST | `/api/v1/admin/gateways/{gateway_id}/seed-points` | 联调；给已注册设备网关创建/更新测试采集执行器和功能点 |
 | GET | `/api/v1/admin/raw-events?limit=` | 正式 |
-| GET | `/api/v1/admin/control-logs?limit=` | 正式；读取 `control_commands`，展示 command hex 和命令状态 |
+| GET | `/api/v1/admin/control-logs?limit=` | 正式；读取 `control_commands`，展示来源、command hex、命令状态、下发/完成时间 |
 | GET | `/api/v1/admin/device-tree` | 正式 |
 | GET | `/api/v1/admin/device-points?keyword=&bind_status=` | 正式 |
 | PATCH | `/api/v1/admin/device-points/{point_id}` | 正式，更新点位配置 |
@@ -85,6 +86,21 @@ HTTP Adapter API 是 Go `gateway-adapter` 和 Go `nehuang-server` 之间的内�
 - 兼容功能点绑定：`binding_type=point`、`user_id`、`point_id`
 
 默认产品口径是农户绑定设备网关：一个农户可绑定多个设备网关；同一设备网关同时只能有一个 active 农户绑定。旧功能点绑定继续可读、可解绑、可创建，用于兼容历史数据和精细授权场景。
+
+### POST `/api/v1/admin/gateways/{gateway_id}/seed-points`
+
+联调辅助接口，不代表真实硬件协议已经冻结。用途是在设备网关已注册但真实工作包 parser 尚未创建 `collector_nodes/device_points` 时，管理员显式创建一组测试采集执行器和功能点，方便验证后台设备管理、农户绑定、C 端设备列表和下行 Hex。
+
+请求字段：
+
+- `frequency`: 采样频点，默认前端填 `1`
+- `device_external_id`: 采集执行器 DevID，必填
+- `node_name`: 采集执行器名称，可空
+- `shed_no`: 棚号，可空
+- `remark`: 备注，可空
+- `points`: 可选；不传时后端默认创建温度、墒情、水泵、风机 4 个联调功能点
+
+重复调用同一 `gateway_id + frequency + device_external_id` 会更新已有采集执行器；同一 `node_id + function_type + channel_no` 会更新已有功能点，不重复制造点位。
 
 ### POST `/api/v1/admin/device-points/{point_id}/control`
 

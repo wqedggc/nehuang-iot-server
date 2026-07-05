@@ -192,6 +192,9 @@
     updateDevicePoint: function (pointID, data) {
       return request('PATCH', '/api/v1/admin/device-points/' + encodeURIComponent(pointID), data);
     },
+    seedGatewayPoints: function (gatewayID, data) {
+      return request('POST', '/api/v1/admin/gateways/' + encodeURIComponent(gatewayID) + '/seed-points', data);
+    },
     getPayloadEvents: function (params) {
       var qs = [];
       params = params || {};

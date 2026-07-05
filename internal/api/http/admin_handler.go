@@ -66,6 +66,8 @@ type adminRepository interface {
 	ListGatewayBindCandidates(ctx context.Context, keyword string) ([]domain.GatewayBindCandidate, error)
 	// 管理端设备点位配置更新。
 	UpdateDevicePointConfig(ctx context.Context, pointID uint64, input domain.DevicePointUpdateInput) error
+	// 管理端为已注册设备网关联调创建采集执行器/功能点。
+	SeedGatewayDevicePoints(ctx context.Context, gatewayID uint64, input domain.GatewayDeviceSeedInput) (*domain.GatewayDeviceSeedResult, error)
 	// 管理端创建控制命令。
 	CreateControlCommandForPoint(ctx context.Context, input domain.CreateControlCommandInput) (*domain.ControlCommand, error)
 	// Payload 排查页面。
@@ -647,6 +649,45 @@ func (h *adminHandler) handleGatewayBindCandidates(w http.ResponseWriter, r *htt
 	writeJSON(w, http.StatusOK, map[string]any{"data": items})
 }
 
+// handleGatewaySeedPoints 处理 POST /api/v1/admin/gateways/{gateway_id}/seed-points。
+// 这是联调入口：在真实工作包 parser 未冻结前，允许管理员显式给已注册网关创建测试采集执行器和功能点。
+func (h *adminHandler) handleGatewaySeedPoints(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeCode(w, http.StatusMethodNotAllowed, 405, "method not allowed")
+		return
+	}
+	path := strings.TrimPrefix(r.URL.Path, "/api/v1/admin/gateways/")
+	path = strings.TrimSuffix(path, "/seed-points")
+	path = strings.TrimSpace(path)
+	gatewayID, err := strconv.ParseUint(path, 10, 64)
+	if err != nil || gatewayID == 0 {
+		writeCode(w, http.StatusBadRequest, 400, "invalid gateway id")
+		return
+	}
+
+	gateway, err := h.repo.FindGatewayByID(r.Context(), gatewayID)
+	if err != nil {
+		writeCode(w, http.StatusInternalServerError, 500, "internal error: "+err.Error())
+		return
+	}
+	if gateway == nil {
+		writeCode(w, http.StatusNotFound, 404, "gateway not found")
+		return
+	}
+
+	input, err := decodeGatewaySeedInput(r)
+	if err != nil {
+		writeCode(w, http.StatusBadRequest, 400, err.Error())
+		return
+	}
+	result, err := h.repo.SeedGatewayDevicePoints(r.Context(), gatewayID, input)
+	if err != nil {
+		writeCode(w, http.StatusInternalServerError, 500, "failed to seed gateway points: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"data": result})
+}
+
 // handleDevicePointUpdate 处理 PATCH /api/v1/admin/device-points/{point_id}。
 func (h *adminHandler) handleDevicePointUpdate(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1/admin/device-points/")
@@ -811,6 +852,154 @@ type devicePointUpdateRequest struct {
 	PollCmd            *string         `json:"poll_cmd"`
 	PointStatus        *uint8          `json:"point_status"`
 	Remark             *string         `json:"remark"`
+}
+
+func decodeGatewaySeedInput(r *http.Request) (domain.GatewayDeviceSeedInput, error) {
+	var input domain.GatewayDeviceSeedInput
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&input); err != nil {
+		return input, fmt.Errorf("invalid request body")
+	}
+	input.DeviceExternalID = strings.TrimSpace(input.DeviceExternalID)
+	input.NodeName = strings.TrimSpace(input.NodeName)
+	input.ShedNo = strings.TrimSpace(input.ShedNo)
+	input.Remark = strings.TrimSpace(input.Remark)
+	if input.Frequency <= 0 {
+		input.Frequency = 1
+	}
+	if input.Frequency > 1000000 {
+		return input, fmt.Errorf("frequency is too large")
+	}
+	if input.DeviceExternalID == "" {
+		return input, fmt.Errorf("device_external_id is required")
+	}
+	if len(input.DeviceExternalID) > 64 {
+		return input, fmt.Errorf("device_external_id is too long")
+	}
+	if input.NodeName == "" {
+		input.NodeName = "联调采集执行器 " + input.DeviceExternalID
+	}
+	if input.ShedNo == "" {
+		input.ShedNo = "联调棚"
+	}
+	if len(input.Points) == 0 {
+		input.Points = defaultGatewaySeedPoints()
+	}
+	if len(input.Points) > 20 {
+		return input, fmt.Errorf("points cannot exceed 20")
+	}
+	for i := range input.Points {
+		p := &input.Points[i]
+		p.PointName = strings.TrimSpace(p.PointName)
+		p.Unit = strings.TrimSpace(p.Unit)
+		p.PollCmd = normalizeHexCommand(p.PollCmd)
+		p.Remark = strings.TrimSpace(p.Remark)
+		if p.FunctionType < domain.FuncTypeTemperature || p.FunctionType > domain.FuncTypeFan {
+			return input, fmt.Errorf("invalid function_type")
+		}
+		if p.ChannelNo <= 0 {
+			p.ChannelNo = 1
+		}
+		if p.ChannelNo > 64 {
+			return input, fmt.Errorf("channel_no is too large")
+		}
+		if p.PointName == "" {
+			p.PointName = p.FunctionType.FunctionTypeName() + "·通道" + strconv.Itoa(p.ChannelNo)
+		}
+		if p.Unit == "" {
+			p.Unit = defaultSeedUnit(p.FunctionType)
+		}
+		if p.ValueStatus == 0 {
+			p.ValueStatus = domain.ValueStatusOffline
+		}
+		if p.RunMode == 0 {
+			p.RunMode = domain.RunModeAuto
+		}
+		if p.RunMode != domain.RunModeAuto && p.RunMode != domain.RunModeManu {
+			return input, fmt.Errorf("invalid run_mode")
+		}
+		if p.ControllableStatus > 1 {
+			return input, fmt.Errorf("invalid controllable_status")
+		}
+		if p.PollInterval == 0 {
+			p.PollInterval = 300
+		}
+		if p.PollInterval < 5 || p.PollInterval > 86400 {
+			return input, fmt.Errorf("poll_interval must be between 5 and 86400")
+		}
+		if p.PointStatus == 0 {
+			p.PointStatus = 1
+		}
+		if p.PointStatus > 3 {
+			return input, fmt.Errorf("invalid point_status")
+		}
+		if p.BestMin != nil && p.BestMax != nil && *p.BestMin > *p.BestMax {
+			return input, fmt.Errorf("best_min cannot be greater than best_max")
+		}
+	}
+	return input, nil
+}
+
+func defaultGatewaySeedPoints() []domain.GatewayDeviceSeedPointInput {
+	tempMin, tempMax, tempValue := 18.0, 32.0, 26.4
+	soilMin, soilMax, soilValue := 35.0, 75.0, 54.9
+	return []domain.GatewayDeviceSeedPointInput{
+		{
+			FunctionType: domain.FuncTypeTemperature,
+			ChannelNo:    1,
+			PointName:    "联调温度",
+			Unit:         "C",
+			BestMin:      &tempMin,
+			BestMax:      &tempMax,
+			RealValue:    &tempValue,
+			ValueStatus:  domain.ValueStatusOffline,
+			PollInterval: 300,
+			PollCmd:      "03030000000185E8",
+		},
+		{
+			FunctionType: domain.FuncTypeSoil,
+			ChannelNo:    1,
+			PointName:    "联调墒情",
+			Unit:         "%",
+			BestMin:      &soilMin,
+			BestMax:      &soilMax,
+			RealValue:    &soilValue,
+			ValueStatus:  domain.ValueStatusOffline,
+			PollInterval: 300,
+		},
+		{
+			FunctionType:       domain.FuncTypePump,
+			ChannelNo:          1,
+			PointName:          "联调水泵",
+			ValueStatus:        domain.ValueStatusOffline,
+			RunMode:            domain.RunModeManu,
+			ControllableStatus: 1,
+			PollInterval:       300,
+			PollCmd:            "F0",
+		},
+		{
+			FunctionType:       domain.FuncTypeFan,
+			ChannelNo:          1,
+			PointName:          "联调风机",
+			ValueStatus:        domain.ValueStatusOffline,
+			RunMode:            domain.RunModeManu,
+			ControllableStatus: 1,
+			PollInterval:       300,
+			PollCmd:            "0F",
+		},
+	}
+}
+
+func defaultSeedUnit(functionType domain.FunctionType) string {
+	switch functionType {
+	case domain.FuncTypeTemperature:
+		return "C"
+	case domain.FuncTypeSoil:
+		return "%"
+	default:
+		return ""
+	}
 }
 
 func decodeDevicePointUpdateInput(r *http.Request, existing *domain.DevicePoint) (domain.DevicePointUpdateInput, error) {
