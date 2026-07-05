@@ -493,12 +493,23 @@ type DeviceTreeCollector struct {
 
 // DeviceTreePoint 是设备树的第三层，对应一个 device_point。
 type DeviceTreePoint struct {
-	PointID      uint64  `json:"point_id,string"`
-	FunctionType uint8   `json:"function_type"`
-	FunctionName string  `json:"function_name"`
-	ChannelNo    int     `json:"channel_no"`
-	IsBound      bool    `json:"is_bound"`
-	BoundUserID  *uint64 `json:"bound_user_id,string"`
+	PointID            uint64   `json:"point_id,string"`
+	FunctionType       uint8    `json:"function_type"`
+	FunctionName       string   `json:"function_name"`
+	ChannelNo          int      `json:"channel_no"`
+	PointName          string   `json:"point_name"`
+	ShedNo             string   `json:"shed_no"`
+	Unit               string   `json:"unit"`
+	BestMin            *float64 `json:"best_min"`
+	BestMax            *float64 `json:"best_max"`
+	RunMode            uint8    `json:"run_mode"`
+	ControllableStatus uint8    `json:"controllable_status"`
+	PollInterval       int      `json:"poll_interval"`
+	PollCmd            string   `json:"poll_cmd"`
+	PointStatus        uint8    `json:"point_status"`
+	Remark             string   `json:"remark"`
+	IsBound            bool     `json:"is_bound"`
+	BoundUserID        *uint64  `json:"bound_user_id,string"`
 }
 
 // DevicePointSearchResult 是管理端设备点位搜索的结果视图。

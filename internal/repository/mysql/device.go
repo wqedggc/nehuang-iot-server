@@ -1090,27 +1090,61 @@ ORDER BY gateway_id ASC, node_id ASC`)
 
 	// 3. 查询所有 active device_points。
 	ptRows, err := r.db.QueryContext(ctx, `
-SELECT point_id, node_id, function_type, point_name, channel_no
-FROM device_points
-WHERE point_status = 1
-ORDER BY node_id ASC, channel_no ASC`)
+SELECT
+  dp.point_id, dp.node_id, dp.function_type, dp.point_name, dp.channel_no,
+  dp.unit, dp.best_min, dp.best_max, dp.run_mode, dp.controllable_status,
+  dp.poll_interval, dp.poll_cmd, dp.point_status, dp.remark, COALESCE(cn.shed_no, '')
+FROM device_points dp
+LEFT JOIN collector_nodes cn ON cn.node_id = dp.node_id
+WHERE dp.point_status = 1
+ORDER BY dp.node_id ASC, dp.channel_no ASC`)
 	if err != nil {
 		return nil, err
 	}
 	defer ptRows.Close()
 
 	type ptRow struct {
-		PointID  uint64
-		NodeID   uint64
-		FuncType uint8
-		FuncName string
-		ChNo     int
+		PointID            uint64
+		NodeID             uint64
+		FuncType           uint8
+		FuncName           string
+		ChNo               int
+		Unit               string
+		BestMin            *float64
+		BestMax            *float64
+		RunMode            uint8
+		ControllableStatus uint8
+		PollInterval       int
+		PollCmd            string
+		PointStatus        uint8
+		Remark             string
+		ShedNo             string
 	}
 	var points []ptRow
 	for ptRows.Next() {
 		var p ptRow
-		if err := ptRows.Scan(&p.PointID, &p.NodeID, &p.FuncType, &p.FuncName, &p.ChNo); err != nil {
+		var bestMin, bestMax sql.NullFloat64
+		var pollCmd, remark sql.NullString
+		if err := ptRows.Scan(
+			&p.PointID, &p.NodeID, &p.FuncType, &p.FuncName, &p.ChNo,
+			&p.Unit, &bestMin, &bestMax, &p.RunMode, &p.ControllableStatus,
+			&p.PollInterval, &pollCmd, &p.PointStatus, &remark, &p.ShedNo,
+		); err != nil {
 			return nil, err
+		}
+		if bestMin.Valid {
+			v := bestMin.Float64
+			p.BestMin = &v
+		}
+		if bestMax.Valid {
+			v := bestMax.Float64
+			p.BestMax = &v
+		}
+		if pollCmd.Valid {
+			p.PollCmd = pollCmd.String
+		}
+		if remark.Valid {
+			p.Remark = remark.String
 		}
 		points = append(points, p)
 	}
@@ -1198,12 +1232,23 @@ WHERE bind_status = 1`)
 					boundUserIDPtr = &boundUserID
 				}
 				col.Points = append(col.Points, domain.DeviceTreePoint{
-					PointID:      p.PointID,
-					FunctionType: p.FuncType,
-					FunctionName: funcNameLabel(p.FuncType),
-					ChannelNo:    p.ChNo,
-					IsBound:      isBound,
-					BoundUserID:  boundUserIDPtr,
+					PointID:            p.PointID,
+					FunctionType:       p.FuncType,
+					FunctionName:       funcNameLabel(p.FuncType),
+					ChannelNo:          p.ChNo,
+					PointName:          p.FuncName,
+					ShedNo:             p.ShedNo,
+					Unit:               p.Unit,
+					BestMin:            p.BestMin,
+					BestMax:            p.BestMax,
+					RunMode:            p.RunMode,
+					ControllableStatus: p.ControllableStatus,
+					PollInterval:       p.PollInterval,
+					PollCmd:            p.PollCmd,
+					PointStatus:        p.PointStatus,
+					Remark:             p.Remark,
+					IsBound:            isBound,
+					BoundUserID:        boundUserIDPtr,
 				})
 			}
 			node.Collectors = append(node.Collectors, col)
