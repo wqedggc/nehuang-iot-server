@@ -984,8 +984,7 @@
         '<div class="detail-section">' +
           renderValidationChecklist() +
         '</div>' +
-      '</div>' +
-      '<div style="font-size:11px;color:var(--color-text-muted);margin-top:10px">说明：本页面为产品使用说明；不展示内部源码、数据库字段、服务地址或密钥类信息。</div>';
+      '</div>';
 
     var sections = container.querySelectorAll('.help-section');
     for (var i = 0; i < sections.length; i++) {
