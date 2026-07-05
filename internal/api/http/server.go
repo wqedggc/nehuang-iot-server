@@ -135,6 +135,8 @@ func (s *Server) Routes() http.Handler {
 		authMiddleware(secret, adminRoles(http.HandlerFunc(ah.handleRawEvents))))
 	mux.Handle("/api/v1/admin/control-logs",
 		authMiddleware(secret, adminRoles(http.HandlerFunc(ah.handleControlLogs))))
+	mux.Handle("/api/v1/admin/operation-logs",
+		authMiddleware(secret, adminRoles(http.HandlerFunc(ah.handleOperationLogs))))
 	mux.Handle("/api/v1/admin/gateway-bind-candidates",
 		authMiddleware(secret, adminRoles(http.HandlerFunc(ah.handleGatewayBindCandidates))))
 	mux.Handle("/api/v1/admin/gateways/",

@@ -1429,6 +1429,21 @@ LIMIT 500`, userID)
 	return bindings, rows.Err()
 }
 
+// FindBindingByID 按 bind_id 查询绑定快照，包含已解绑记录。
+func (r *Repository) FindBindingByID(ctx context.Context, bindID uint64) (*domain.BindRelation, error) {
+	row := r.db.QueryRowContext(ctx, bindingSelectColumns+`
+WHERE br.bind_id = ?
+LIMIT 1`, bindID)
+	b, err := scanBindingRelationRow(row)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &b, nil
+}
+
 // FindGatewayByID 按 gateway_id 查询 gateway。
 func (r *Repository) FindGatewayByID(ctx context.Context, gatewayID uint64) (*domain.Gateway, error) {
 	var g domain.Gateway
@@ -1662,6 +1677,55 @@ func (r *Repository) UnbindRelation(ctx context.Context, bindID uint64) error {
 	return err
 }
 
+// CreateOperationRecord 写入后台操作审计记录。
+func (r *Repository) CreateOperationRecord(ctx context.Context, record *domain.OperationRecord) error {
+	if record.OpID == 0 {
+		record.OpID = idgen.NextID()
+	}
+	if record.RunMode == 0 {
+		record.RunMode = RunModeAuto
+	}
+	now := time.Now()
+	if record.OperatedAtMS.IsZero() {
+		record.OperatedAtMS = now
+	}
+	if record.CreatedAt.IsZero() {
+		record.CreatedAt = now
+	}
+	opContent := sql.NullString{String: record.OpContent, Valid: record.OpContent != ""}
+
+	_, err := r.db.ExecContext(ctx, `
+INSERT INTO op_records
+  (op_id, gateway_id, realtime_id, node_id, point_id,
+   user_id, bind_user_name, operator_role,
+   frequency, device_external_id, run_mode,
+   rel1_status, rel2_status, op_type, op_content,
+   command_id, operated_at_ms, created_at, updated_at)
+VALUES
+  (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		record.OpID,
+		record.GatewayID,
+		nullableUint64(record.RealtimeID),
+		nullableUint64(record.NodeID),
+		nullableUint64(record.PointID),
+		nullableUint64(record.UserID),
+		record.BindUserName,
+		record.OperatorRole,
+		record.Frequency,
+		record.DeviceExternalID,
+		record.RunMode,
+		record.Rel1Status,
+		record.Rel2Status,
+		uint8(record.OpType),
+		opContent,
+		nullableUint64(record.CommandID),
+		record.OperatedAtMS,
+		record.CreatedAt,
+		record.CreatedAt,
+	)
+	return err
+}
+
 // ─── 控制日志 ───
 
 const listControlLogsQuery = `
@@ -1736,6 +1800,61 @@ func (r *Repository) ListControlLogs(ctx context.Context, limit int) ([]domain.C
 		if finishedAt.Valid {
 			l.FinishedAt = &finishedAt.Time
 		}
+		logs = append(logs, l)
+	}
+	return logs, rows.Err()
+}
+
+// ListOperationLogs 返回后台操作审计日志列表。
+func (r *Repository) ListOperationLogs(ctx context.Context, limit int) ([]domain.OperationRecord, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT
+  op.op_id, op.gateway_id, COALESCE(cg.gateway_name, ''),
+  op.realtime_id, op.node_id, op.point_id,
+  op.user_id, COALESCE(u.display_name, u.username, '') AS operator_name,
+  op.bind_user_name, op.operator_role,
+  op.frequency, op.device_external_id,
+  op.run_mode, op.rel1_status, op.rel2_status,
+  op.op_type, COALESCE(op.op_content, ''),
+  op.command_id, op.operated_at_ms, op.created_at
+FROM op_records op
+LEFT JOIN cloud_gateways cg ON op.gateway_id = cg.gateway_id
+LEFT JOIN users u ON op.user_id = u.user_id
+ORDER BY op.operated_at_ms DESC
+LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	logs := make([]domain.OperationRecord, 0)
+	for rows.Next() {
+		var l domain.OperationRecord
+		var realtimeID sql.NullInt64
+		var nodeID sql.NullInt64
+		var pointID sql.NullInt64
+		var userID sql.NullInt64
+		var commandID sql.NullInt64
+		var opType uint8
+		if err := rows.Scan(
+			&l.OpID, &l.GatewayID, &l.GatewayName,
+			&realtimeID, &nodeID, &pointID,
+			&userID, &l.OperatorName,
+			&l.BindUserName, &l.OperatorRole,
+			&l.Frequency, &l.DeviceExternalID,
+			&l.RunMode, &l.Rel1Status, &l.Rel2Status,
+			&opType, &l.OpContent,
+			&commandID, &l.OperatedAtMS, &l.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		l.RealtimeID = uint64PtrFromNullInt64(realtimeID)
+		l.NodeID = uint64PtrFromNullInt64(nodeID)
+		l.PointID = uint64PtrFromNullInt64(pointID)
+		l.UserID = uint64PtrFromNullInt64(userID)
+		l.CommandID = uint64PtrFromNullInt64(commandID)
+		l.OpType = domain.OpType(opType)
+		l.OpTypeLabel = l.OpType.Label()
 		logs = append(logs, l)
 	}
 	return logs, rows.Err()
@@ -2047,6 +2166,14 @@ func nullableUint64(v *uint64) interface{} {
 		return nil
 	}
 	return *v
+}
+
+func uint64PtrFromNullInt64(v sql.NullInt64) *uint64 {
+	if !v.Valid {
+		return nil
+	}
+	out := uint64(v.Int64)
+	return &out
 }
 
 func nullableInt(v *int) interface{} {

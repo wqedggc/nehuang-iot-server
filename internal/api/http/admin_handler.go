@@ -44,12 +44,18 @@ type adminRepository interface {
 	FindActiveBindingByUserAndGateway(ctx context.Context, userID uint64, gatewayID uint64) (*domain.BindRelation, error)
 	// 按 gateway_id 查询任意 active gateway 绑定。
 	FindActiveBindingByGateway(ctx context.Context, gatewayID uint64) (*domain.BindRelation, error)
+	// 按 bind_id 查询绑定快照。
+	FindBindingByID(ctx context.Context, bindID uint64) (*domain.BindRelation, error)
 	// 解绑（软删除，更新 bind_status=2）。
 	UnbindRelation(ctx context.Context, bindID uint64) error
+	// 写入后台操作审计。
+	CreateOperationRecord(ctx context.Context, record *domain.OperationRecord) error
 	// 管理端原始事件列表。
 	ListRawEvents(ctx context.Context, limit int) ([]domain.RawDeviceEvent, error)
 	// 管理端控制日志列表。
 	ListControlLogs(ctx context.Context, limit int) ([]domain.ControlLogSummary, error)
+	// 管理端操作日志列表。
+	ListOperationLogs(ctx context.Context, limit int) ([]domain.OperationRecord, error)
 	// 设备树查询。
 	GetDeviceTree(ctx context.Context) ([]domain.DeviceTreeNode, error)
 	// 按 point_id 查询功能点。
@@ -90,7 +96,7 @@ type loginRequest struct {
 // loginResponse is the JSON payload returned on successful admin login.
 type loginResponse struct {
 	Token       string `json:"token"`
-	UserID      uint64 `json:"user_id"`
+	UserID      string `json:"user_id"`
 	Role        uint8  `json:"role"`
 	DisplayName string `json:"display_name"`
 }
@@ -156,7 +162,7 @@ func (h *adminHandler) login(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"data": loginResponse{
 			Token:       token,
-			UserID:      user.UserID,
+			UserID:      idStr(user.UserID),
 			Role:        uint8(user.Role),
 			DisplayName: displayName,
 		},
@@ -227,7 +233,7 @@ func (h *adminHandler) handleUsers(w http.ResponseWriter, r *http.Request) {
 		UserType     uint8  `json:"user_type"`
 		Status       uint8  `json:"status"`
 		StatusLabel  string `json:"status_label"`
-		BindingCount int    `json:"binding_count"`
+		BindingCount string `json:"binding_count"`
 	}
 
 	roleLabels := map[uint8]string{1: "超级管理员", 2: "管理员", 3: "农户"}
@@ -252,7 +258,7 @@ func (h *adminHandler) handleUsers(w http.ResponseWriter, r *http.Request) {
 			UserType:     uint8(u.UserType),
 			Status:       uint8(u.Status),
 			StatusLabel:  statusLabels[uint8(u.Status)],
-			BindingCount: 0,
+			BindingCount: "0",
 		})
 	}
 
@@ -342,8 +348,10 @@ func (h *adminHandler) handleCreateBinding(w http.ResponseWriter, r *http.Reques
 	}
 
 	adminUserID := uint64(0)
+	adminRole := uint8(0)
 	if claims, ok := ClaimsFromContext(ctx); ok {
 		adminUserID = claims.UserID
+		adminRole = uint8(claims.Role)
 	}
 
 	bindUserName := ""
@@ -433,6 +441,11 @@ func (h *adminHandler) handleCreateBinding(w http.ResponseWriter, r *http.Reques
 			}
 			log.Printf("[handleCreateBinding] repo.CreateBinding failed: user_id=%d gateway_id=%d err=%v", userID, gatewayID, err)
 			writeCode(w, http.StatusInternalServerError, 500, "failed to create binding: "+err.Error())
+			return
+		}
+		if err := h.recordBindingOperation(ctx, domain.OpTypeBind, b, adminUserID, adminRole, "绑定设备网关"); err != nil {
+			log.Printf("[handleCreateBinding] record bind operation failed: bind_id=%d err=%v", b.BindID, err)
+			writeCode(w, http.StatusInternalServerError, 500, "failed to record binding operation: "+err.Error())
 			return
 		}
 
@@ -532,6 +545,11 @@ func (h *adminHandler) handleCreateBinding(w http.ResponseWriter, r *http.Reques
 			writeCode(w, http.StatusInternalServerError, 500, "failed to create binding: "+err.Error())
 			return
 		}
+		if err := h.recordBindingOperation(ctx, domain.OpTypeBind, b, adminUserID, adminRole, "绑定功能点"); err != nil {
+			log.Printf("[handleCreateBinding] record bind operation failed: bind_id=%d err=%v", b.BindID, err)
+			writeCode(w, http.StatusInternalServerError, 500, "failed to record binding operation: "+err.Error())
+			return
+		}
 
 		log.Printf("[handleCreateBinding] success: bind_id=%d user_id=%d point_id=%d", b.BindID, userID, pointID)
 		writeJSON(w, http.StatusOK, map[string]any{"data": b})
@@ -551,12 +569,88 @@ func (h *adminHandler) handleUnbind(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.repo.UnbindRelation(r.Context(), bindID); err != nil {
+	ctx := r.Context()
+	binding, err := h.repo.FindBindingByID(ctx, bindID)
+	if err != nil {
+		writeCode(w, http.StatusInternalServerError, 500, "failed to load binding: "+err.Error())
+		return
+	}
+	if binding == nil {
+		writeCode(w, http.StatusNotFound, 404, "binding not found")
+		return
+	}
+
+	if err := h.repo.UnbindRelation(ctx, bindID); err != nil {
 		writeCode(w, http.StatusInternalServerError, 500, "failed to unbind: "+err.Error())
+		return
+	}
+	adminUserID := uint64(0)
+	adminRole := uint8(0)
+	if claims, ok := ClaimsFromContext(ctx); ok {
+		adminUserID = claims.UserID
+		adminRole = uint8(claims.Role)
+	}
+	if err := h.recordBindingOperation(ctx, domain.OpTypeUnbind, binding, adminUserID, adminRole, "解除绑定"); err != nil {
+		log.Printf("[handleUnbind] record unbind operation failed: bind_id=%d err=%v", bindID, err)
+		writeCode(w, http.StatusInternalServerError, 500, "failed to record unbind operation: "+err.Error())
 		return
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{"deleted": true}})
+}
+
+func (h *adminHandler) recordBindingOperation(ctx context.Context, opType domain.OpType, b *domain.BindRelation, operatorID uint64, operatorRole uint8, action string) error {
+	if b == nil {
+		return nil
+	}
+	target := "设备网关"
+	if b.PointID != nil {
+		target = "功能点"
+	}
+	content := fmt.Sprintf("%s：%s %s，农户：%s，绑定ID：%s",
+		action,
+		target,
+		b.GatewayName,
+		b.BindUserName,
+		idStr(b.BindID),
+	)
+	if b.PointID != nil {
+		content = fmt.Sprintf("%s，功能点ID：%s", content, idStr(*b.PointID))
+	}
+	record := &domain.OperationRecord{
+		GatewayID:        b.GatewayID,
+		RealtimeID:       b.RealtimeID,
+		NodeID:           b.NodeID,
+		PointID:          b.PointID,
+		UserID:           uint64Ptr(operatorID),
+		BindUserName:     b.BindUserName,
+		OperatorRole:     operatorRole,
+		Frequency:        b.Frequency,
+		DeviceExternalID: b.DeviceExternalID,
+		RunMode:          1,
+		OpType:           opType,
+		OpContent:        content,
+	}
+	return h.repo.CreateOperationRecord(ctx, record)
+}
+
+// handleOperationLogs 处理 GET /api/v1/admin/operation-logs。
+// 返回绑定、解绑、配置、控制等后台操作审计。
+func (h *adminHandler) handleOperationLogs(w http.ResponseWriter, r *http.Request) {
+	limit := 100
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 && parsed <= 200 {
+			limit = parsed
+		}
+	}
+
+	logs, err := h.repo.ListOperationLogs(r.Context(), limit)
+	if err != nil {
+		writeCode(w, http.StatusInternalServerError, 500, "internal error: "+err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"data": logs})
 }
 
 // handleRawEvents 处理 GET /api/v1/admin/raw-events。
@@ -1194,7 +1288,7 @@ func (h *adminHandler) handleFarmerDetail(w http.ResponseWriter, r *http.Request
 			"remark":        remark,
 			"wechat_openid": wechatOpenID,
 			"status":        uint8(user.Status),
-			"binding_count": bindingCount,
+			"binding_count": idStr(uint64(bindingCount)),
 			"created_at":    user.CreatedAt.UTC().Format("2006-01-02T15:04:05.000Z"),
 			"updated_at":    user.UpdatedAt.UTC().Format("2006-01-02T15:04:05.000Z"),
 		},
@@ -1274,7 +1368,7 @@ func (h *adminHandler) handleFarmers(w http.ResponseWriter, r *http.Request) {
 		WechatOpenID string `json:"wechat_openid"`
 		Status       uint8  `json:"status"`
 		StatusLabel  string `json:"status_label"`
-		BindingCount int    `json:"binding_count"`
+		BindingCount string `json:"binding_count"`
 		CreatedAt    string `json:"created_at"`
 		UpdatedAt    string `json:"updated_at"`
 	}
@@ -1306,7 +1400,7 @@ func (h *adminHandler) handleFarmers(w http.ResponseWriter, r *http.Request) {
 			WechatOpenID: openID,
 			Status:       uint8(u.Status),
 			StatusLabel:  statusLabels[uint8(u.Status)],
-			BindingCount: bc,
+			BindingCount: idStr(uint64(bc)),
 			CreatedAt:    u.CreatedAt.UTC().Format("2006-01-02T15:04:05.000Z"),
 			UpdatedAt:    u.UpdatedAt.UTC().Format("2006-01-02T15:04:05.000Z"),
 		})

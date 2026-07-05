@@ -28,6 +28,8 @@ type mockAdminRepo struct {
 	updatedPointID                uint64
 	updatedPointInput             domain.DevicePointUpdateInput
 	createdBinding                *domain.BindRelation
+	bindingByID                   *domain.BindRelation
+	createdOperation              *domain.OperationRecord
 	createdControlInput           domain.CreateControlCommandInput
 	createdControlCmd             *domain.ControlCommand
 	seedGatewayID                 uint64
@@ -76,10 +78,20 @@ func (m *mockAdminRepo) CreateBinding(ctx context.Context, b *domain.BindRelatio
 	return nil
 }
 func (m *mockAdminRepo) UnbindRelation(ctx context.Context, bindID uint64) error { return nil }
+func (m *mockAdminRepo) FindBindingByID(ctx context.Context, bindID uint64) (*domain.BindRelation, error) {
+	return m.bindingByID, nil
+}
+func (m *mockAdminRepo) CreateOperationRecord(ctx context.Context, record *domain.OperationRecord) error {
+	m.createdOperation = record
+	return nil
+}
 func (m *mockAdminRepo) ListRawEvents(ctx context.Context, limit int) ([]domain.RawDeviceEvent, error) {
 	return nil, nil
 }
 func (m *mockAdminRepo) ListControlLogs(ctx context.Context, limit int) ([]domain.ControlLogSummary, error) {
+	return nil, nil
+}
+func (m *mockAdminRepo) ListOperationLogs(ctx context.Context, limit int) ([]domain.OperationRecord, error) {
 	return nil, nil
 }
 func (m *mockAdminRepo) GetDeviceTree(ctx context.Context) ([]domain.DeviceTreeNode, error) {
@@ -354,6 +366,9 @@ func TestHandleCreateBinding_GatewaySuccess(t *testing.T) {
 	if repo.createdBinding.DeviceExternalID != "" || repo.createdBinding.Frequency != 0 || repo.createdBinding.FunctionType != 0 {
 		t.Fatalf("gateway binding should clear point identity fields, got %#v", repo.createdBinding)
 	}
+	if repo.createdOperation == nil || repo.createdOperation.OpType != domain.OpTypeBind {
+		t.Fatalf("gateway binding should create bind operation log, got %#v", repo.createdOperation)
+	}
 }
 
 func TestHandleCreateBinding_GatewayConflictReturns409(t *testing.T) {
@@ -436,6 +451,39 @@ func TestHandleCreateBinding_PointBindingStillWorks(t *testing.T) {
 	}
 	if repo.createdBinding.PointID == nil || *repo.createdBinding.PointID != 1001 {
 		t.Fatalf("point binding should keep point_id: %#v", repo.createdBinding)
+	}
+	if repo.createdOperation == nil || repo.createdOperation.OpType != domain.OpTypeBind {
+		t.Fatalf("point binding should create bind operation log, got %#v", repo.createdOperation)
+	}
+}
+
+func TestHandleUnbind_CreatesOperationLog(t *testing.T) {
+	bindUserName := "张三"
+	pointID := uint64(1001)
+	repo := &mockAdminRepo{
+		bindingByID: &domain.BindRelation{
+			BindID:           99,
+			BindUserName:     bindUserName,
+			BindingType:      string(domain.BindingTypePoint),
+			GatewayID:        9001,
+			GatewayName:      "FP_GW_9001",
+			PointID:          &pointID,
+			Frequency:        433,
+			DeviceExternalID: "DEV-1",
+		},
+	}
+	handler := &adminHandler{repo: repo}
+
+	req := httptest.NewRequest("DELETE", "/api/v1/admin/bindings/99", nil)
+	rec := httptest.NewRecorder()
+
+	handler.handleUnbind(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unbind: want 200, got %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if repo.createdOperation == nil || repo.createdOperation.OpType != domain.OpTypeUnbind {
+		t.Fatalf("unbind should create unbind operation log, got %#v", repo.createdOperation)
 	}
 }
 

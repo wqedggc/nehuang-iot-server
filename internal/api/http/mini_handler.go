@@ -296,7 +296,7 @@ func (h *miniHandler) handleMe(w http.ResponseWriter, r *http.Request) {
 			"address":       address,
 			"remark":        remark,
 			"role":          uint8(user.Role),
-			"binding_count": bindingCount,
+			"binding_count": idStr(uint64(bindingCount)),
 		},
 	})
 }

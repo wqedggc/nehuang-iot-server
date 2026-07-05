@@ -8,6 +8,32 @@ import (
 
 var ErrBindingConflict = errors.New("binding conflict")
 
+// OpType 操作记录类型。
+type OpType uint8
+
+const (
+	OpTypeUnknown OpType = 0
+	OpTypeBind    OpType = 1
+	OpTypeUnbind  OpType = 2
+	OpTypeControl OpType = 3
+	OpTypeConfig  OpType = 4
+)
+
+func (t OpType) Label() string {
+	switch t {
+	case OpTypeBind:
+		return "绑定"
+	case OpTypeUnbind:
+		return "解绑"
+	case OpTypeControl:
+		return "控制"
+	case OpTypeConfig:
+		return "配置"
+	default:
+		return "未知"
+	}
+}
+
 // ─── 原始设备事件 ───
 
 // RawDeviceEvent 对应 raw_device_events 表，记录所有设备事件的原始快照。
@@ -425,6 +451,31 @@ const (
 	BindStatusUnbound BindStatus = 2 // unbound：已解绑
 	BindStatusDeleted BindStatus = 3 // deleted：已删除
 )
+
+// OperationRecord 对应 op_records 表，用于后台操作审计。
+type OperationRecord struct {
+	OpID             uint64    `json:"op_id,string"`
+	GatewayID        uint64    `json:"gateway_id,string"`
+	GatewayName      string    `json:"gateway_name,omitempty"`
+	RealtimeID       *uint64   `json:"realtime_id,string,omitempty"`
+	NodeID           *uint64   `json:"node_id,string,omitempty"`
+	PointID          *uint64   `json:"point_id,string,omitempty"`
+	UserID           *uint64   `json:"user_id,string,omitempty"`
+	OperatorName     string    `json:"operator_name,omitempty"`
+	BindUserName     string    `json:"bind_user_name"`
+	OperatorRole     uint8     `json:"operator_role"`
+	Frequency        int       `json:"frequency"`
+	DeviceExternalID string    `json:"device_external_id"`
+	RunMode          uint8     `json:"run_mode"`
+	Rel1Status       uint8     `json:"rel1_status"`
+	Rel2Status       uint8     `json:"rel2_status"`
+	OpType           OpType    `json:"op_type"`
+	OpTypeLabel      string    `json:"op_type_label"`
+	OpContent        string    `json:"op_content,omitempty"`
+	CommandID        *uint64   `json:"command_id,string,omitempty"`
+	OperatedAtMS     time.Time `json:"operated_at_ms"`
+	CreatedAt        time.Time `json:"created_at"`
+}
 
 // ─── 控制命令日志（简化视图，用于管理端控制日志列表） ───
 

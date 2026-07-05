@@ -168,6 +168,9 @@
     getControlLogs: function () {
       return request('GET', '/api/v1/admin/control-logs');
     },
+    getOperationLogs: function () {
+      return request('GET', '/api/v1/admin/operation-logs');
+    },
     getFarmers: function (keyword) {
       return request('GET', '/api/v1/admin/farmers' + (keyword ? '?keyword=' + encodeURIComponent(keyword) : ''));
     },

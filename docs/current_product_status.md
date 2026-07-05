@@ -29,6 +29,11 @@
 
 ### 2.1 Go 服务端
 
+当前接口与数据口径（对接前端）：
+
+- 雪花 ID 与身份/计数字段按字符串返回，避免 JS 精度损失；传感器值与状态字段在内部模型中继续保持数值类型。
+- 绑定与解绑会写操作日志 `op_records`，用于溯源审计（`bind/unbind`）。
+
 已实现：
 
 - Admin 登录、Dashboard、用户/农户管理。
@@ -75,6 +80,7 @@
 - 注册/心跳的业务解析由 Go 服务在 raw frame 落库后完成。
 - CRC-16/MODBUS 固定实现。
 - `cmd/gateway-adapter-mock` 可模拟注册、keepalive 心跳、Modbus 读指令、工作包、告警包、未知包。
+- `cmd/gateway-adapter-mock` 循环演示口径已确认：先注册一次，默认每 10 秒发送 keepalive，必要时可加发 `work`、`alarm`、`unknown`、`modbus-read`，并支持等待并打印下行命令。
 - `cmd/gateway-adapter-mock` 可进入等待下行模式，打印 Adapter 写回 TCP 的 command hex。
 - `cmd/gateway-adapter-replay` 可回放 raw journal 并统计分类结果。
 - 识别出设备网关后，Adapter 会按 `gateway_external_id` 拉取 pending command。

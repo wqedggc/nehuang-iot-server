@@ -96,6 +96,8 @@ go run ./cmd/gateway-adapter-replay -raw-log data/gateway-adapter/raw-frames/raw
 
 `gateway-adapter-mock` 是硬件 TCP client 的本地替身，用于演示“甲方怎么发、我们怎么收”。
 
+`gateway-adapter-mock` 的 `-frame` 支持逗号分隔组合（例如：`register`、`heartbeat`、`heartbeat-message`、`modbus-read`、`work`、`alarm`、`unknown`）。
+
 发送全部样例：
 
 ```bash
@@ -114,10 +116,28 @@ go run ./cmd/gateway-adapter-mock -addr 127.0.0.1:8081 -frame register
 go run ./cmd/gateway-adapter-mock -addr 127.0.0.1:8081 -frame heartbeat
 ```
 
+只发送调试变体心跳：
+
+```bash
+go run ./cmd/gateway-adapter-mock -addr 127.0.0.1:8081 -frame heartbeat-message
+```
+
+只发送 Modbus 读：
+
+```bash
+go run ./cmd/gateway-adapter-mock -addr 127.0.0.1:8081 -frame modbus-read
+```
+
 只发送 CRC 合法的占位工作包：
 
 ```bash
 go run ./cmd/gateway-adapter-mock -addr 127.0.0.1:8081 -frame work
+```
+
+只发送告警包：
+
+```bash
+go run ./cmd/gateway-adapter-mock -addr 127.0.0.1:8081 -frame alarm
 ```
 
 只发送未知包：
@@ -139,6 +159,23 @@ go run ./cmd/gateway-adapter-mock -addr 127.0.0.1:8081 -wait-downlink -wait-time
 ```
 
 该模式会先发送注册和心跳，使 Adapter 能识别设备网关；随后阻塞读取 TCP 下行 bytes，并把收到的命令打印为 hex。
+
+mock 循环联调口径：
+
+- 注册一次后进入 keepalive 轮询，默认发送间隔 10 秒。
+- 可选触发 `work`、`alarm`、`unknown`、`modbus-read` 包。
+- 支持 `-wait-downlink` 在超时前持续等待并输出下行 command hex。
+
+```bash
+# 注册一次后保持 keepalive 轮询，并等待下行
+go run ./cmd/gateway-adapter-mock \
+  -addr 43.143.208.153:8081 \
+  -gateway FP_TEST_ADMIN_002 \
+  -loop \
+  -heartbeat-interval 10s \
+  -work-interval 60s \
+  -wait-downlink
+```
 
 ## 如何看日志
 

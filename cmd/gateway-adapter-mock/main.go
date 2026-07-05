@@ -8,7 +8,9 @@ import (
 	"io"
 	"net"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"nehuang-iot-server/internal/gatewayadapter/protocol"
@@ -22,9 +24,17 @@ type sampleFrame struct {
 
 func main() {
 	addr := flag.String("addr", "127.0.0.1:8081", "gateway adapter TCP address")
-	frameName := flag.String("frame", "all", "frame to send: all, register, heartbeat, work, alarm, unknown")
+	gatewayName := flag.String("gateway", "FP_TEST_ADMIN_002", "gateway name used in the register frame")
+	frameName := flag.String("frame", "all", "frame to send: all, register, heartbeat, heartbeat-message, modbus-read, work, alarm, unknown")
 	repeat := flag.Int("repeat", 1, "repeat count")
 	delay := flag.Duration("delay", 300*time.Millisecond, "delay between frames")
+	loop := flag.Bool("loop", false, "keep the TCP connection open and send periodic mock frames")
+	duration := flag.Duration("duration", 0, "loop duration; 0 means run until interrupted")
+	heartbeatInterval := flag.Duration("heartbeat-interval", 10*time.Second, "heartbeat interval in loop mode")
+	workInterval := flag.Duration("work-interval", 0, "work frame interval in loop mode; 0 disables periodic work frames")
+	alarmInterval := flag.Duration("alarm-interval", 0, "alarm frame interval in loop mode; 0 disables periodic alarm frames")
+	unknownInterval := flag.Duration("unknown-interval", 0, "unknown frame interval in loop mode; 0 disables periodic unknown frames")
+	modbusReadInterval := flag.Duration("modbus-read-interval", 0, "modbus-read frame interval in loop mode; 0 disables periodic modbus-read frames")
 	waitDownlink := flag.Bool("wait-downlink", false, "send bootstrap frames, then wait and print downlink bytes")
 	waitTimeout := flag.Duration("wait-timeout", 0, "read timeout while waiting for downlink; 0 means wait until connection closes")
 	flag.Parse()
@@ -34,7 +44,7 @@ func main() {
 		selectedFrameName = "register,heartbeat"
 	}
 
-	frames, err := selectFrames(selectedFrameName)
+	frames, err := selectFrames(selectedFrameName, *gatewayName)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
@@ -50,18 +60,20 @@ func main() {
 	}
 	defer conn.Close()
 
+	if *loop {
+		if err := runLoop(conn, *gatewayName, *duration, *heartbeatInterval, *workInterval, *alarmInterval, *unknownInterval, *modbusReadInterval, *waitDownlink, *waitTimeout); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	for i := 0; i < *repeat; i++ {
 		for _, frame := range frames {
-			if _, err := conn.Write(frame.payload); err != nil {
+			if err := sendFrame(conn, frame); err != nil {
 				fmt.Fprintf(os.Stderr, "send %s: %v\n", frame.name, err)
 				os.Exit(1)
 			}
-			fmt.Printf("sent frame=%s bytes=%d hex=%s note=%s\n",
-				frame.name,
-				len(frame.payload),
-				strings.ToUpper(hex.EncodeToString(frame.payload)),
-				frame.note,
-			)
 			time.Sleep(*delay)
 		}
 	}
@@ -71,11 +83,15 @@ func main() {
 	}
 }
 
-func selectFrames(name string) ([]sampleFrame, error) {
+func selectFrames(name string, gatewayName string) ([]sampleFrame, error) {
+	gatewayName = strings.TrimSpace(gatewayName)
+	if gatewayName == "" {
+		gatewayName = "FP_TEST_ADMIN_002"
+	}
 	all := []sampleFrame{
 		{
 			name:    "register",
-			payload: []byte("FP_TEST_ADMIN_002\n"),
+			payload: []byte(gatewayName + "\n"),
 			note:    "ASCII register; Adapter forwards raw bytes to /api/v1/adapter/raw-frames",
 		},
 		{
@@ -129,6 +145,100 @@ func selectFrames(name string) ([]sampleFrame, error) {
 		selected = append(selected, frame)
 	}
 	return selected, nil
+}
+
+func runLoop(conn net.Conn, gatewayName string, duration time.Duration, heartbeatInterval time.Duration, workInterval time.Duration, alarmInterval time.Duration, unknownInterval time.Duration, modbusReadInterval time.Duration, waitDownlink bool, waitTimeout time.Duration) error {
+	if heartbeatInterval <= 0 {
+		return fmt.Errorf("heartbeat-interval must be greater than 0 in loop mode")
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	if duration > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, duration)
+		defer cancel()
+	}
+
+	frames, err := selectFrames("register,heartbeat,work,alarm,unknown,modbus-read", gatewayName)
+	if err != nil {
+		return err
+	}
+	byName := make(map[string]sampleFrame, len(frames))
+	for _, frame := range frames {
+		byName[frame.name] = frame
+	}
+
+	if waitDownlink {
+		go waitForDownlink(conn, waitTimeout)
+	}
+
+	if err := sendFrame(conn, byName["register"]); err != nil {
+		return err
+	}
+	if err := sendFrame(conn, byName["heartbeat"]); err != nil {
+		return err
+	}
+
+	type periodicFrame struct {
+		frame  sampleFrame
+		ticker *time.Ticker
+	}
+	periodic := []periodicFrame{
+		{frame: byName["heartbeat"], ticker: time.NewTicker(heartbeatInterval)},
+	}
+	if workInterval > 0 {
+		periodic = append(periodic, periodicFrame{frame: byName["work"], ticker: time.NewTicker(workInterval)})
+	}
+	if alarmInterval > 0 {
+		periodic = append(periodic, periodicFrame{frame: byName["alarm"], ticker: time.NewTicker(alarmInterval)})
+	}
+	if unknownInterval > 0 {
+		periodic = append(periodic, periodicFrame{frame: byName["unknown"], ticker: time.NewTicker(unknownInterval)})
+	}
+	if modbusReadInterval > 0 {
+		periodic = append(periodic, periodicFrame{frame: byName["modbus-read"], ticker: time.NewTicker(modbusReadInterval)})
+	}
+	defer func() {
+		for _, item := range periodic {
+			item.ticker.Stop()
+		}
+	}()
+
+	fmt.Printf("loop started gateway=%s heartbeat_interval=%s duration=%s\n", strings.TrimSpace(gatewayName), heartbeatInterval, duration)
+	for {
+		select {
+		case <-ctx.Done():
+			fmt.Fprintf(os.Stderr, "loop stopped: %v\n", ctx.Err())
+			return nil
+		default:
+		}
+		for _, item := range periodic {
+			select {
+			case <-ctx.Done():
+				fmt.Fprintf(os.Stderr, "loop stopped: %v\n", ctx.Err())
+				return nil
+			case <-item.ticker.C:
+				if err := sendFrame(conn, item.frame); err != nil {
+					return err
+				}
+			default:
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+func sendFrame(conn net.Conn, frame sampleFrame) error {
+	if _, err := conn.Write(frame.payload); err != nil {
+		return err
+	}
+	fmt.Printf("sent frame=%s bytes=%d hex=%s note=%s\n",
+		frame.name,
+		len(frame.payload),
+		strings.ToUpper(hex.EncodeToString(frame.payload)),
+		frame.note,
+	)
+	return nil
 }
 
 func mustHex(raw string) []byte {

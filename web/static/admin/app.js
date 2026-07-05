@@ -67,6 +67,11 @@
     return String(v);
   }
 
+  function countText(v) {
+    if (v === null || v === undefined || v === '') return '0';
+    return toText(v);
+  }
+
   function toNum(v) {
     var n = parseInt(v, 10);
     return isNaN(n) ? null : n;
@@ -337,6 +342,34 @@
       opTime: item.op_time || item.opTime || '',
       sentAt: item.sent_at_ms || item.sentAtMS || item.sent_at || '',
       finishedAt: item.finished_at_ms || item.finishedAtMS || item.finished_at || ''
+    };
+  }
+
+  function normalizeOperationLogRecord(item) {
+    if (!item) return {};
+    var pointId = toText(item.point_id || item.pointId || '');
+    var nodeId = toText(item.node_id || item.nodeId || '');
+    var gatewayName = toText(item.gateway_name || item.gatewayName || '');
+    var gatewayId = toText(item.gateway_id || item.gatewayId || '');
+    var target = gatewayName || gatewayId || '--';
+    if (pointId) target = '功能点 ' + pointId + (gatewayName ? ' / ' + gatewayName : '');
+    else if (nodeId) target = '采集执行器 ' + nodeId + (gatewayName ? ' / ' + gatewayName : '');
+    return {
+      raw: item,
+      opId: toText(item.op_id || item.opId || ''),
+      opType: toText(item.op_type_label || item.opTypeLabel || item.op_type || item.opType || ''),
+      gatewayId: gatewayId,
+      gatewayName: gatewayName,
+      nodeId: nodeId,
+      pointId: pointId,
+      targetSummary: target,
+      operatorName: toText(item.operator_name || item.operatorName || ''),
+      bindUserName: toText(item.bind_user_name || item.bindUserName || ''),
+      frequency: toText(item.frequency || item.freq || ''),
+      devid: toText(item.device_external_id || item.devid || ''),
+      content: toText(item.op_content || item.opContent || ''),
+      commandId: toText(item.command_id || item.commandId || ''),
+      operatedAt: item.operated_at_ms || item.operatedAtMS || item.operated_at || item.created_at || ''
     };
   }
 
@@ -695,6 +728,7 @@
       case 'gateways': renderGateways(container); updatePageTitle('设备管理'); break;
       case 'bindings': renderBindings(container); updatePageTitle('绑定管理'); break;
       case 'farmer-detail': renderFarmerDetail(container); updatePageTitle('农户详情'); break;
+      case 'operation-logs': renderOperationLogs(container); updatePageTitle('操作日志'); break;
       case 'logs': renderLogs(container); updatePageTitle('控制日志'); break;
       case 'payload-events': renderPayloadEvents(container); updatePageTitle('原始报文排查'); break;
       default: renderDashboard(container); updatePageTitle('Dashboard');
@@ -818,28 +852,29 @@
         var active = r === (d.range || '1d') ? ' btn-primary' : ' btn-outline';
         return '<button class="btn btn-sm' + active + '" onclick="switchDashboardRange(\'' + r + '\')">' + (rangeLabels[r] || r) + '</button>';
       }).join('');
+      var ingestTotal = (toNum(ingest.raw_event_count) || 0) + (toNum(ingest.telemetry_count) || 0);
 
       var html = '<div class="page-header" style="display:flex;align-items:center;justify-content:space-between">' +
         '<h2>Dashboard</h2>' +
         '<div style="display:flex;gap:6px">' + rangeBtns + '</div>' +
       '</div>' +
       '<div class="stat-grid">' +
-        '<div class="stat-card"><div class="stat-card-label">在线设备网关</div><div class="stat-card-value">' + (devices.gateway_online || 0) + '<span style="font-size:16px;font-weight:400;color:var(--color-text-muted)"> / ' + (devices.gateway_total || 0) + '</span></div></div>' +
-        '<div class="stat-card"><div class="stat-card-label">采集执行器</div><div class="stat-card-value">' + (devices.collector_node_total || 0) + '</div><div class="stat-card-sub">功能点数 ' + (devices.device_point_total || 0) + '</div></div>' +
-        '<div class="stat-card"><div class="stat-card-label">农户数量</div><div class="stat-card-value">' + (users.active_farmer_count || 0) + '</div><div class="stat-card-sub">管理员 ' + (users.admin_count || 0) + '</div></div>' +
-        '<div class="stat-card"><div class="stat-card-label">数据上报</div><div class="stat-card-value">' + ((ingest.raw_event_count || 0) + (ingest.telemetry_count || 0)).toLocaleString() + '</div><div class="stat-card-sub">最近上报：' + formatTime(devices.latest_report_time) + '</div></div>' +
+        '<div class="stat-card"><div class="stat-card-label">在线设备网关</div><div class="stat-card-value">' + countText(devices.gateway_online) + '<span style="font-size:16px;font-weight:400;color:var(--color-text-muted)"> / ' + countText(devices.gateway_total) + '</span></div></div>' +
+        '<div class="stat-card"><div class="stat-card-label">采集执行器</div><div class="stat-card-value">' + countText(devices.collector_node_total) + '</div><div class="stat-card-sub">功能点数 ' + countText(devices.device_point_total) + '</div></div>' +
+        '<div class="stat-card"><div class="stat-card-label">农户数量</div><div class="stat-card-value">' + countText(users.active_farmer_count) + '</div><div class="stat-card-sub">管理员 ' + countText(users.admin_count) + '</div></div>' +
+        '<div class="stat-card"><div class="stat-card-label">数据上报</div><div class="stat-card-value">' + toText(ingestTotal.toLocaleString()) + '</div><div class="stat-card-sub">最近上报：' + formatTime(devices.latest_report_time) + '</div></div>' +
       '</div>';
 
       // 第二行：设备状态 + 控制统计
       html += '<div class="stat-grid" style="margin-top:16px">' +
         '<div class="stat-card"><div class="stat-card-label">设备状态</div><div class="stat-card-value">' +
-          '<span style="color:var(--color-success)">正常 ' + (devices.normal_point_count || 0) + '</span>' +
-          ' / <span style="color:var(--color-danger)">异常 ' + (devices.abnormal_point_count || 0) + '</span>' +
-          ' / <span style="color:var(--color-text-muted)">离线 ' + (devices.offline_point_count || 0) + '</span>' +
-        '</div><div class="stat-card-sub">已绑定 ' + (devices.bound_point_count || 0) + ' / 未绑定 ' + (devices.unbound_point_count || 0) + '</div></div>' +
-        '<div class="stat-card"><div class="stat-card-label">心跳成功率</div><div class="stat-card-value">' + (ingest.heartbeat_success_rate != null ? ingest.heartbeat_success_rate + '%' : '--') + '</div><div class="stat-card-sub">成功 ' + (ingest.heartbeat_success || 0) + ' / 失败 ' + (ingest.heartbeat_failed || 0) + '</div></div>' +
-        '<div class="stat-card"><div class="stat-card-label">控制命令</div><div class="stat-card-value">' + (control.control_command_count || 0) + '</div><div class="stat-card-sub">成功 ' + (control.control_success_count || 0) + ' / 失败 ' + (control.control_failed_count || 0) + '</div></div>' +
-        '<div class="stat-card"><div class="stat-card-label">注册 / 遥测</div><div class="stat-card-value">' + (ingest.register_count || 0) + ' / ' + (ingest.telemetry_count || 0) + '</div><div class="stat-card-sub">原始报文 ' + (ingest.raw_event_count || 0) + '</div></div>' +
+          '<span style="color:var(--color-success)">正常 ' + countText(devices.normal_point_count) + '</span>' +
+          ' / <span style="color:var(--color-danger)">异常 ' + countText(devices.abnormal_point_count) + '</span>' +
+          ' / <span style="color:var(--color-text-muted)">离线 ' + countText(devices.offline_point_count) + '</span>' +
+        '</div><div class="stat-card-sub">已绑定 ' + countText(devices.bound_point_count) + ' / 未绑定 ' + countText(devices.unbound_point_count) + '</div></div>' +
+        '<div class="stat-card"><div class="stat-card-label">心跳成功率</div><div class="stat-card-value">' + (ingest.heartbeat_success_rate != null ? toText(ingest.heartbeat_success_rate) + '%' : '--') + '</div><div class="stat-card-sub">成功 ' + countText(ingest.heartbeat_success) + ' / 失败 ' + countText(ingest.heartbeat_failed) + '</div></div>' +
+        '<div class="stat-card"><div class="stat-card-label">控制命令</div><div class="stat-card-value">' + countText(control.control_command_count) + '</div><div class="stat-card-sub">成功 ' + countText(control.control_success_count) + ' / 失败 ' + countText(control.control_failed_count) + '</div></div>' +
+        '<div class="stat-card"><div class="stat-card-label">注册 / 遥测</div><div class="stat-card-value">' + countText(ingest.register_count) + ' / ' + countText(ingest.telemetry_count) + '</div><div class="stat-card-sub">原始报文 ' + countText(ingest.raw_event_count) + '</div></div>' +
       '</div>';
 
       container.innerHTML = html;
@@ -869,7 +904,7 @@
           '<h3>农户列表</h3>' +
           '<div class="table-header-right">' +
             '<input class="table-search" id="user-search" type="text" placeholder="搜索姓名/手机号/微信OpenID...">' +
-            '<span class="table-count">共 ' + farmers.length + ' 户</span>' +
+            '<span class="table-count">共 ' + toText(farmers.length) + ' 户</span>' +
           '</div>' +
         '</div>' +
         '<div class="table-wrap"><table>' +
@@ -883,7 +918,7 @@
                 '<td>' + escHtml(u.mobile || '--') + '</td>' +
                 '<td>' + escHtml(u.address || '--') + '</td>' +
                 '<td><span style="font-size:11px;word-break:break-all">' + escHtml(u.wechat_openid || '--') + '</span></td>' +
-                '<td>' + (u.binding_count || 0) + ' 条</td>' +
+                '<td>' + countText(u.binding_count) + ' 条</td>' +
                 '<td><span class="badge ' + statusBadge + '">' + escHtml(u.status_label || '正常') + '</span></td>' +
                 '<td>' + formatTime(u.created_at) + '</td>' +
                 '<td><button class="btn btn-outline btn-sm" onclick="goFarmerDetail(\'' + u.user_id + '\')">详情</button></td>' +
@@ -948,7 +983,7 @@
         '<td>' + escHtml(u.mobile || '--') + '</td>' +
         '<td>' + escHtml(u.address || '--') + '</td>' +
         '<td><span style="font-size:11px;word-break:break-all">' + escHtml(u.wechat_openid || '--') + '</span></td>' +
-        '<td>' + (u.binding_count || 0) + ' 条</td>' +
+        '<td>' + countText(u.binding_count) + ' 条</td>' +
         '<td><span class="badge ' + statusBadge + '">' + escHtml(u.status_label || '正常') + '</span></td>' +
         '<td>' + formatTime(u.created_at) + '</td>' +
         '<td><button class="btn btn-outline btn-sm" onclick="goFarmerDetail(\'' + u.user_id + '\')">详情</button></td>' +
@@ -1827,7 +1862,7 @@
           '<h3>绑定管理</h3>' +
           '<div class="table-header-right">' +
             '<button class="btn btn-primary btn-sm" onclick="openBindingAddModal()">+ 新增绑定</button>' +
-            '<span class="table-count">共 ' + bindings.length + ' 条</span>' +
+            '<span class="table-count">共 ' + toText(bindings.length) + ' 条</span>' +
           '</div>' +
         '</div>' +
         '<div class="filter-bar" style="display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap">' +
@@ -2255,6 +2290,63 @@
     }
   }
 
+  // ---------- 操作日志 ----------
+  async function renderOperationLogs(container) {
+    container.innerHTML = '<div class="loading-state"><div class="loading-spinner"></div><p>加载操作日志...</p></div>';
+    try {
+      var res = await NHApi.getOperationLogs();
+      if (!res.data) { container.innerHTML = '<div class="error-state"><p>加载失败</p><button class="btn btn-outline btn-sm" onclick="renderPage()">重试</button></div>'; return; }
+      var logs = (res.data || []).map(normalizeOperationLogRecord);
+
+      var html = '<div class="table-section">' +
+        '<div class="table-header">' +
+          '<h3>操作日志</h3>' +
+          '<div class="table-header-right">' +
+            '<input class="table-search" id="operation-log-search" type="text" placeholder="搜索操作人/农户/设备网关/内容...">' +
+            '<span class="table-count">共 ' + toText(logs.length) + ' 条</span>' +
+          '</div>' +
+        '</div>' +
+        '<div class="table-wrap"><table>' +
+          '<thead><tr><th>操作ID</th><th>类型</th><th>操作人</th><th>农户</th><th>对象</th><th>采集执行器/功能点</th><th>内容</th><th>时间</th></tr></thead>' +
+          '<tbody id="operation-log-tbody">' +
+            logs.map(function (l) {
+              var badgeClass = l.opType === '绑定' ? 'badge-info' :
+                l.opType === '解绑' ? 'badge-danger' :
+                l.opType === '配置' ? 'badge-warning' :
+                l.opType === '控制' ? 'badge-success' : 'badge-muted';
+              var detailParts = [];
+              if (l.nodeId) detailParts.push('采集执行器 ' + l.nodeId);
+              if (l.pointId) detailParts.push('功能点 ' + l.pointId);
+              if (l.frequency) detailParts.push('频点 ' + l.frequency);
+              if (l.devid) detailParts.push('DevID ' + l.devid);
+              return '<tr>' +
+                '<td style="font-family:monospace;font-size:12px">' + escHtml(l.opId || '--') + '</td>' +
+                '<td><span class="badge ' + badgeClass + '">' + escHtml(l.opType || '--') + '</span></td>' +
+                '<td>' + escHtml(l.operatorName || '--') + '</td>' +
+                '<td>' + escHtml(l.bindUserName || '--') + '</td>' +
+                '<td>' + escHtml(l.targetSummary || '--') + '</td>' +
+                '<td>' + escHtml(detailParts.join(' · ') || '--') + '</td>' +
+                '<td class="log-result-cell">' + escHtml(l.content || '--') + '</td>' +
+                '<td style="white-space:nowrap">' + formatFullTime(l.operatedAt) + '</td>' +
+              '</tr>';
+            }).join('') +
+          '</tbody>' +
+        '</table></div>' +
+      '</div>';
+
+      container.innerHTML = html;
+
+      $('#operation-log-search').oninput = function () {
+        var q = this.value.toLowerCase();
+        $$('#operation-log-tbody tr').forEach(function (tr) {
+          tr.style.display = tr.textContent.toLowerCase().includes(q) ? '' : 'none';
+        });
+      };
+    } catch (e) {
+      container.innerHTML = '<div class="error-state"><p>加载失败</p><button class="btn btn-outline btn-sm" onclick="renderPage()">重试</button></div>';
+    }
+  }
+
   // ---------- 控制日志 ----------
   async function renderLogs(container) {
     container.innerHTML = '<div class="loading-state"><div class="loading-spinner"></div><p>加载控制日志...</p></div>';
@@ -2268,7 +2360,7 @@
           '<h3>控制日志</h3>' +
           '<div class="table-header-right">' +
             '<input class="table-search" id="log-search" type="text" placeholder="搜索操作人/设备/Hex...">' +
-            '<span class="table-count">共 ' + logs.length + ' 条</span>' +
+            '<span class="table-count">共 ' + toText(logs.length) + ' 条</span>' +
           '</div>' +
         '</div>' +
         '<div class="table-wrap"><table>' +
@@ -2392,7 +2484,7 @@
       var html = '<div class="table-section">' +
         '<div class="table-header">' +
           '<h3>原始报文</h3>' +
-          '<span class="table-count">共 ' + total + ' 条</span>' +
+          '<span class="table-count">共 ' + toText(total) + ' 条</span>' +
         '</div>' +
         '<div class="filter-bar" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">' +
           '<select class="form-input" id="pe-filter-type" style="width:120px;height:32px;font-size:13px">' +

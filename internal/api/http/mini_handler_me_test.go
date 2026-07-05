@@ -178,8 +178,8 @@ func TestHandleMe_ReturnsFullProfile(t *testing.T) {
 	if !ok || uint8(role) != uint8(domain.RoleFarmer) {
 		t.Errorf("role: want %d, got %v", domain.RoleFarmer, data["role"])
 	}
-	bindingCount, ok := data["binding_count"].(float64)
-	if !ok || int(bindingCount) != 4 {
+	bindingCount, ok := data["binding_count"].(string)
+	if !ok || bindingCount != "4" {
 		t.Errorf("binding_count: want 4, got %v", data["binding_count"])
 	}
 }
@@ -225,8 +225,8 @@ func TestHandleMe_ReturnsEmptyStringsForNullFields(t *testing.T) {
 	if data["remark"] != "" {
 		t.Errorf("remark: want '', got %v", data["remark"])
 	}
-	bindingCount, _ := data["binding_count"].(float64)
-	if int(bindingCount) != 0 {
+	bindingCount, _ := data["binding_count"].(string)
+	if bindingCount != "0" {
 		t.Errorf("binding_count: want 0, got %v", bindingCount)
 	}
 }

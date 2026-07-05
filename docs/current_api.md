@@ -22,6 +22,11 @@ HTTP Adapter API 是 Go `gateway-adapter` 和 Go `nehuang-server` 之间的内�
 - 标准 4 小时工作包按硬件主动上行保留；临时读取采用“云端下发读取 hex 后返回 raw”。
 - ACK/清缓存/完整工作包字段语义未最终冻结，当前只做原始留存与状态追踪。
 
+API 与展示口径（当前）：
+
+- 雪花 ID 与身份/计数字段按字符串返回，避免 JS Number 精度丢失；典型包含：`user_id`、`gateway_id`、`point_id`、`bind_id`、`command_id`、`raw_event_id`、`count`、`total` 等。
+- 传感器值与状态在内部保持数值类型，继续按数字入库、聚合与计算。
+
 | Method | Path | Auth | Status |
 |--------|------|------|--------|
 | POST | `/api/v1/adapter/raw-frames` | `X-Adapter-Token` | 正式，硬件 TCP raw frame 主入口 |
@@ -71,6 +76,7 @@ HTTP Adapter API 是 Go `gateway-adapter` 和 Go `nehuang-server` 之间的内�
 | POST | `/api/v1/admin/gateways/{gateway_id}/seed-points` | 联调；给已注册设备网关创建/更新测试采集执行器和功能点 |
 | GET | `/api/v1/admin/raw-events?limit=` | 正式 |
 | GET | `/api/v1/admin/control-logs?limit=` | 正式；读取 `control_commands`，展示来源、command hex、命令状态、下发/完成时间 |
+| GET | `/api/v1/admin/operation-logs?limit=` | 正式；读取 `op_records`，展示绑定、解绑、配置、控制等操作审计 |
 | GET | `/api/v1/admin/device-tree` | 正式 |
 | GET | `/api/v1/admin/device-points?keyword=&bind_status=` | 正式 |
 | PATCH | `/api/v1/admin/device-points/{point_id}` | 正式，更新点位配置 |
@@ -86,6 +92,8 @@ HTTP Adapter API 是 Go `gateway-adapter` 和 Go `nehuang-server` 之间的内�
 - 兼容功能点绑定：`binding_type=point`、`user_id`、`point_id`
 
 默认产品口径是农户绑定设备网关：一个农户可绑定多个设备网关；同一设备网关同时只能有一个 active 农户绑定。旧功能点绑定继续可读、可解绑、可创建，用于兼容历史数据和精细授权场景。
+
+- 绑定与解绑操作会写入 `op_records`（用于追踪审计）；`DELETE /api/v1/admin/bindings/{bind_id}` 按解绑语义落地。
 
 ### POST `/api/v1/admin/gateways/{gateway_id}/seed-points`
 
