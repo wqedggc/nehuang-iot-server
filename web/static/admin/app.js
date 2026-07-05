@@ -998,7 +998,7 @@
           '<button class="btn btn-primary btn-sm" id="btn-bind-device" onclick="openBindDeviceModal(\'' + userId + '\')">+ 绑定网关</button>' +
         '</div>' +
         '<div class="table-wrap"><table><thead><tr>' +
-          '<th>绑定类型</th><th>绑定对象</th><th>关联功能点</th><th>网关ID</th><th>绑定时间</th>' +
+          '<th>绑定类型</th><th>绑定对象</th><th>关联功能点</th><th>网关ID</th><th>绑定时间</th><th>操作</th>' +
         '</tr></thead><tbody>';
 
       bindings.forEach(function (b) {
@@ -1017,6 +1017,7 @@
           '<td>' + pointInfo + '</td>' +
           '<td>' + escHtml((b.gatewayId || '--')) + '</td>' +
           '<td>' + formatTime(b.createdAt || b.created_at) + '</td>' +
+          '<td><button class="btn btn-danger btn-sm js-remove-binding" data-bind-id="' + escHtml(b.bindId || b.bind_id || '') + '">解绑</button></td>' +
         '</tr>';
       });
 
@@ -1027,6 +1028,7 @@
       }
 
       container.innerHTML = html;
+      bindRemoveButtons(container);
     } catch (e) {
       container.innerHTML = '<div class="error-state"><p>加载失败</p><button class="btn btn-outline btn-sm" onclick="renderPage()">重试</button></div>';
     }
@@ -1412,7 +1414,7 @@
         var keyword = (gatewayDetailState.keyword || '').trim().toLowerCase();
         var collectors = gateway.collectors || [];
         if (collectors.length === 0) {
-          detailWrap.innerHTML = '<div class="empty-state"><p>该网关暂无采集执行器与功能点</p></div>';
+          detailWrap.innerHTML = '<div class="empty-state"><p>该网关暂无采集执行器与功能点</p><p style="font-size:12px;color:var(--color-text-muted);margin-top:6px">当前只完成设备网关注册；需要工作包解析或点位配置写入后，才会在这里和农户端展示具体设备。</p></div>';
           return;
         }
 
@@ -1817,9 +1819,10 @@
             '<td>' + (deviceLine === '--' ? '--' : deviceLine) + '</td>' +
             '<td>' + statusLabel + '</td>' +
             '<td>' + formatTime(b.createdAt || b.created_at) + '</td>' +
-            '<td><button class="btn btn-danger btn-sm" onclick="doRemoveBinding(' + (b.bindId || b.bind_id) + ')">解绑</button></td>' +
+            '<td><button class="btn btn-danger btn-sm js-remove-binding" data-bind-id="' + escHtml(b.bindId || b.bind_id || '') + '">解绑</button></td>' +
           '</tr>';
         }).join('');
+        bindRemoveButtons(tbody);
       }
 
       renderBindingsTable('', '', '', '');
@@ -2120,11 +2123,25 @@
     }
   }
 
+  function bindRemoveButtons(root) {
+    if (!root) return;
+    root.querySelectorAll('.js-remove-binding').forEach(function (btn) {
+      btn.onclick = function () {
+        doRemoveBinding(this.dataset.bindId || '');
+      };
+    });
+  }
+
   async function doRemoveBinding(id) {
+    id = toText(id).trim();
+    if (!id) {
+      showToast('绑定ID缺失', 'error');
+      return;
+    }
     if (!confirm('确认解除该绑定关系？')) return;
     try {
       var res = await NHApi.removeBinding(id);
-      if (res.data && res.data.deleted) {
+      if ((res.data && res.data.deleted) || res.code === 200 || res.success === true) {
         showToast('解绑成功', 'success');
         renderPage();
       } else {
