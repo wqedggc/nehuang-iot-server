@@ -1,6 +1,6 @@
 /**
  * 涅凰智农 C 端 — 应用逻辑
- * Hash 路由： #login | #devices | #device/:id | #history/:id | #settings
+ * Hash 路由： #login | #devices | #device/:id | #history/:id | #settings | #help-center
  */
 
 (function () {
@@ -103,8 +103,17 @@
 
   function parseHash() {
     var hash = window.location.hash.replace('#', '') || 'devices';
-    var parts = hash.split('/');
-    return { page: parts[0], params: parts.slice(1) };
+    var questionIndex = hash.indexOf('?');
+    var routePart = questionIndex >= 0 ? hash.substring(0, questionIndex) : hash;
+    var parts = routePart.split('/');
+    return { page: parts[0], params: parts.slice(1), query: questionIndex >= 0 ? hash.substring(questionIndex + 1) : '' };
+  }
+
+  function getHashParam(name) {
+    var route = parseHash();
+    if (!route.query) return null;
+    var params = new URLSearchParams(route.query);
+    return params.get(name);
   }
 
   // ============================================================
@@ -128,6 +137,7 @@
       case 'device': renderDeviceDetail(container, route.params[0]); updateTopbar('设备详情', true); break;
       case 'history': renderHistory(container, route.params[0]); updateTopbar('历史曲线', true); break;
       case 'settings': renderSettings(container); updateTopbar('设置', true); break;
+      case 'help-center': renderHelpCenter(container); updateTopbar('使用说明', true); break;
       default: renderDeviceList(container); updateTopbar('我的设备', false);
     }
   }
@@ -550,6 +560,41 @@
     ctx.fillText((info.func_name || '采集值') + (info.unit ? ' (' + info.unit + ')' : ''), padding.left, 16);
   }
 
+  // ---------- 使用说明 ----------
+  function renderHelpCenter(container) {
+    var section = getHashParam('section') || 'mini';
+    var sectionHint = section === 'mini' || section === 'c' || section === 'c端' ? 'C 端' : 'C 端';
+
+    container.innerHTML = '<div class="page-header"><h2>使用说明</h2><span class="table-count">管理员 / C 端 / 硬件联调</span></div>' +
+      '<div class="settings-section">' +
+        '<div style="padding:14px 16px;border-bottom:1px solid var(--color-border);font-weight:600;color:var(--color-text)">当前查看：' + escHtml(sectionHint) + '</div>' +
+        '<div style="padding:12px 16px;color:var(--color-text);font-size:13px;line-height:1.7">' +
+          '<p style="margin-top:0">本页只描述“怎么用”，不展示实现代码、服务地址、数据库字段和密钥。</p>' +
+          '<p>核心术语：<strong>设备网关</strong> / <strong>采集执行器</strong> / <strong>功能点</strong> / <strong>原始报文</strong>。</p>' +
+          '<p>路径建议：设置页 → 使用说明，出现问题后先核对“设备网关是否在线、原始报文是否有 register/keepalive、再看控制命令状态”。</p>' +
+        '</div>' +
+      '</div>' +
+      '<div class="settings-section">' +
+        '<div style="padding:14px 16px;border-bottom:1px solid var(--color-border);font-weight:600;color:var(--color-text)">C 端操作流程</div>' +
+        '<div style="padding:12px 16px;color:var(--color-text-secondary);font-size:13px;line-height:1.8">' +
+          '<ol style="padding-left:20px;margin:0">' +
+            '<li>打开我的设备查看绑定的采集执行器与功能点</li>' +
+            '<li>点击设备查看实时值、状态与更新时间</li>' +
+            '<li>可用控制的功能点点击控制后会创建异步命令</li>' +
+            '<li>命令状态逐步更新为 pending / sent / ack / succeeded / failed / timeout</li>' +
+            '<li>原始报文异常优先到“原始报文排查”做分类与二次回放</li>' +
+          '</ol>' +
+        '</div>' +
+      '</div>' +
+      '<div class="settings-section">' +
+        '<div style="padding:14px 16px;border-bottom:1px solid var(--color-border);font-weight:600;color:var(--color-text)">常见问题</div>' +
+        '<div style="padding:12px 16px;color:var(--color-text);font-size:13px;line-height:1.7">' +
+          '<p style="margin-top:0">设备网关不在线、离线判断按服务端状态心跳时间进行更新；请确认至少有一次近似 24 小时内的 keepalive 上报。</p>' +
+          '<p>控制命令未生效时，先确认网关是否从 Adapter 拉取到 pending 并成功写回 TCP。</p>' +
+        '</div>' +
+      '</div>';
+  }
+
   // ---------- 设置 ----------
   async function renderSettings(container) {
     container.innerHTML = '<div class="loading-state"><div class="loading-spinner"></div><p>加载用户信息...</p></div>';
@@ -614,6 +659,14 @@
         '</div>' +
       '</div>';
 
+      // ── 快速入口：使用说明 ──
+      html += '<div class="settings-section">' +
+        '<div class="settings-item" id="btn-open-help-center" style="justify-content:space-between;">' +
+          '<span class="settings-item-label">查看使用说明</span>' +
+          '<span style="font-size:13px;color:var(--color-text-muted)">打开帮助中心</span>' +
+        '</div>' +
+      '</div>';
+
       // ── 退出登录 ──
       html += '<div class="settings-section">' +
         '<div class="settings-item"><span class="settings-item-danger" onclick="doLogout()">退出登录</span></div>' +
@@ -625,6 +678,10 @@
       $('#btn-edit-profile').onclick = function () {
         $('#profile-edit-form').style.display = '';
         this.style.display = 'none';
+      };
+
+      $('#btn-open-help-center').onclick = function () {
+        navigate('help-center?section=mini');
       };
 
       $('#btn-cancel-edit').onclick = function () {

@@ -64,6 +64,7 @@
 - 原始报文排查页面。
 - 原始报文排查按 `event_type` 分开展示注册、心跳、工作数据、告警、未知包。
 - 原始报文排查默认检索最近 24 小时；支持按设备网关、`message_id`、`payload_hex` 过滤（联调时优先回看最近24h）。
+- 管理端添加帮助中心路由 `#/help-center`，用于管理员、C 端、硬件联调的操作说明集中展示（不含敏感实现细节）。
 - Mini 微信登录接口。
 - Mini 农户资料、设备列表、实时数据、历史曲线。
 - Dashboard/Mini history 支持 `1d/3d/7d/30d`，兼容 `1h/6h/24h`。
@@ -218,6 +219,7 @@
 - Taro 小程序代码在 `/Users/shore/WorkBuddy/shoreos-taro`。
 - 已增加涅凰独立构建入口 `TARO_APP_TARGET=nehuang`。
 - 涅凰登录页已走 `Taro.login()` -> `/api/v1/mini/login`。
+- C 端设置页已补充“查看使用说明”入口，跳转 `#/help-center?section=mini`。
 - 尚未完成微信开发者工具/真机端到端验收。
 
 ### 2.6 部署与运维

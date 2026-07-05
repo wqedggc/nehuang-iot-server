@@ -8,6 +8,7 @@
 
 | 文档 | 用途 |
 |------|------|
+| `product_manual.md` | 运营与用户侧可用手册（管理员、C 端、联调说明入口） |
 | `current_product_status.md` | 当前已实现能力、Gap、待确认问题 |
 | `current_api.md` | 当前代码真实注册的 HTTP API |
 | `gateway_adapter.md` | 硬件端联调指南、TCP 接入方式、下行命令链路和云端 Adapter 运行说明 |

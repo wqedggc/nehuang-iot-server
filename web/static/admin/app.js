@@ -1,6 +1,6 @@
 /**
  * 涅凰智农 管理端 — 应用逻辑
- * Hash 路由： #login | #dashboard | #users | #gateways | #bindings | #logs
+ * Hash 路由： #login | #dashboard | #users | #gateways | #bindings | #operation-logs | #logs | #payload-events | #help-center
  */
 
 (function () {
@@ -11,6 +11,7 @@
   // ============================================================
   var currentPage = '';
   var bindingDialogState = null;
+  var helpFlowSerial = 0;
 
   // ============================================================
   // 工具
@@ -796,6 +797,184 @@
   // ============================================================
   // 页面渲染
   // ============================================================
+  function renderMermaidOrTextMermaid(container, mermaidSource, fallbackText) {
+    var flowId = 'help-flow-' + (++helpFlowSerial) + '-' + Date.now();
+    var blockStyle = 'background:var(--color-bg);border:1px solid var(--color-border);border-radius:var(--radius-sm);padding:12px;font-size:12px;line-height:1.6;white-space:pre-wrap;word-break:break-all;overflow:auto;';
+    var diagramStyle = 'background:var(--color-bg);border:1px solid var(--color-border);border-radius:var(--radius-sm);padding:12px;overflow:auto;white-space:pre-wrap;word-break:break-all;font-size:12px;line-height:1.6;';
+
+    return '<div id="' + flowId + '" class="help-mermaid-wrap" style="margin-top:8px;">' +
+      '<div id="' + flowId + '-fallback" style="' + blockStyle + '">' +
+        escHtml(fallbackText) +
+      '</div>' +
+      '<pre id="' + flowId + '-diagram" class="help-mermaid-source code-panel" style="' + diagramStyle + 'display:none;">' +
+        escHtml(mermaidSource) +
+      '</pre>' +
+    '</div>';
+  }
+
+  function renderHelpMermaid(container) {
+    if (!container) return;
+    var wraps = container.querySelectorAll('.help-mermaid-wrap');
+    var hasMermaid = typeof window.mermaid === 'object' && typeof window.mermaid.run === 'function';
+    for (var i = 0; i < wraps.length; i++) {
+      var wrap = wraps[i];
+      var fallback = wrap.querySelector('[id$="-fallback"]');
+      var source = wrap.querySelector('.help-mermaid-source');
+      if (!fallback || !source) continue;
+
+      if (!hasMermaid) {
+        source.style.display = 'none';
+        fallback.style.display = '';
+        continue;
+      }
+
+      try {
+        source.classList.add('mermaid');
+        source.style.display = '';
+        source.textContent = source.textContent.trim();
+        if (typeof window.mermaid.initialize === 'function' && !window.__nhMermaidInitialized) {
+          window.mermaid.initialize({ startOnLoad: false });
+          window.__nhMermaidInitialized = true;
+        }
+        window.mermaid.run({ nodes: [source] });
+        fallback.style.display = 'none';
+      } catch (e) {
+        source.style.display = 'none';
+        fallback.style.display = '';
+      }
+    }
+  }
+
+  function renderHelpCenter(container) {
+    var adminAnchor = getHashParam('section') || 'admin';
+    var adminActive = adminAnchor === 'admin';
+    var miniActive = adminAnchor === 'mini';
+    var hardwareActive = adminAnchor === 'hardware';
+
+    var adminFlow = 'sequenceDiagram\n'
+      + '    autonumber\n'
+      + '    participant Admin as 管理员H5\n'
+      + '    participant Server as nehuang-server\n'
+      + '    participant Adapter as Gateway Adapter\n'
+      + '    participant Device as 设备网关/采集执行器\n'
+      + '    Admin->>Server: 1 登录 /devices /control 接口\n'
+      + '    Server-->>Admin: 1 权限与列表返回\n'
+      + '    Admin->>Server: 2 创建/管理设备网关、采集执行器、功能点\n'
+      + '    Server-->>Admin: 2 配置结果\n'
+      + '    Admin->>Server: 3 下发自定义Hex控制\n'
+      + '    Server-->>Adapter: 3 下发pending command\n'
+      + '    Adapter->>Device: 3 通过TCP下发command_hex\n'
+      + '    Device-->>Adapter: 3 ACK或回报（设备端确认可选）\n'
+      + '    Adapter-->>Server: 3 更新命令状态';
+
+    var miniFlow = 'sequenceDiagram\n'
+      + '    autonumber\n'
+      + '    participant 农户 as Mini App\n'
+      + '    participant Server as nehuang-server\n'
+      + '    participant Adapter as Gateway Adapter\n'
+      + '    participant Device as 设备网关/采集执行器\n'
+      + '    农户->>Server: 1 登录/拉取绑定的设备网关与功能点\n'
+      + '    Server-->>农户: 1 设备状态与实时数据\n'
+      + '    农户->>Server: 2 发起控制（hex或动作映射）\n'
+      + '    Server-->>Adapter: 2 下发pending command\n'
+      + '    Adapter->>Device: 2 下发 command_hex\n'
+      + '    Device-->>Adapter: 2 上报状态/原始报文\n'
+      + '    Adapter-->>Server: 2 结果入库与展示';
+
+    var hardwareFlow = 'sequenceDiagram\n'
+      + '    autonumber\n'
+      + '    participant Gateway as 设备网关\n'
+      + '    participant Adapter as Gateway Adapter\n'
+      + '    participant Server as nehuang-server\n'
+      + '    Gateway->>Adapter: 1 TCP发送 register/keepalive/work/alarm/unknown\n'
+      + '    Adapter->>Server: 1 POST /api/v1/adapter/raw-frames\n'
+      + '    Server-->>Adapter: 1 回包确认，返回raw_event_id\n'
+      + '    Gateway->>Adapter: 2 监听下发窗口内命令\n'
+      + '    Adapter-->>Gateway: 2 TCP下发 command_hex（可多次重试）\n'
+      + '    Adapter-->>Server: 3 command sent/结果回写\n'
+      + '    Server-->>DB: 3 raw留痕与状态更新';
+
+    container.innerHTML = '<div class="page-header"><h2>帮助中心</h2><span class="table-count">管理员 / C 端 / 硬件联调说明</span></div>' +
+      '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:8px;margin-bottom:16px">' +
+        '<button class="btn btn-outline btn-sm" onclick="window.location.hash=\'help-center?section=admin\'">管理员手册</button>' +
+        '<button class="btn btn-outline btn-sm" onclick="window.location.hash=\'help-center?section=mini\'">C 端手册</button>' +
+        '<button class="btn btn-outline btn-sm" onclick="window.location.hash=\'help-center?section=hardware\'">硬件联调手册</button>' +
+      '</div>' +
+      '<div class="info-card" id="help-admin" style="display:' + (adminActive ? '' : 'none') + '">' +
+        '<h3>管理员手册</h3>' +
+        '<div class="detail-section">' +
+          '<div class="detail-section-title" style="font-weight:600;font-size:13px">管理员核心操作</div>' +
+          '<p style="font-size:13px;color:var(--color-text-muted);margin-top:6px">' +
+            '目标模型固定为：<strong>设备网关 -> 采集执行器 -> 功能点</strong>。管理端按以下闭环操作。' +
+          '</p>' +
+          '<ol style="margin:10px 0 0 20px;font-size:13px;color:var(--color-text);line-height:1.7">' +
+            '<li>绑定策略：为农户绑定设备网关（默认可见该网关下授权范围），或按采集执行器/功能点做更细粒度授权。</li>' +
+            '<li>在“设备管理”先确认设备网关可见，再补充采集执行器和默认功能点，完成联调展示。</li>' +
+            '<li>在“原始报文排查”中按设备网关、message_id、payload_hex 搜索 raw，优先看最近 24 小时。</li>' +
+            '<li>控制面板发起控制时先返回 pending，命令状态会按 pending / sent / ack / succeeded / failed / timeout 展示。</li>' +
+            '<li>控制日志用于排查用户和设备动作链路，重点关注 command_hex、目标设备网关、设备执行器与功能点。</li>' +
+          '</ol>' +
+        '</div>' +
+        '<div class="detail-section">' +
+          '<h4 style="font-size:14px;margin:0 0 8px">常见问题</h4>' +
+          '<p style="font-size:13px;color:var(--color-text-muted);margin-bottom:6px">“原始报文排查”只能按原始 hex 与分类结果查询，不应出现地址、密码、代码路径、内部 token。</p>' +
+          '<p style="font-size:13px;color:var(--color-text-muted)">请先确认该网关是否有注册/心跳报文；无注册报文通常说明网关尚未加入 cloud_gateways。</p>' +
+        '</div>' +
+        '<div class="detail-section">' +
+          '<h4 style="font-size:14px;margin:0 0 8px">管理端流程图（Mermaid / 无图形降级到文字）</h4>' +
+          renderMermaidOrTextMermaid(container, adminFlow, '管理员：管理员H5 -> 服务端 -> Adapter -> 设备网关。\\n\\n1) 管理员登录/配置设备树\\n2) 下发控制命令\\n3) Adapter 写 TCP 下发\\n4) 命令状态回填展示') +
+        '</div>' +
+      '</div>' +
+      '<div class="info-card" id="help-mini" style="display:' + (miniActive ? '' : 'none') + '">' +
+        '<h3>C 端手册</h3>' +
+        '<div class="detail-section">' +
+          '<div class="detail-section-title" style="font-weight:600;font-size:13px">用户入口</div>' +
+          '<ol style="margin:10px 0 0 20px;font-size:13px;color:var(--color-text);line-height:1.7">' +
+            '<li>登录后进入“我的设备”，系统返回绑定给当前农户的采集执行器与功能点。</li>' +
+            '<li>设备详情页查看实时值、运行范围和设备信息。</li>' +
+            '<li>控制页先确认按钮行为；控制结果会异步返回命令状态（等待下发/已下发/超时）。</li>' +
+            '<li>历史曲线支持 1d/3d/7d/30d 与兼容参数。</li>' +
+            '<li>设置页可查看/编辑基本资料，并可从“使用说明”跳转此帮助章节。</li>' +
+          '</ol>' +
+        '</div>' +
+        '<div class="detail-section">' +
+          '<h4 style="font-size:14px;margin:0 0 8px">C 端流程图（Mermaid / 无图形降级到文字）</h4>' +
+          renderMermaidOrTextMermaid(container, miniFlow, 'Mini：登录 -> 绑定设备 -> 控制请求 -> Adapter 下发命令 -> 设备回报。\\n\\n离线/失败以“控制日志状态”显示。') +
+        '</div>' +
+      '</div>' +
+      '<div class="info-card" id="help-hardware" style="display:' + (hardwareActive ? '' : 'none') + '">' +
+        '<h3>硬件联调手册</h3>' +
+        '<div class="detail-section">' +
+          '<p style="font-size:13px;color:var(--color-text-muted);margin-bottom:10px">' +
+            '云端职责为：收 raw bytes、留痕、落库、解析分类与透传控制。硬件侧对齐时，首要保证数据可追溯。' +
+          '</p>' +
+          '<p style="font-size:13px;color:var(--color-text-secondary);font-weight:600;margin-bottom:6px">接入约定（对接方）</p>' +
+          '<ul style="margin:0 0 10px 20px;font-size:13px;color:var(--color-text);line-height:1.7">' +
+            '<li>设备网关作为 TCP 客户端接入 Adapter 的 8081（固定端口以实际发布配置为准）。</li>' +
+            '<li>云端仅收包，不要求设备直连 HTTP。</li>' +
+            '<li>建议在联调阶段先发 register + keepalive + 工作 / 告警 / 未识别样例。</li>' +
+            '<li>所有调试入口使用占位符，不暴露真实内网地址与 token：如 192.0.2.1:8081 与 TOKEN。</li>' +
+          '</ul>' +
+          '<div class="code-panel">示例：<br>1) 先发送注册（FP_xxx）&lt;br&gt;2) 每隔固定间隔发送心跳 &lt;br&gt;3) 发送工作/告警/未知包测试排查</div>' +
+        '</div>' +
+        '<div class="detail-section">' +
+          '<h4 style="font-size:14px;margin:0 0 8px">联调链路图（Mermaid / 无图形降级到文字）</h4>' +
+          renderMermaidOrTextMermaid(container, hardwareFlow, '硬件：register/keepalive/raw -> Adapter -> raw-frames -> 服务端入库。\\n\\n控制通路：服务端 pending -> Adapter -> 命令下发。') +
+        '</div>' +
+      '</div>' +
+      '<div style="font-size:11px;color:var(--color-text-muted);margin-top:10px">说明：本页面为产品使用说明；不展示内部源码、数据库字段、服务地址或密钥类信息。</div>';
+
+    var sectionMap = {
+      admin: 'help-admin',
+      mini: 'help-mini',
+      hardware: 'help-hardware'
+    };
+    var sectionId = sectionMap[adminAnchor] || 'help-admin';
+    var target = document.getElementById(sectionId);
+    renderHelpMermaid(container);
+    if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
   function renderPage() {
     var route = parseHash();
     currentPage = route.page;
@@ -821,6 +1000,7 @@
       case 'farmer-detail': renderFarmerDetail(container); updatePageTitle('农户详情'); break;
       case 'operation-logs': renderOperationLogs(container); updatePageTitle('操作日志'); break;
       case 'logs': renderLogs(container); updatePageTitle('控制日志'); break;
+      case 'help-center': renderHelpCenter(container); updatePageTitle('帮助中心'); break;
       case 'payload-events': renderPayloadEvents(container); updatePageTitle('原始报文排查'); break;
       default: renderDashboard(container); updatePageTitle('Dashboard');
     }
