@@ -206,6 +206,32 @@ func TestHandleRawFramesStoresRawPayloadAndParsesRegister(t *testing.T) {
 	}
 }
 
+func TestHandleRawFramesParsesCoalescedRegisterWithoutDirtyGatewayName(t *testing.T) {
+	repo := &mockAdapterRepo{}
+	handler := &adapterHandler{repo: repo, adapterToken: "test-token"}
+	payload := []byte("FP_TEST_ADMIN_002\nkeepalive")
+	body := `{"protocol_version":"nehuang-gateway-adapter-v1","source_type":"gateway_adapter","message_id":"conn-1-1","connection_id":"conn-1","gateway_name":"","remote_ip":"127.0.0.1","remote_port":63254,"direction":"inbound","payload_hex":"` + strings.ToUpper(hex.EncodeToString(payload)) + `","received_at":"2026-07-04T18:08:04.79022Z","raw_seq":1}`
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/adapter/raw-frames", strings.NewReader(body))
+	req.Header.Set("X-Adapter-Token", "test-token")
+	rec := httptest.NewRecorder()
+
+	handler.handleRawFrames(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("handleRawFrames: want 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if len(repo.upsertedGateways) != 1 {
+		t.Fatalf("UpsertGatewayByExternalID calls: want 1, got %d", len(repo.upsertedGateways))
+	}
+	if got, want := repo.upsertedGateways[0].GatewayExternalID, "TEST_ADMIN_002"; got != want {
+		t.Fatalf("gateway external id: want %q, got %q", want, got)
+	}
+	if got, want := repo.upsertedGateways[0].GatewayName, "FP_TEST_ADMIN_002"; got != want {
+		t.Fatalf("gateway name: want %q, got %q", want, got)
+	}
+}
+
 func TestHandleRawFramesTrimsEnvelopeGatewayName(t *testing.T) {
 	repo := &mockAdapterRepo{}
 	handler := &adapterHandler{repo: repo, adapterToken: "test-token"}

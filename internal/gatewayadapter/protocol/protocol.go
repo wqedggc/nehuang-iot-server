@@ -39,8 +39,12 @@ func ClassifyPayload(payload []byte) Message {
 		msg.ASCII = string(trimmed)
 		upper := strings.ToUpper(msg.ASCII)
 		if strings.HasPrefix(upper, "FP_") {
+			gatewayName := NormalizeGatewayName(msg.ASCII)
+			if !strings.HasPrefix(strings.ToUpper(gatewayName), "FP_") {
+				return msg
+			}
 			msg.Kind = MessageRegister
-			msg.GatewayName = msg.ASCII
+			msg.GatewayName = gatewayName
 			return msg
 		}
 		if strings.HasPrefix(upper, "NH_TELEMETRY|") {
@@ -65,8 +69,29 @@ func ClassifyPayload(payload []byte) Message {
 	return msg
 }
 
+func NormalizeGatewayName(raw string) string {
+	name := strings.TrimSpace(raw)
+	if name == "" {
+		return ""
+	}
+	for _, line := range strings.FieldsFunc(name, func(r rune) bool {
+		return r == '\r' || r == '\n'
+	}) {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) > 0 {
+			return fields[0]
+		}
+		return line
+	}
+	return ""
+}
+
 func GatewayExternalID(gatewayName string) string {
-	name := strings.TrimSpace(gatewayName)
+	name := NormalizeGatewayName(gatewayName)
 	if strings.HasPrefix(strings.ToUpper(name), "FP_") {
 		return name[3:]
 	}

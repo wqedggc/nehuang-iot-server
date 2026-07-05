@@ -220,8 +220,8 @@ func TestHandleConnDispatchesPendingCommandsAndMarksSent(t *testing.T) {
 		srv.handleConn(serverConn)
 	}()
 
-	if _, err := clientConn.Write([]byte("FP_TEST_ADMIN_001\n")); err != nil {
-		t.Fatalf("write register: %v", err)
+	if _, err := clientConn.Write([]byte("FP_TEST_ADMIN_001\nkeepalive")); err != nil {
+		t.Fatalf("write coalesced register: %v", err)
 	}
 
 	received := make([]byte, 3)

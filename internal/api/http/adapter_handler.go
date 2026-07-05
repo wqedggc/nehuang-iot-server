@@ -125,11 +125,11 @@ func (h *adapterHandler) handleRawFrames(w http.ResponseWriter, r *http.Request)
 		writeCode(w, http.StatusBadRequest, 400, "invalid payload_hex")
 		return
 	}
-	envelope.GatewayName = strings.TrimSpace(envelope.GatewayName)
+	envelope.GatewayName = protocol.NormalizeGatewayName(envelope.GatewayName)
 	if envelope.GatewayName == "" {
 		trimmed := bytes.TrimSpace(payload)
 		if bytes.HasPrefix(trimmed, []byte("FP_")) {
-			envelope.GatewayName = string(trimmed)
+			envelope.GatewayName = protocol.NormalizeGatewayName(string(trimmed))
 		}
 	}
 
@@ -352,9 +352,9 @@ func (h *adapterHandler) parseRawFrame(ctx context.Context, rawEventID uint64, e
 	trimmed := bytes.TrimSpace(payload)
 	msg := protocol.ClassifyPayload(payload)
 	if msg.Kind == protocol.MessageRegister {
-		gatewayName := string(trimmed)
+		gatewayName := protocol.NormalizeGatewayName(string(trimmed))
 		if envelope.GatewayName != "" {
-			gatewayName = envelope.GatewayName
+			gatewayName = protocol.NormalizeGatewayName(envelope.GatewayName)
 		}
 		gatewayExternalID := gatewayExternalIDFromName(gatewayName)
 		gatewayID, err := h.repo.UpsertGatewayByExternalID(ctx, &domain.Gateway{
@@ -375,7 +375,7 @@ func (h *adapterHandler) parseRawFrame(ctx context.Context, rawEventID uint64, e
 	}
 
 	if msg.Kind == protocol.MessageHeartbeat {
-		gatewayName := strings.TrimSpace(envelope.GatewayName)
+		gatewayName := protocol.NormalizeGatewayName(envelope.GatewayName)
 		if gatewayName == "" {
 			return domain.ParseStatusFailed, errRawFrameHeartbeatMissingGateway
 		}
@@ -585,15 +585,7 @@ func rawFrameEventType(payload []byte) domain.RawEventType {
 }
 
 func gatewayExternalIDFromName(gatewayName string) string {
-	name := strings.TrimSpace(gatewayName)
-	upper := strings.ToUpper(name)
-	if strings.HasPrefix(upper, "FP_") {
-		return name[3:]
-	}
-	if strings.HasPrefix(upper, "FP") {
-		return strings.TrimLeft(name[2:], "_- ")
-	}
-	return name
+	return protocol.GatewayExternalID(gatewayName)
 }
 
 var errRawFrameHeartbeatMissingGateway = rawFrameParseError("heartbeat missing gateway_name")

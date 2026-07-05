@@ -37,6 +37,26 @@ func TestClassifyPayload_Register(t *testing.T) {
 	}
 }
 
+func TestClassifyPayload_RegisterWithCoalescedHeartbeat(t *testing.T) {
+	msg := ClassifyPayload([]byte("FP_TEST_ADMIN_001\nkeepalive"))
+	if msg.Kind != MessageRegister {
+		t.Fatalf("Kind = %s, want register", msg.Kind)
+	}
+	if msg.GatewayName != "FP_TEST_ADMIN_001" {
+		t.Fatalf("GatewayName = %q", msg.GatewayName)
+	}
+	if got, want := GatewayExternalID(msg.GatewayName), "TEST_ADMIN_001"; got != want {
+		t.Fatalf("GatewayExternalID = %q, want %q", got, want)
+	}
+}
+
+func TestGatewayExternalIDNormalizesDirtyGatewayName(t *testing.T) {
+	got := GatewayExternalID(" FP_TEST_ADMIN_002\nkeepalive ")
+	if got != "TEST_ADMIN_002" {
+		t.Fatalf("GatewayExternalID = %q, want TEST_ADMIN_002", got)
+	}
+}
+
 func TestClassifyPayload_RejectsNonUnderscoreFPRegister(t *testing.T) {
 	msg := ClassifyPayload([]byte("FPTEST_ADMIN_001\n"))
 	if msg.Kind == MessageRegister {
