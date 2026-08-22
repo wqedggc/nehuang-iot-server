@@ -137,6 +137,7 @@ API 与展示口径（当前）：
 说明：日志类接口分页/筛选能力说明：
 
 - `payload-events` 支持分页+筛选：`page`、`size`、`event_type`、`parse_status`、`start`、`end`、`keyword`。
+- `payload-events` 列表会附带展示型 `protocol_label` 和可识别时的 `device_identity`；原始事件 ID 是数据库记录 ID，`message_id` 是 Adapter 生成的“TCP 连接 ID-连接内帧序号”。
 - `control-logs` 支持分页+筛选：`page`、`size`、`start`、`end`、`keyword`、`cmd_status`、`source`；不带 `page/size` 时兼容旧数组响应。
 - `operation-logs` 支持分页+筛选：`page`、`size`、`start`、`end`、`keyword`、`op_type`；不带 `page/size` 时兼容旧数组响应。
 - `raw-events` 当前保留 `limit` 模式。

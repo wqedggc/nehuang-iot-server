@@ -24,6 +24,24 @@ func TestBuildKeepaliveSummary(t *testing.T) {
 	}
 }
 
+func TestBuildGatewayRegisterSummaryDoesNotClaimMCU1Identity(t *testing.T) {
+	summary := Build(hex.EncodeToString([]byte("FP_TEST_ADMIN_002\n")))
+	if summary == nil {
+		t.Fatal("summary is nil")
+	}
+	if summary.Kind != "register" || summary.Label != "云边设备网关注册（非 MCU1）" {
+		t.Fatalf("kind/label = %q/%q", summary.Kind, summary.Label)
+	}
+	name := findField(t, summary.Fields, "gateway_name")
+	if name.RawHex == "" || name.Status != "decoded" || name.ByteStart != 0 {
+		t.Fatalf("gateway_name = %#v", name)
+	}
+	externalID := findField(t, summary.Fields, "gateway_external_id")
+	if externalID.Status != "decoded" || externalID.Note == "" {
+		t.Fatalf("gateway_external_id = %#v", externalID)
+	}
+}
+
 func TestBuildModbusReadHoldingRegistersSummary(t *testing.T) {
 	summary := Build("03030000000185E8")
 	if summary == nil {

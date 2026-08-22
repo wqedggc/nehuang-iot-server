@@ -40,13 +40,13 @@ func Build(payloadHex string) *domain.ProtocolSummary {
 		switch {
 		case strings.HasPrefix(upper, "FP_"):
 			summary.Kind = "register"
-			summary.Label = "注册"
-			summary.Description = "设备网关注册包。"
+			summary.Label = "云边设备网关注册（非 MCU1）"
+			summary.Description = "现有 Adapter 接入约定：以 FP_ 开头的 ASCII 文本只标识云边设备网关，不包含网关下采集执行器清单。"
 			summary.Status = "decoded"
 			summary.CRCValid = nil
 			summary.Fields = []domain.ProtocolSummaryField{
-				field("gateway_name", "设备网关名称", ascii),
-				field("gateway_external_id", "设备网关外部 ID", protocol.GatewayExternalID(ascii)),
+				byteField("gateway_name", "设备网关接入名称", payload, 0, len(trimmed)-1, ascii, "decoded", "ASCII 文本；这是云边网关身份，不是 MCU1 采集执行器注册信息。"),
+				derivedField("gateway_external_id", "设备网关外部 ID", protocol.GatewayExternalID(ascii), "由 FP_ 接入名称派生，用于平台查找网关。"),
 			}
 			return summary
 		case isHeartbeatASCII(upper):
@@ -56,7 +56,7 @@ func Build(payloadHex string) *domain.ProtocolSummary {
 			summary.Status = "decoded"
 			summary.CRCValid = nil
 			summary.Fields = []domain.ProtocolSummaryField{
-				field("heartbeat_text", "心跳文本", ascii),
+				byteField("heartbeat_text", "心跳文本", payload, 0, len(trimmed)-1, ascii, "decoded", "ASCII 心跳内容；用于刷新当前 TCP 网关在线状态。"),
 			}
 			return summary
 		default:
@@ -105,6 +105,10 @@ func Build(payloadHex string) *domain.ProtocolSummary {
 
 func field(name, label, value string) domain.ProtocolSummaryField {
 	return domain.ProtocolSummaryField{Name: name, Label: label, Value: value}
+}
+
+func derivedField(name, label, value, note string) domain.ProtocolSummaryField {
+	return domain.ProtocolSummaryField{Name: name, Label: label, Value: value, Status: "decoded", Note: note}
 }
 
 func buildMCU1Uplink(payload []byte, summary *domain.ProtocolSummary) *domain.ProtocolSummary {

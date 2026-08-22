@@ -146,7 +146,7 @@
           byteStart: toNum(field.byte_start != null ? field.byte_start : field.byteStart),
           byteEnd: toNum(field.byte_end != null ? field.byte_end : field.byteEnd),
           rawHex: toText(field.raw_hex || field.rawHex || ''),
-          status: toText(field.status || ''),
+          status: toText(field.status || summary.status || ''),
           note: toText(field.note || ''),
           bits: bits
         };
@@ -298,13 +298,12 @@
   }
 
   function getPayloadParseStatusLabel(status, label) {
-    if (label && label !== '--') return label;
-    if (status === 1) return '待解析';
-    if (status === 2) return '已解析';
-    if (status === 3) return '解析失败';
-    if (status === 4) return '部分解析';
+    if (status === 1) return '业务待处理';
+    if (status === 2) return '业务已处理';
+    if (status === 3) return '业务处理失败';
+    if (status === 4) return '业务部分处理';
     if (status === 5) return '已忽略';
-    return '--';
+    return label && label !== '--' ? label : '--';
   }
 
   function resolvePayloadFilterValue(category) {
@@ -314,6 +313,8 @@
 
   function normalizePayloadEventFromResponse(item) {
     var category = resolvePayloadEventCategory(item);
+    var messageId = toText(item.message_id || '');
+    var messageParts = splitAdapterMessageID(messageId);
     return {
       raw: item,
       rawEventId: toText(item.raw_event_id || item.id || ''),
@@ -322,13 +323,17 @@
       eventTypeBadgeClass: payloadCategoryClass(category),
       eventTypeLabel: payloadCategoryLabel(category),
       gatewayName: toText(item.gateway_name || item.gateway || '--'),
+      deviceIdentity: toText(item.device_identity || item.deviceIdentity || ''),
+      protocolLabel: toText(item.protocol_label || item.protocolLabel || ''),
       sourceName: toText(item.source_type_name || item.source || '--'),
       isMock: !!item.is_mock,
       parseStatusName: toText(item.parse_status_name || item.status_name || '--'),
       parseStatus: toNum(item.parse_status),
       parseError: toText(item.parse_error || item.error || ''),
       parseStatusLabel: toText(item.parse_status_name || item.parseStatus || ''),
-      messageId: toText(item.message_id || ''),
+      messageId: messageId,
+      connectionId: messageParts.connectionId,
+      connectionSequence: messageParts.sequence,
       remoteIp: toText(item.remote_ip || ''),
       remotePort: toText(item.remote_port || ''),
       payloadHex: toText(item.payload_hex || item.payloadHex || ''),
@@ -339,6 +344,13 @@
       parsedCount: toNum(item.parsed_count),
       receivedAt: item.received_at_ms || item.received_at || item.created_at || ''
     };
+  }
+
+  function splitAdapterMessageID(messageId) {
+    var value = toText(messageId || '').trim();
+    var match = value.match(/^(.*)-(\d+)$/);
+    if (!match) return { connectionId: '', sequence: '' };
+    return { connectionId: match[1], sequence: match[2] };
   }
 
   function normalizeCommandStatusLabel(statusValue, labelValue) {
@@ -865,13 +877,13 @@
 
   function renderPacketMatrix() {
     var rows = [
-      ['注册包', '设备网关 → 云端接入层 → 业务平台', '上电、重连或联调初始化时发送', '识别设备网关身份，建立或更新在线基础信息。'],
+      ['网关注册包（非 MCU1）', '设备网关 → 云端接入层 → 业务平台', '上电、重连或联调初始化时发送 FP_xxx ASCII', '只识别云边设备网关；不会自动声明网关下有哪些采集执行器。'],
       ['心跳包', '设备网关 → 云端接入层 → 业务平台', '按硬件侧配置周期发送；联调时可用 keepalive', '刷新最后上报时间；离线判断以平台口径为准。'],
-      ['工作数据包', '采集执行器 → 设备网关 → 云端接入层 → 业务平台', '标准周期包；甲方最新口径倾向 2 小时或按最终文档确认', '先完整保存原始报文；字段冻结后再投影到业务数据。'],
+      ['MCU1 工作数据包', '采集执行器 → 设备网关 → 云端接入层 → 业务平台', 'BB=01 自动状态/历史、BB=02 手动状态、BB=03 故障状态', '先校验 CRC，再解释设备 ID、BB、HH MM SS、Tag 与温度记录；仅协议解码不等于已写入业务数据。'],
       ['告警包', '采集执行器 → 设备网关 → 云端接入层 → 业务平台', '出现异常时主动上报，是否重复发送按硬件最终规则', '优先留痕与展示类型；去重和告警等级按最终样例补齐。'],
       ['未知包', '设备网关或采集执行器 → 云端接入层', '任意联调阶段都可能出现', '默认仅保留本地 raw journal；排障时打开开关后才进入原始报文排查。'],
       ['下行控制包', '管理端 / C 端 → 业务平台 → 云端接入层 → 设备网关 → 采集执行器', '用户点击控制或联调人员手动输入 Hex 时触发', '先生成 pending，接入层写回 TCP 后变 sent；未收到明确 ACK 前不自动判成功。'],
-      ['时间同步字段', '业务平台 → 云端接入层 → 设备网关；上行包反向带回设备时点', '按甲方最新方案在地址后、正式内容前预留 6 字节时分秒', '用于硬件侧 TDMA 时间对齐；本阶段作为协议预留与联调核对项。']
+      ['时间字段', '上下行报文采集执行器 ID 与 BB 之后', '当前文档定义 HH MM SS 共 3 字节', '建议联调暂定 BCD、东八区、时/分/秒各 1 字节并计入 CRC；甲方确认前仍标记待确认。']
     ];
     var html = '<div class="help-packet-table"><div class="help-packet-row help-packet-head"><div>报文</div><div>方向</div><div>触发/周期</div><div>平台处理</div></div>';
     rows.forEach(function (row) {
@@ -886,7 +898,7 @@
     var items = [
       ['1. 注册', '设备网关先让平台知道“我是谁”，后台才能显示并绑定给农户。'],
       ['2. 心跳', '注册后持续上报 keepalive，平台用它刷新在线状态。'],
-      ['3. 业务包', '工作数据、告警、未知包都先进入原始报文排查，确认字段后再解析成业务数据。'],
+      ['3. 业务包', 'MCU1 工作数据先做协议解码；只有完成设备映射和业务投影后，业务处理状态才会变为已处理。'],
       ['4. 绑定与查看', '管理员把设备网关绑定给农户，C 端看到该网关下授权的采集执行器和功能点。'],
       ['5. 下行控制', '管理员或 C 端创建控制命令，接入层在设备连接存在时写回 TCP。'],
       ['6. 状态回填', '控制日志展示 pending / sent / timeout 等状态；真实 ACK 语义等硬件样例确认。']
@@ -905,8 +917,8 @@
       ['搜索', '原始报文排查可按设备网关、消息 ID、原始 Hex 片段搜索，默认最近 24 小时。'],
       ['滚动', '帮助页、原始报文详情、设备详情在桌面和手机宽度下均可滚动，不遮挡按钮。'],
       ['绑定', '管理员绑定设备网关给农户后，C 端设备列表能展开到采集执行器和功能点。'],
-      ['联调报文', '注册、心跳、工作数据、告警能在原始报文排查中看到类型或待解析状态；未知包默认只在接入层本地留痕。'],
-      ['下行命令', '手动 Hex 控制创建后进入控制日志；设备连接存在时状态至少能到 sent，否则按 TTL 超时。']
+      ['联调报文', '注册、心跳可确认业务处理结果；MCU1 工作数据详情应显示 CRC、BB、Tag、字段状态和待确认项。'],
+      ['下行命令', '手动 Hex 控制创建后进入控制日志；列表行可打开完整详情，并可跳转查看同一网关的上行报文。']
     ];
     var html = '<div class="help-checklist">';
     items.forEach(function (item) {
@@ -948,6 +960,21 @@
           renderPacketMatrix() +
         '</div>' +
         '<div class="detail-section">' +
+          '<h4 style="font-size:14px;margin:0 0 8px">如何理解两种状态</h4>' +
+          '<div class="help-status-guide">' +
+            '<div><strong>协议解码状态</strong><span>回答“这串字节代表什么”。已确认的 BB、Tag、CRC 可以解码；时间、温度换算规则缺失时显示部分解析。</span></div>' +
+            '<div><strong>业务处理状态</strong><span>回答“数据是否已写入网关、传感器、告警或控制结果”。协议能看懂，不代表已经完成业务入库。</span></div>' +
+          '</div>' +
+        '</div>' +
+        '<div class="detail-section">' +
+          '<h4 style="font-size:14px;margin:0 0 8px">如何理解三个标识</h4>' +
+          '<div class="help-status-guide">' +
+            '<div><strong>原始事件 ID</strong><span>数据库中这条 raw 记录的唯一雪花 ID，用于打开详情和排障，不是硬件报文内容。</span></div>' +
+            '<div><strong>连接内消息 ID</strong><span>Adapter 生成的“TCP 连接 ID-帧序号”，例如 abc...-4 表示该连接收到的第 4 帧。</span></div>' +
+            '<div><strong>设备身份</strong><span>FP_xxx 标识设备网关；MCU1 报文前 2 字节 AA AA 标识采集执行器。两者缺一不可，来源 IP 只用于排障，不作为稳定身份。</span></div>' +
+          '</div>' +
+        '</div>' +
+        '<div class="detail-section">' +
           '<h4 style="font-size:14px;margin:0 0 8px">先后关系</h4>' +
           renderTimeline() +
         '</div>' +
@@ -962,9 +989,9 @@
           '<ol style="margin:10px 0 0 20px;font-size:13px;color:var(--color-text);line-height:1.7">' +
             '<li>绑定策略：为农户绑定设备网关（默认可见该网关下授权范围），或按采集执行器/功能点做更细粒度授权。</li>' +
             '<li>在“设备管理”先确认设备网关可见，再补充采集执行器和默认功能点，完成联调展示。</li>' +
-            '<li>在“原始报文排查”中按设备网关、message_id、payload_hex 搜索 raw，优先看最近 24 小时。</li>' +
+            '<li>在“原始报文排查”中按设备网关、message_id、payload_hex 搜索 raw；详情页分别查看业务处理状态和协议解码状态。</li>' +
             '<li>控制面板发起控制时先返回 pending，命令状态会按 pending / sent / ack / succeeded / failed / timeout 展示。</li>' +
-            '<li>控制日志用于排查用户和设备动作链路，重点关注 command_hex、目标设备网关、设备执行器与功能点。</li>' +
+            '<li>控制日志用于排查下行命令；点击任一行可查看完整 Hex、目标、生命周期和网关响应，并可跳转同一网关的上行报文。</li>' +
           '</ol>' +
         '</div>' +
         '<div class="detail-section">' +
@@ -996,6 +1023,12 @@
             '<li>设备网关作为 TCP 客户端接入 Adapter 的 8081（固定端口以实际发布配置为准）。</li>' +
             '<li>云端仅收包，不要求设备直连 HTTP。</li>' +
             '<li>建议在联调阶段先发 register + keepalive + 工作 / 告警样例；未识别样例默认只用于接入层本地排查。</li>' +
+            '<li>MCU1 上行以 BB=01/02/03 区分自动、手动和故障状态；Tag 按 1/N/R/S/V/W/T/U 从高到低解释，CRC 使用低字节在前的 Modbus CRC16。</li>' +
+            '<li>HH MM SS 已定位为 3 字节。建议本轮联调暂定为 BCD、Asia/Shanghai（UTC+8）、各 1 字节并参与 CRC；需甲方书面确认后才升级为已确认规则。</li>' +
+            '<li>MCU1 自动无历史包用 00 占位，因此没有温度；自动历史包在一条消息中携带 12–15 组温度；手动包每条带当前温度。</li>' +
+            '<li>温度的 2 字节宽度在历史包中明确，但字节序、符号和缩放尚未说明；换算规则确认前只展示原始值，不伪造摄氏度。</li>' +
+            '<li>当前 PPT 只描述 MCU1 采集执行器及其 NTC、限位、继电器功能，没有给出 MCU2/MCU3 或全部设备类型清单。</li>' +
+            '<li>测试曲线使用结构化 telemetry 生成波动值；MCU1 TCP raw 可独立持续发送，用于验证收包与协议透视。</li>' +
             '<li>所有调试入口使用占位符，不暴露真实内网地址或凭证信息；示例地址使用 192.0.2.1:8081。</li>' +
           '</ul>' +
           '<div class="code-panel">示例：\n1) 先发送注册（FP_xxx）\n2) 每隔固定间隔发送心跳\n3) 发送工作/告警样例测试排查</div>' +
@@ -3104,6 +3137,7 @@
 
   // ---------- 控制日志 ----------
   var controlLogFilter = { page: 1, size: 20, range: '24h', start: null, end: null, keyword: '' };
+  var controlLogDetailCache = {};
 
   function resetControlLogFilters() {
     controlLogFilter = { page: 1, size: 20, range: '24h', start: null, end: null, keyword: '' };
@@ -3117,6 +3151,10 @@
       var res = await NHApi.getControlLogs(params);
       if (!res.data) { container.innerHTML = '<div class="error-state"><p>加载失败</p><button class="btn btn-outline btn-sm" onclick="renderPage()">重试</button></div>'; return; }
       var pg = normalizePagedResponse(res.data, normalizeControlLogRecord, controlLogFilter.page, controlLogFilter.size);
+      controlLogDetailCache = {};
+      pg.items.forEach(function (item) {
+        controlLogDetailCache[item.commandId || item.opId] = item;
+      });
       controlLogFilter.page = pg.page;
       controlLogFilter.size = pg.size;
 
@@ -3131,7 +3169,7 @@
         '</div>' +
         renderFilterBar(controlLogFilter, 'control-log-search', '搜索命令 ID / 设备网关 / 功能点 / Hex', 'resetControlLogFilters') +
         '<div class="table-wrap"><table>' +
-          '<thead><tr><th>ID</th><th>来源</th><th>目标功能点 / 设备网关</th><th>操作人</th><th>功能</th><th>操作类型</th><th>command_hex</th><th>命令状态</th><th>结果</th><th>时间</th></tr></thead>' +
+          '<thead><tr><th>命令 ID</th><th>来源</th><th>目标功能点 / 设备网关</th><th>操作人</th><th>功能</th><th>操作类型</th><th>下发报文 Hex</th><th>命令状态</th><th>结果</th><th>时间</th></tr></thead>' +
           '<tbody id="log-tbody">' +
             (pg.items.length === 0 ? '<tr><td colspan="10" class="table-empty">暂无控制日志</td></tr>' :
               pg.items.map(function (l) {
@@ -3163,7 +3201,8 @@
                 if (timeParts.length) {
                   timeHtml += '<div style="font-size:11px;color:var(--color-text-muted);margin-top:2px">' + escHtml(timeParts.join(' · ')) + '</div>';
                 }
-                return '<tr>' +
+                var detailID = l.commandId || l.opId;
+                return '<tr class="clickable-row" tabindex="0" title="点击查看完整命令详情" onclick="controlLogViewDetail(\'' + escHtml(detailID) + '\')" onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();controlLogViewDetail(\'' + escHtml(detailID) + '\')}">' +
                   '<td style="font-family:monospace;font-size:12px">' + escHtml(l.opId || '--') + '</td>' +
                   '<td><span class="badge badge-muted">' + escHtml(l.sourceLabel || '--') + '</span></td>' +
                   '<td class="log-target-cell">' + targetHtml + '</td>' +
@@ -3186,6 +3225,71 @@
     } catch (e) {
       container.innerHTML = '<div class="error-state"><p>加载失败</p><button class="btn btn-outline btn-sm" onclick="renderPage()">重试</button></div>';
     }
+  }
+
+  function renderCommandHexBytes(commandHex) {
+    var clean = normalizeHexText(commandHex || '');
+    if (!clean || clean.length % 2 !== 0) return '<div class="protocol-diagnostic is-invalid"><strong>异常</strong><span>下发 Hex 为空或不是完整字节。</span></div>';
+    var bytes = [];
+    for (var i = 0; i < clean.length; i += 2) bytes.push(clean.slice(i, i + 2).toUpperCase());
+    return '<div class="command-byte-strip" role="list" aria-label="下发报文字节">' + bytes.map(function (value, index) {
+      return '<span role="listitem"><small>' + String(index).padStart(2, '0') + '</small><b>' + escHtml(value) + '</b></span>';
+    }).join('') + '</div>';
+  }
+
+  function controlLogViewDetail(commandID) {
+    var record = controlLogDetailCache[toText(commandID)];
+    if (!record) {
+      showToast('当前页中未找到该命令，请刷新后重试', 'error');
+      return;
+    }
+    var overlay = $('#modal-overlay');
+    overlay._returnFocus = document.activeElement;
+    overlay.style.display = 'flex';
+    var lifecycle = [
+      ['创建', record.opTime, true],
+      ['下发', record.sentAt, !!record.sentAt],
+      ['完成', record.finishedAt, !!record.finishedAt]
+    ];
+    overlay.innerHTML = '<div class="modal protocol-inspector-modal" role="dialog" aria-modal="true" aria-labelledby="control-detail-title">' +
+      '<div class="modal-header"><h3 id="control-detail-title">控制命令详情</h3><button class="modal-close" onclick="closeModal()" aria-label="关闭控制命令详情">×</button></div>' +
+      '<div class="modal-body">' +
+        '<div class="detail-grid">' +
+          '<div class="info-item"><label>命令 ID</label><span style="font-family:monospace">' + escHtml(record.commandId || record.opId || '--') + '</span></div>' +
+          '<div class="info-item"><label>方向</label><span>云端 → 设备网关 → 采集执行器</span></div>' +
+          '<div class="info-item"><label>命令来源</label><span>' + escHtml(record.sourceLabel || '--') + '</span></div>' +
+          '<div class="info-item"><label>命令状态</label><span>' + escHtml(record.cmdStatusLabel || '--') + '</span></div>' +
+          '<div class="info-item"><label>设备网关</label><span>' + escHtml(record.gatewayName || record.gatewayId || '--') + '</span></div>' +
+          '<div class="info-item"><label>采集执行器</label><span>' + escHtml(record.devid || record.nodeId || '--') + '</span></div>' +
+          '<div class="info-item"><label>频点</label><span>' + escHtml(record.frequency || '--') + '</span></div>' +
+          '<div class="info-item"><label>功能点</label><span>' + escHtml(record.pointName || record.pointId || '--') + '</span></div>' +
+          '<div class="info-item"><label>功能</label><span>' + escHtml(record.funcName || '--') + '</span></div>' +
+          '<div class="info-item"><label>操作类型</label><span>' + escHtml(record.opType || '--') + '</span></div>' +
+        '</div>' +
+        '<div class="detail-section"><div class="detail-section-head"><div><div class="detail-section-title">下发报文</div><div class="detail-section-sub">command_hex 是整条下行报文，不是单独的控制字；字段含义须由对应下行协议决定。</div></div></div>' +
+          '<pre class="code-panel">' + escHtml(formatHexDisplay(record.commandHex) || '(空)') + '</pre>' +
+          renderCommandHexBytes(record.commandHex) +
+          '<div class="protocol-diagnostic"><strong>协议边界</strong><span>MCU1 文档说明自动控制包含采集执行器 ID、BB、HH MM SS、上下限温度与 CRC；当前控制日志尚未保存“采用了哪一版协议模板”，因此这里先完整展示，不伪造逐字段解释。</span></div>' +
+        '</div>' +
+        '<div class="detail-section"><div class="detail-section-title">生命周期</div><div class="command-lifecycle">' + lifecycle.map(function (item) {
+          return '<div class="' + (item[2] ? 'is-done' : '') + '"><strong>' + item[0] + '</strong><span>' + (item[1] ? formatFullTime(item[1]) : '尚未发生') + '</span></div>';
+        }).join('') + '</div></div>' +
+        '<div class="detail-section"><div class="detail-section-title">设备返回</div><div class="detail-grid">' +
+          '<div class="info-item"><label>网关响应</label><span>' + escHtml(record.gatewayResponse || '--') + '</span></div>' +
+          '<div class="info-item"><label>失败原因</label><span>' + escHtml(record.errorMessage || '--') + '</span></div>' +
+        '</div></div>' +
+      '</div>' +
+      '<div class="modal-actions"><button class="btn btn-outline" onclick="closeModal()">关闭</button>' +
+        (record.gatewayName ? '<button class="btn btn-primary" onclick="controlLogOpenRelatedPayloads(decodeURIComponent(\'' + escHtml(encodeURIComponent(record.gatewayName)) + '\'))">查看此网关上行报文</button>' : '') +
+      '</div></div>';
+    overlay.querySelector('.modal-close').focus();
+  }
+
+  function controlLogOpenRelatedPayloads(gatewayName) {
+    payloadState = createDefaultPayloadState();
+    payloadState.keyword = toText(gatewayName || '').trim();
+    closeModal();
+    navigate('payload-events');
   }
 
   // ---------- 原始报文排查 ----------
@@ -3251,10 +3355,10 @@
       ];
       var parseStatusOptions = [
         { val: '', label: '全部状态' },
-        { val: '1', label: '待解析' },
-        { val: '2', label: '已解析' },
-        { val: '3', label: '解析失败' },
-        { val: '4', label: '部分解析' },
+        { val: '1', label: '业务待处理' },
+        { val: '2', label: '业务已处理' },
+        { val: '3', label: '业务处理失败' },
+        { val: '4', label: '业务部分处理' },
         { val: '5', label: '已忽略' }
       ];
 
@@ -3276,7 +3380,7 @@
         '</div>' +
         '<div class="table-wrap"><table>' +
           '<thead><tr>' +
-            '<th>ID</th><th>接收时间</th><th>事件类型</th><th>设备网关</th><th>来源</th><th>解析状态</th><th>消息ID</th><th>事件数</th><th>来源IP</th><th>原始报文</th><th>操作</th>' +
+            '<th title="数据库中该条原始记录的唯一标识">原始事件 ID</th><th>接收时间</th><th>事件类型</th><th>设备网关 / 采集执行器</th><th>来源</th><th>业务处理状态</th><th title="Adapter 生成：TCP 连接 ID + 连接内帧序号">连接内消息 ID</th><th>事件数</th><th>来源IP</th><th>原始报文</th><th>操作</th>' +
           '</tr></thead>' +
           '<tbody id="payload-tbody">' +
             (items.length === 0 ? '<tr><td colspan="11" class="table-empty">暂无数据</td></tr>' :
@@ -3293,13 +3397,17 @@
                 return '<tr>' +
                   '<td style="font-family:monospace;font-size:12px">' + escHtml(String(item.rawEventId)) + '</td>' +
                   '<td style="white-space:nowrap;font-size:12px">' + escHtml(item.receivedAt || '--') + '</td>' +
-                  '<td><span class="badge ' + item.eventTypeBadgeClass + '">' + escHtml(item.eventTypeLabel) + '</span></td>' +
-                  '<td>' + escHtml(item.gatewayName || '--') + '</td>' +
+                  '<td><span class="badge ' + item.eventTypeBadgeClass + '">' + escHtml(item.eventTypeLabel) + '</span>' +
+                    (item.protocolLabel ? '<div style="font-size:10px;color:var(--color-text-muted);margin-top:3px;max-width:180px">' + escHtml(item.protocolLabel) + '</div>' : '') +
+                  '</td>' +
+                  '<td><div>' + escHtml(item.gatewayName || '--') + '</div>' +
+                    (item.deviceIdentity ? '<div style="font-size:10px;color:var(--color-text-muted);margin-top:3px">采集执行器 ' + escHtml(item.deviceIdentity) + '</div>' : '') +
+                  '</td>' +
                   '<td><span class="badge ' + (isMock ? 'badge-warning' : 'badge-muted') + '">' + (isMock ? 'MOCK' : escHtml(sourceName)) + '</span></td>' +
                   '<td><span class="badge ' + statusCSS + '">' + escHtml(statusText) + '</span>' +
                     (item.parseError ? ' <span style="font-size:10px;color:var(--color-text-muted)" title="' + escHtml(item.parseError) + '">⚠</span>' : '') +
                   '</td>' +
-                  '<td style="font-family:monospace;font-size:11px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + (isMock ? '<span class="badge badge-warning" style="margin-right:4px">MOCK</span>' : '') + escHtml(item.messageId || '--') + '</td>' +
+                  '<td title="Adapter 生成：TCP 连接 ID + 本连接帧序号" style="font-family:monospace;font-size:11px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + (isMock ? '<span class="badge badge-warning" style="margin-right:4px">MOCK</span>' : '') + escHtml(item.messageId || '--') + '</td>' +
                   '<td><span style="font-size:12px">' + (item.parsedCount != null ? item.parsedCount : 0) + '/' + (item.eventCount != null ? item.eventCount : 0) + '</span></td>' +
                   '<td style="font-size:12px">' + escHtml(remoteAddress) + '</td>' +
                   '<td style="font-size:11px;color:var(--color-text-muted)">' + (item.payloadLen != null ? item.payloadLen : 0) + 'B</td>' +
@@ -3407,28 +3515,25 @@
     '</div>';
   }
 
-  function renderProtocolFields(fields) {
+  function renderProtocolFields(fields, singleSelection) {
     if (!fields || !fields.length) return '';
-    return '<div class="protocol-field-table" role="list">' +
-      fields.map(function (field) {
-        var key = protocolSafeFieldKey(field.name);
-        var hasRange = field.rawHex && field.byteStart != null && field.byteEnd != null;
-        var byteRange = hasRange ? (field.byteStart === field.byteEnd ? String(field.byteStart) : field.byteStart + '..' + field.byteEnd) : '--';
-        return '<div class="protocol-field-row ' + protocolStatusClass(field.status) + '" data-protocol-field="' + escHtml(key) + '" role="listitem">' +
-          '<div class="protocol-field-head">' +
-            '<div><strong>' + escHtml(field.label || field.name || '--') + '</strong><span class="protocol-field-name">' + escHtml(field.name || '') + '</span></div>' +
-            '<span class="badge ' + protocolBadgeClass(field.status) + '">' + escHtml(protocolStatusLabel(field.status)) + '</span>' +
-          '</div>' +
-          '<div class="protocol-field-values">' +
-            '<span><small>字节范围</small><code>' + escHtml(byteRange) + '</code></span>' +
-            '<span><small>原始 Hex</small><code>' + escHtml(field.rawHex || '--') + '</code></span>' +
-            '<span><small>解释</small><b>' + escHtml(field.value || '--') + '</b></span>' +
-          '</div>' +
-          (field.note ? '<p class="protocol-field-note">' + escHtml(field.note) + '</p>' : '') +
-          renderProtocolBits(field) +
-        '</div>';
-      }).join('') +
-    '</div>';
+    var panels = fields.map(function (field, index) {
+      var key = protocolSafeFieldKey(field.name);
+      var hasRange = field.rawHex && field.byteStart != null && field.byteEnd != null;
+      var byteRange = hasRange ? (field.byteStart === field.byteEnd ? String(field.byteStart) : field.byteStart + '..' + field.byteEnd) : '--';
+      return '<section class="protocol-field-detail ' + protocolStatusClass(field.status) + (!singleSelection || index === 0 ? ' is-active' : '') + '" data-protocol-field="' + escHtml(key) + '" aria-label="' + escHtml(field.label || field.name || '协议字段') + '详情">' +
+        '<div class="protocol-field-detail-head"><div><strong>' + escHtml(field.label || field.name || '--') + '</strong><code>' + escHtml(field.name || '') + '</code></div>' +
+          '<span class="badge ' + protocolBadgeClass(field.status) + '">' + escHtml(protocolStatusLabel(field.status)) + '</span></div>' +
+        '<div class="protocol-field-facts">' +
+          '<div><span>字节位置</span><code>' + escHtml(byteRange) + '</code></div>' +
+          '<div><span>报文中的值</span><code>' + escHtml(field.rawHex || '--') + '</code></div>' +
+          '<div class="protocol-field-fact-meaning"><span>当前解释</span><strong>' + escHtml(field.value || '--') + '</strong></div>' +
+        '</div>' +
+        (field.note ? '<p class="protocol-field-note">' + escHtml(field.note) + '</p>' : '') +
+        (field.bits && field.bits.length ? '<div class="protocol-bit-panel"><div class="protocol-bit-panel-head"><div><strong>逐位解释</strong><span>位序从高到低；每一位同时显示原值和当前含义。</span></div><code>' + escHtml(field.rawHex || '--') + '</code></div>' + renderProtocolBits(field) + '</div>' : '') +
+      '</section>';
+    }).join('');
+    return '<div class="protocol-field-details" aria-live="polite">' + panels + '</div>';
   }
 
   function renderProtocolByteMap(payloadHex, fields) {
@@ -3440,33 +3545,33 @@
     var rangedFields = (fields || []).filter(function (field) {
       return !!field.rawHex && field.byteStart != null && field.byteEnd != null;
     });
-    var cells = bytes.map(function (value, index) {
-      var field = null;
-      for (var j = 0; j < rangedFields.length; j++) {
-        if (index >= rangedFields[j].byteStart && index <= rangedFields[j].byteEnd) {
-          field = rangedFields[j];
-          break;
-        }
-      }
-      var key = field ? protocolSafeFieldKey(field.name) : '';
-      var label = field ? field.label : '未解释字节';
-      var onclick = key ? ' onclick="payloadFocusProtocolField(\'' + key + '\')"' : '';
-      return '<button type="button" class="protocol-byte ' + protocolStatusClass(field ? field.status : '') + '"' + onclick +
-        ' data-protocol-byte-field="' + escHtml(key) + '" aria-label="字节 ' + index + '，' + escHtml(label) + '，' + value + '">' +
-          '<span>' + String(index).padStart(2, '0') + '</span><strong>' + value + '</strong>' +
-        '</button>';
-    }).join('');
-
-    var groups = rangedFields.map(function (field) {
+    var segments = rangedFields.map(function (field, index) {
       var key = protocolSafeFieldKey(field.name);
       var range = field.byteStart === field.byteEnd ? String(field.byteStart) : field.byteStart + '..' + field.byteEnd;
-      return '<button type="button" class="protocol-byte-group ' + protocolStatusClass(field.status) + '" onclick="payloadFocusProtocolField(\'' + key + '\')">' +
-        '<strong>' + escHtml(field.label || field.name || '--') + '</strong><span>[' + escHtml(range) + ']</span>' +
+      var fieldBytes = bytes.slice(field.byteStart, field.byteEnd + 1);
+      var tooltipID = 'protocol-tip-' + key;
+      return '<button type="button" class="protocol-segment ' + protocolStatusClass(field.status) + (index === 0 ? ' is-active' : '') + '" onclick="payloadFocusProtocolField(\'' + key + '\')"' +
+        ' onmouseenter="payloadPreviewProtocolField(\'' + key + '\')" onfocus="payloadPreviewProtocolField(\'' + key + '\')"' +
+        ' data-protocol-byte-field="' + escHtml(key) + '" aria-describedby="' + escHtml(tooltipID) + '" aria-label="字段 ' + escHtml(field.label || field.name || '--') + '，字节 ' + escHtml(range) + '，' + escHtml(field.value || '') + '">' +
+        '<span class="protocol-segment-order">' + String(index + 1).padStart(2, '0') + '</span>' +
+        '<span class="protocol-segment-head"><strong>' + escHtml(field.label || field.name || '--') + '</strong><code>[' + escHtml(range) + ']</code></span>' +
+        '<span class="protocol-segment-bytes">' + fieldBytes.map(function (value, byteIndex) {
+          return '<span><small>' + String(field.byteStart + byteIndex).padStart(2, '0') + '</small><b>' + value + '</b></span>';
+        }).join('') + '</span>' +
+        '<span class="protocol-segment-value">' + escHtml(field.value || '--') + '</span>' +
+        '<span class="protocol-segment-status">' + escHtml(protocolStatusLabel(field.status)) + '</span>' +
+        '<span class="protocol-segment-popover" role="tooltip" id="' + escHtml(tooltipID) + '">' +
+          '<strong>' + escHtml(field.label || field.name || '--') + '</strong>' +
+          '<span><b>报文字节</b><code>' + escHtml(field.rawHex || '--') + '</code></span>' +
+          '<span><b>当前解释</b>' + escHtml(field.value || '--') + '</span>' +
+          (field.note ? '<small>' + escHtml(field.note) + '</small>' : '') +
+          '<em>点击可固定查看完整解释</em>' +
+        '</span>' +
       '</button>';
     }).join('');
 
-    return '<div class="protocol-byte-map"><div class="protocol-byte-strip">' + cells + '</div>' +
-      '<div class="protocol-byte-groups" aria-label="报文字段分组">' + groups + '</div></div>';
+    return '<div class="protocol-byte-map"><div class="protocol-byte-map-head"><span>字段按报文顺序排列</span><span>点击任一字段定位下方明细</span></div>' +
+      '<div class="protocol-segment-flow" role="list" aria-label="报文字段顺序">' + segments + '</div></div>';
   }
 
   function renderProtocolDiagnostics(diagnostics) {
@@ -3478,7 +3583,7 @@
     }).join('') + '</div>';
   }
 
-  function payloadFocusProtocolField(fieldName) {
+  function selectProtocolField(fieldName, shouldScroll) {
     var overlay = $('#modal-overlay');
     if (!overlay) return;
     var key = protocolSafeFieldKey(fieldName);
@@ -3491,8 +3596,16 @@
     var field = overlay.querySelector('[data-protocol-field="' + key + '"]');
     if (field) {
       field.classList.add('is-active');
-      field.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      if (shouldScroll) field.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }
+  }
+
+  function payloadPreviewProtocolField(fieldName) {
+    selectProtocolField(fieldName, false);
+  }
+
+  function payloadFocusProtocolField(fieldName) {
+    selectProtocolField(fieldName, true);
   }
 
   async function payloadViewDetail(rawEventId) {
@@ -3541,34 +3654,22 @@
         else if (protocolSummary.crcValid === false) crcText = '不通过';
       }
 
-      var protocolFieldsHtml = '';
-      if (protocolSummary && protocolSummary.fields && protocolSummary.fields.length) {
-        if (isMCUProtocol) {
-          protocolFieldsHtml = renderProtocolFields(protocolSummary.fields);
-        } else {
-          protocolFieldsHtml = '<div class="detail-mini-table">' +
-            protocolSummary.fields.map(function (field) {
-              return '<div class="detail-mini-row">' +
-                '<div class="detail-mini-key">' + escHtml(field.label || field.name || '--') + '</div>' +
-                '<div class="detail-mini-val">' + escHtml(field.value || '--') + '</div>' +
-              '</div>';
-            }).join('') +
-          '</div>';
-        }
-      }
+      var protocolFieldsHtml = protocolSummary && protocolSummary.fields && protocolSummary.fields.length ? renderProtocolFields(protocolSummary.fields, isMCUProtocol) : '';
 
       var protocolByteMapHtml = isMCUProtocol ? renderProtocolByteMap(d.payloadHex || res.data.payload_hex || '', protocolSummary.fields || []) : '';
       var protocolDiagnosticsHtml = isMCUProtocol ? renderProtocolDiagnostics(protocolSummary.diagnostics || []) : '';
       var protocolDecodeStatus = protocolSummary ? protocolStatusLabel(protocolSummary.status) : '--';
 
       var bodyHtml = '<div class="detail-grid">' +
-        '<div class="info-item"><label>原始报文 ID</label><span style="font-family:monospace">' + escHtml(String(d.rawEventId || '--')) + '</span></div>' +
+        '<div class="info-item"><label>原始事件 ID</label><span style="font-family:monospace">' + escHtml(String(d.rawEventId || '--')) + '</span></div>' +
         '<div class="info-item"><label>接收时间</label><span>' + escHtml(d.receivedAt || '--') + '</span></div>' +
         '<div class="info-item"><label>事件类型</label><span class="badge ' + d.eventTypeBadgeClass + '">' + escHtml(d.eventTypeLabel) + '</span></div>' +
-        '<div class="info-item"><label>解析状态</label><span>' + parseLabel + '</span></div>' +
+        '<div class="info-item"><label>业务处理状态</label><span>' + parseLabel + '</span></div>' +
         '<div class="info-item"><label>设备网关</label><span>' + escHtml(d.gatewayName || '--') + '</span></div>' +
         '<div class="info-item"><label>来源</label><span><span class="badge ' + (isMock ? 'badge-warning' : 'badge-muted') + '">' + (isMock ? 'MOCK' : escHtml(d.sourceName || '--')) + '</span></span></div>' +
-        '<div class="info-item"><label>消息 ID</label><span style="font-family:monospace;font-size:11px">' + (isMock ? '<span class="badge badge-warning" style="margin-right:4px">MOCK</span>' : '') + escHtml(d.messageId || '--') + '</span></div>' +
+        '<div class="info-item"><label>连接内消息 ID</label><span style="font-family:monospace;font-size:11px">' + (isMock ? '<span class="badge badge-warning" style="margin-right:4px">MOCK</span>' : '') + escHtml(d.messageId || '--') + '</span></div>' +
+        (d.connectionId ? '<div class="info-item"><label>TCP 连接 ID</label><span style="font-family:monospace;font-size:11px">' + escHtml(d.connectionId) + '</span></div>' : '') +
+        (d.connectionSequence ? '<div class="info-item"><label>连接内帧序号</label><span>第 ' + escHtml(d.connectionSequence) + ' 帧</span></div>' : '') +
         '<div class="info-item"><label>事件数量</label><span>' + (d.parsedCount != null ? d.parsedCount : 0) + '/' + (d.eventCount != null ? d.eventCount : 0) + '</span></div>' +
         '<div class="info-item"><label>来源 IP</label><span>' + escHtml(remoteAddress) + '</span></div>' +
         '<div class="info-item"><label>Payload 长度</label><span>' + escHtml(toText(d.payloadByteLen != null ? d.payloadByteLen : d.payloadLen != null ? d.payloadLen : '--')) + '</span></div>' +
@@ -3586,7 +3687,7 @@
 
       bodyHtml += '<div class="detail-grid detail-grid-4">' +
         '<div class="info-item"><label>CRC</label><span><span class="badge ' + (crcText === '通过' ? 'badge-success' : crcText === '不通过' ? 'badge-danger' : 'badge-muted') + '">' + escHtml(crcText) + '</span></span></div>' +
-        '<div class="info-item"><label>解码结果</label><span><span class="badge ' + protocolBadgeClass(protocolSummary ? protocolSummary.status : '') + '">' + escHtml(protocolDecodeStatus) + '</span></span></div>' +
+        '<div class="info-item"><label>协议解码状态</label><span><span class="badge ' + protocolBadgeClass(protocolSummary ? protocolSummary.status : '') + '">' + escHtml(protocolDecodeStatus) + '</span></span></div>' +
         '<div class="info-item"><label>协议摘要</label><span>' + escHtml(protocolLabelText) + '</span></div>' +
         '<div class="info-item"><label>协议类型</label><span>' + escHtml(protocolKindText) + '</span></div>' +
         '<div class="info-item"><label>协议说明</label><span>' + escHtml(protocolDescText) + '</span></div>' +
@@ -3597,8 +3698,8 @@
         bodyHtml += '<div class="detail-section">' +
           '<div class="detail-section-head">' +
             '<div>' +
-              '<div class="detail-section-title">报文字节透视</div>' +
-              '<div class="detail-section-sub">当前输入按一条完整 MCU1 报文解释；点击任一字节或字段可定位详细含义。</div>' +
+              '<div class="detail-section-title">报文结构</div>' +
+              '<div class="detail-section-sub">字段、字节、解释和确认状态合并展示，不再重复铺设单字节方块与空分段条。</div>' +
             '</div>' +
           '</div>' +
           protocolByteMapHtml + protocolDiagnosticsHtml +
@@ -3609,8 +3710,8 @@
         bodyHtml += '<div class="detail-section">' +
           '<div class="detail-section-head">' +
             '<div>' +
-              '<div class="detail-section-title">协议字段</div>' +
-              '<div class="detail-section-sub">显示字节范围、原始值、解释和确认状态；Tag 字段展开到每一位。</div>' +
+              '<div class="detail-section-title">' + (isMCUProtocol ? '选中字段详情' : '协议字段') + '</div>' +
+              '<div class="detail-section-sub">' + (isMCUProtocol ? '悬停上方字节块可快速预览，点击后固定查看；Tag 会直接展开到每一位。' : '展示当前报文能够确认或派生出的字段；未出现在字段中的信息不能由该报文推断。') + '</div>' +
             '</div>' +
           '</div>' +
           protocolFieldsHtml +
@@ -3738,8 +3839,11 @@
   window.payloadGoPage = payloadGoPage;
   window.resetOperationLogFilters = resetOperationLogFilters;
   window.resetControlLogFilters = resetControlLogFilters;
+  window.controlLogViewDetail = controlLogViewDetail;
+  window.controlLogOpenRelatedPayloads = controlLogOpenRelatedPayloads;
   window.payloadCopySnapshot = payloadCopySnapshot;
   window.payloadViewDetail = payloadViewDetail;
+  window.payloadPreviewProtocolField = payloadPreviewProtocolField;
   window.payloadFocusProtocolField = payloadFocusProtocolField;
   window.openPointEditModal = openPointEditModal;
   window.openPointControlModal = openPointControlModal;

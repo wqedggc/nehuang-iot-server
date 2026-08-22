@@ -1795,6 +1795,19 @@ func (h *adminHandler) handlePayloadEvents(w http.ResponseWriter, r *http.Reques
 		writeCode(w, http.StatusInternalServerError, 500, "internal error: "+err.Error())
 		return
 	}
+	for i := range items {
+		summary := protocolsummary.Build(items[i].PayloadHex)
+		if summary == nil {
+			continue
+		}
+		items[i].ProtocolLabel = summary.Label
+		for _, field := range summary.Fields {
+			if field.Name == "device_id" {
+				items[i].DeviceIdentity = field.Value
+				break
+			}
+		}
+	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"data": map[string]any{

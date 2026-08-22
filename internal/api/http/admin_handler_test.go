@@ -2,6 +2,7 @@ package http
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +13,7 @@ import (
 	"nehuang-iot-server/internal/auth"
 	"nehuang-iot-server/internal/config"
 	"nehuang-iot-server/internal/domain"
+	"nehuang-iot-server/internal/gatewayadapter/protocol"
 )
 
 // ─── Mock repository for admin handler tests ──────────────────────────────────
@@ -41,6 +43,8 @@ type mockAdminRepo struct {
 	seedGatewayResult             *domain.GatewayDeviceSeedResult
 	gatewayCandidates             []domain.GatewayBindCandidate
 	payloadEventDetail            *domain.PayloadEventDetail
+	payloadEvents                 []domain.PayloadEventListItem
+	payloadEventTotal             int
 	operationLogs                 []domain.OperationRecord
 	operationTotal                int
 	operationLogQuery             domain.OperationLogQuery
@@ -175,7 +179,7 @@ func (m *mockAdminRepo) CreateControlCommandForPoint(ctx context.Context, input 
 	}, nil
 }
 func (m *mockAdminRepo) ListPayloadEvents(ctx context.Context, params domain.PayloadEventQuery) ([]domain.PayloadEventListItem, int, error) {
-	return nil, 0, nil
+	return m.payloadEvents, m.payloadEventTotal, nil
 }
 func (m *mockAdminRepo) GetPayloadEventDetail(ctx context.Context, rawEventID uint64) (*domain.PayloadEventDetail, error) {
 	return m.payloadEventDetail, nil
@@ -1163,6 +1167,35 @@ func TestPayloadEventDetailIncludesProtocolSummary(t *testing.T) {
 	}
 	if !contains(rec.Body.String(), `"kind":"modbus_read_holding_registers"`) {
 		t.Fatalf("protocol summary missing: body=%s", rec.Body.String())
+	}
+}
+
+func TestPayloadEventListIncludesProtocolAndCollectorIdentity(t *testing.T) {
+	packet := protocol.AppendCRC16Modbus([]byte{0x12, 0x34, 0x03, 0x11, 0x22, 0x33, 0xC0})
+	repo := &mockAdminRepo{
+		payloadEvents: []domain.PayloadEventListItem{{
+			RawEventID: 9002,
+			PayloadHex: hex.EncodeToString(packet),
+		}},
+		payloadEventTotal: 1,
+	}
+	handler := &adminHandler{repo: repo}
+	req := httptest.NewRequest("GET", "/api/v1/admin/payload-events?page=1&size=20", nil)
+	rec := httptest.NewRecorder()
+
+	handler.handlePayloadEvents(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("payload list: want 200, got %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if !contains(rec.Body.String(), `"protocol_label":"MCU1 故障状态上报"`) {
+		t.Fatalf("protocol_label missing: body=%s", rec.Body.String())
+	}
+	if !contains(rec.Body.String(), `"device_identity":"0x1234"`) {
+		t.Fatalf("device_identity missing: body=%s", rec.Body.String())
+	}
+	if contains(rec.Body.String(), `"payload_hex"`) {
+		t.Fatalf("payload_hex must stay out of list response: body=%s", rec.Body.String())
 	}
 }
 

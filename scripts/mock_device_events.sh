@@ -6,6 +6,7 @@
 #   scripts/mock_device_events.sh emit --farmer-user-id N  # 发射模式：仅为农户绑定的 point 生成 telemetry
 #   scripts/mock_device_events.sh                          # 默认循环模式（向后兼容）
 #   scripts/mock_device_events.sh --rounds 5 --interval 3  # 自定义轮次和间隔
+#   scripts/mock_device_events.sh --rounds 0 --interval 60 # 持续生成波动曲线，Ctrl+C 停止
 #
 # 环境变量：
 #   API_BASE             默认 http://localhost:8080
@@ -207,7 +208,7 @@ print_usage() {
 
 选项:
   --farmer-user-id <ID>   农户 user_id（emit 模式必需）
-  --rounds <N>            循环轮数（默认 20）
+  --rounds <N>            循环轮数（默认 20；0 表示持续运行直到中断）
   --interval <S>          每轮间隔秒数（默认 2）
   --base-url <URL>        覆盖 API_BASE（默认 http://localhost:8080）
   --token <TOKEN>         覆盖 Adapter Token
@@ -458,7 +459,11 @@ cmd_loop() {
   echo "涅凰智农 Mock 设备事件上报"
   echo "============================================"
   echo "API:    $ADAPTER_API"
-  echo "轮数:   $ROUNDS"
+  if [[ "$ROUNDS" == "0" ]]; then
+    echo "轮数:   持续运行（Ctrl+C 停止）"
+  else
+    echo "轮数:   $ROUNDS"
+  fi
   echo "间隔:   ${INTERVAL}s"
   echo "============================================"
 
@@ -481,8 +486,9 @@ cmd_loop() {
   local success_count=0
   local fail_count=0
 
-  for ((round=1; round<=ROUNDS; round++)); do
-    MSG_ID="mock-loop-${MOCK_DATA_ID_PREFIX}-$(date +%Y%m%d)-$(printf '%04d' "$round")"
+  local round=1
+  while [[ "$ROUNDS" == "0" || "$round" -le "$ROUNDS" ]]; do
+    MSG_ID="mock-loop-${MOCK_DATA_ID_PREFIX}-$(date +%Y%m%d-%H%M%S)-$(printf '%04d' "$round")"
 
     # 构建 events 数组
     EVENTS="["
@@ -506,16 +512,17 @@ cmd_loop() {
 
     if [[ "$http_code" == "200" ]]; then
       success_count=$((success_count + 1))
-      echo "[第 ${round}/${ROUNDS} 轮] ✅ HTTP $http_code — $MSG_ID"
+      echo "[第 ${round}/$([[ "$ROUNDS" == "0" ]] && echo '∞' || echo "$ROUNDS") 轮] ✅ HTTP $http_code — $MSG_ID"
     else
       fail_count=$((fail_count + 1))
-      echo "[第 ${round}/${ROUNDS} 轮] ❌ HTTP $http_code — $MSG_ID"
+      echo "[第 ${round}/$([[ "$ROUNDS" == "0" ]] && echo '∞' || echo "$ROUNDS") 轮] ❌ HTTP $http_code — $MSG_ID"
       echo "  响应: $resp_body"
     fi
 
-    if [[ $round -lt $ROUNDS ]]; then
+    if [[ "$ROUNDS" == "0" || $round -lt $ROUNDS ]]; then
       sleep "$INTERVAL"
     fi
+    round=$((round + 1))
   done
 
   echo ""

@@ -219,6 +219,7 @@ func (r *Repository) ListPayloadEvents(ctx context.Context, params domain.Payloa
 		item.ParseStatusName = domain.ParseStatus(item.ParseStatus).ParseStatusName()
 		item.ReceivedAtMS = receivedAt.Format("2006-01-02 15:04:05")
 		item.PayloadLen = hexPayloadByteLen(payloadHex)
+		item.PayloadHex = payloadHex
 		items = append(items, item)
 	}
 	return items, total, rows.Err()

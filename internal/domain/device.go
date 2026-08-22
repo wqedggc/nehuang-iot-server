@@ -701,6 +701,9 @@ type PayloadEventListItem struct {
 	RemotePort      int    `json:"remote_port"`
 	ReceivedAtMS    string `json:"received_at_ms"`
 	PayloadLen      int    `json:"payload_len"`
+	ProtocolLabel   string `json:"protocol_label,omitempty"`
+	DeviceIdentity  string `json:"device_identity,omitempty"`
+	PayloadHex      string `json:"-"`
 }
 
 // ProtocolSummary is a display-only interpretation of raw bytes for debugging.

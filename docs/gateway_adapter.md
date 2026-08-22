@@ -65,7 +65,7 @@ TCP Port: 8081
 
 - `FP_` 前缀用于云端识别设备网关名称；不带 `FP_` 的公网扫描包会进入原始报文排查，但不会被当作正式设备网关注册。
 - 心跳包会刷新设备网关在线时间；当前离线扫描默认 35 秒未上报后标记离线。
-- 工作包、告警包当前先进入原始报文排查，不承诺立刻解析成温度、告警或曲线。
+- MCU1 BB=01/02/03 工作包可做展示型协议解码；温度换算规则未确认前不承诺写入温度、告警或曲线业务数据。
 - mock telemetry 文本帧示例：
 
   ```text
@@ -87,7 +87,7 @@ Admin: http://43.143.208.153:8080/admin/
 - 设备网关名称，注册成功后显示 `FP_xxx`。
 - 事件类型：注册、心跳、工作数据、告警或未知包。
 - 原始 Hex 和 payload 快照。
-- 解析状态：注册/心跳可解析，工作/告警/未知包在协议未冻结前保持待解析。
+- 业务处理状态：注册/心跳可处理；MCU1 工作包可显示协议字段，但在设备映射和温度换算完成前仍不代表已写入业务数据。
 - 平台原始报文排查建议默认取最近 24 小时，支持按网关、`message_id`、`payload_hex` 过滤定位。
 
 如果硬件端发了包但平台没有显示，优先排查：
@@ -138,7 +138,7 @@ Admin/Mini 创建控制命令
 - MCU 是否执行成功。
 - ACK 是否能解析成 succeeded/failed。
 - 清缓存命令是否正确。
-- 下行 6 字节时间字段的最终格式（保留 2026-07-05 TDMA 口径，不实现到生产逻辑，仅记录当前状态）。
+- 3 字节 `HH MM SS` 的最终编码和时区（最新 MCU1 文档已取代旧“6 字节时间”口径）。
 
 ### 7. 硬件端需要回传给云端的联调材料
 
@@ -223,7 +223,7 @@ go run ./cmd/gateway-adapter-replay -raw-log data/gateway-adapter/raw-frames/raw
 2. 连接建立后，直接向 socket 写入原始 bytes。可以是 ASCII 注册包，也可以是 MCU 透传出来的二进制包。
 3. 第一版不要求硬件网关先组 JSON，也不要求硬件网关调用 HTTP。
 4. 每次写入的 bytes 都会被 Adapter 立即写入 raw frame journal，用于后续确认真实协议和解析规则。
-5. 除已识别注册/心跳外，unknown 包默认仅保留本地 journal；如需排障可通过 `NEHUANG_GATEWAY_FORWARD_UNKNOWN_FRAMES=true` 将 unknown 透传到 Go 服务。Go 服务第一版只解析注册和心跳，工作包/告警包和未透传 unknown 保持 pending。
+5. 除已识别注册/心跳外，unknown 包默认仅保留本地 journal；如需排障可通过 `NEHUANG_GATEWAY_FORWARD_UNKNOWN_FRAMES=true` 将 unknown 透传到 Go 服务。MCU1 BB=01/02/03 可生成展示型协议摘要；业务温度和告警投影仍待正式规则确认。
 
 业务解析边界：
 
@@ -238,7 +238,7 @@ go run ./cmd/gateway-adapter-replay -raw-log data/gateway-adapter/raw-frames/raw
 | 注册 | ASCII `FP_TEST_ADMIN_001\n` | Adapter 上报 raw；Go 服务解析为 `register` 并刷新 gateway |
 | 心跳 | ASCII `keepalive`、`keepalive message`、`HEARTBEAT\n`、`HB`、`PING`、`HEART` | Adapter 上报 raw；Go 服务解析为 `heartbeat` 并刷新 gateway |
 | Mock 工作数据 | ASCII `NH_TELEMETRY|frequency=1|device_external_id=1001|function_type=1|channel_no=1|value=26.5|unit=C` | Adapter 上报 raw；Go 服务解析并投影采集执行器、功能点、实时值和时序数据 |
-| 工作包 | 二进制 `AA AA ... CRC_LO CRC_HI` | Adapter 上报 raw；Go 服务保持 pending，字段解析等真实样例确认后补 |
+| MCU1 工作包 | 二进制 `AA AA BB HH MM SS ... Tag CRC_LO CRC_HI` | Adapter 上报 raw；Go 服务展示 ID、BB、时间原字节、Tag、CRC 和温度记录边界，不代表已写入温度业务 |
 | 告警包 | 二进制 `AA AA ... FF FF ... CRC_LO CRC_HI` | Adapter 上报 raw；Go 服务保持 pending，去重和告警入库等真实样例确认后补 |
 | 未知包 | 任意无法识别 bytes | 默认仅写 local journal；`NEHUANG_GATEWAY_FORWARD_UNKNOWN_FRAMES=true` 时上报 raw；不中断连接 |
 
@@ -313,6 +313,20 @@ go run ./cmd/gateway-adapter-mock -addr 127.0.0.1:8081 -frame unknown
 ```bash
 go run ./cmd/gateway-adapter-mock -addr 127.0.0.1:8081 -frame all -repeat 3 -delay 1s
 ```
+
+持续验证 TCP 收包（只验证 raw/协议透视，不生成可换算温度曲线）：
+
+```bash
+go run ./cmd/gateway-adapter-mock -addr 127.0.0.1:8081 -loop -duration 30m -heartbeat-interval 10s
+```
+
+持续生成有波动的结构化测试曲线（`--rounds 0` 直到 Ctrl+C）：
+
+```bash
+scripts/mock_device_events.sh --rounds 0 --interval 60
+```
+
+两者用途不同：前者验证真实 TCP/raw 链路，后者在 MCU1 温度编码尚未冻结时验证业务入库和曲线展示。
 
 模拟硬件等待云端下行命令：
 
