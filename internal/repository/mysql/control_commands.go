@@ -86,6 +86,30 @@ VALUES
 	return &cmd, nil
 }
 
+const getControlCommandByIDQuery = `
+SELECT
+  cc.command_id, cc.gateway_id, cc.realtime_id, cc.node_id, cc.point_id,
+  cc.frequency, cc.device_external_id, cc.command_source, cc.command_type,
+  cc.run_mode, cc.rel1_target_status, cc.rel2_target_status,
+  cc.command_hex, cc.command_status, cc.requested_by, cc.requested_at_ms,
+  cc.sent_at_ms, cc.finished_at_ms, cc.gateway_response, cc.error_message, cc.extra,
+  cc.created_at, cc.updated_at
+FROM control_commands cc
+WHERE cc.command_id = ?
+LIMIT 1`
+
+// GetControlCommandByID returns the existing control_commands record for status queries.
+func (r *Repository) GetControlCommandByID(ctx context.Context, commandID uint64) (*domain.ControlCommand, error) {
+	cmd, err := scanControlCommand(r.db.QueryRowContext(ctx, getControlCommandByIDQuery, commandID))
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &cmd, nil
+}
+
 func nullableUint8(v *uint8) interface{} {
 	if v == nil {
 		return nil

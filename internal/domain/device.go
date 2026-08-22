@@ -709,16 +709,44 @@ type ProtocolSummary struct {
 	Kind        string                 `json:"kind"`
 	Label       string                 `json:"label"`
 	Description string                 `json:"description"`
+	Status      string                 `json:"status,omitempty"`
+	ByteLength  int                    `json:"byte_length,omitempty"`
+	RecordCount int                    `json:"record_count,omitempty"`
 	ASCII       string                 `json:"ascii,omitempty"`
 	CRCValid    *bool                  `json:"crc_valid,omitempty"`
 	Fields      []ProtocolSummaryField `json:"fields,omitempty"`
+	Diagnostics []ProtocolDiagnostic   `json:"diagnostics,omitempty"`
 }
 
-// ProtocolSummaryField is one stable decoded field for Admin raw payload detail.
+// ProtocolSummaryField is one decoded byte range for Admin raw payload detail.
 type ProtocolSummaryField struct {
-	Name  string `json:"name"`
-	Label string `json:"label"`
-	Value string `json:"value"`
+	Name      string               `json:"name"`
+	Label     string               `json:"label"`
+	Value     string               `json:"value"`
+	ByteStart int                  `json:"byte_start"`
+	ByteEnd   int                  `json:"byte_end"`
+	RawHex    string               `json:"raw_hex,omitempty"`
+	Status    string               `json:"status,omitempty"`
+	Note      string               `json:"note,omitempty"`
+	Bits      []ProtocolSummaryBit `json:"bits,omitempty"`
+}
+
+// ProtocolSummaryBit explains one bit in a bitmap field such as MCU1 Tag.
+type ProtocolSummaryBit struct {
+	Position int    `json:"position"`
+	BitIndex int    `json:"bit_index"`
+	Symbol   string `json:"symbol"`
+	Value    uint8  `json:"value"`
+	Meaning  string `json:"meaning"`
+	Status   string `json:"status,omitempty"`
+}
+
+// ProtocolDiagnostic explains why a frame is partial or invalid without
+// changing the raw payload or claiming that it reached business tables.
+type ProtocolDiagnostic struct {
+	Code     string `json:"code"`
+	Severity string `json:"severity"`
+	Message  string `json:"message"`
 }
 
 // PayloadEventDetail 是 payload 事件详情。

@@ -226,6 +226,13 @@ API 与展示口径（当前）：
 | GET | `/api/v1/mini/devices/{point_id}/realtime` | 正式 |
 | GET | `/api/v1/mini/devices/{point_id}/history?range=1d` | 正式；支持 `1d/3d/7d/30d`，兼容 `1h/6h/24h` |
 | POST | `/api/v1/mini/devices/{point_id}/control` | 正式创建异步控制命令，最终下发和 ACK 由 Adapter 完成 |
+| GET | `/api/v1/mini/control-commands/{command_id}` | 正式；查询当前农户已绑定设备的异步控制命令状态 |
+
+### GET `/api/v1/mini/control-commands/{command_id}`
+
+返回 `command_id`、`status`、`finished_at_ms`、`error_message`。`command_id` 保持字符串；`status` 使用既有 `pending`、`sent`、`ack`、`succeeded`、`failed`、`timeout` 语义。完成时间和错误信息尚未产生时返回 `null`。
+
+接口会按命令关联的 `point_id` 复用现有绑定权限检查；point、collector 绑定以及 exclusive gateway 绑定均沿用 C 端设备可见性规则，未绑定返回 `403`。
 
 ## Shared
 

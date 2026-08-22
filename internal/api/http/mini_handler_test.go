@@ -17,9 +17,16 @@ import (
 // ─── Mock repository for mini handler tests ───────────────────────────────────
 
 type mockMiniRepo struct {
-	userByOpenID    *domain.User
-	userByOpenIDErr error
-	createdUser     *domain.User
+	userByOpenID     *domain.User
+	userByOpenIDErr  error
+	createdUser      *domain.User
+	controlCommand   *domain.ControlCommand
+	controlErr       error
+	bound            bool
+	bindErr          error
+	checkedUserID    uint64
+	checkedPointID   uint64
+	queriedCommandID uint64
 }
 
 func (m *mockMiniRepo) GetUserByOpenID(ctx context.Context, openid string) (*domain.User, error) {
@@ -49,7 +56,9 @@ func (m *mockMiniRepo) GetMiniDeviceHistory(ctx context.Context, pointID uint64,
 	return nil, nil
 }
 func (m *mockMiniRepo) CheckBindRelation(ctx context.Context, userID uint64, pointID uint64) (bool, error) {
-	return false, nil
+	m.checkedUserID = userID
+	m.checkedPointID = pointID
+	return m.bound, m.bindErr
 }
 func (m *mockMiniRepo) UpdateMiniProfile(ctx context.Context, userID uint64, updates map[string]string) error {
 	return nil
@@ -63,6 +72,10 @@ func (m *mockMiniRepo) CreateControlCommandForPoint(ctx context.Context, input d
 		CommandHex:    input.CommandHex,
 		CommandStatus: domain.CommandStatusCreated,
 	}, nil
+}
+func (m *mockMiniRepo) GetControlCommandByID(ctx context.Context, commandID uint64) (*domain.ControlCommand, error) {
+	m.queriedCommandID = commandID
+	return m.controlCommand, m.controlErr
 }
 
 // ─── Scenario 7: Mini login JWT contains aud="mini" ──────────────────────────

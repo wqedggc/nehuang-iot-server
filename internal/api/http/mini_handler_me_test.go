@@ -75,6 +75,9 @@ func (m *mockMiniRepoExt) CreateControlCommandForPoint(ctx context.Context, inpu
 		CommandStatus: domain.CommandStatusCreated,
 	}, nil
 }
+func (m *mockMiniRepoExt) GetControlCommandByID(ctx context.Context, commandID uint64) (*domain.ControlCommand, error) {
+	return nil, nil
+}
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 

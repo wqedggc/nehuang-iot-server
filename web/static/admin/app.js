@@ -129,21 +129,49 @@
     var fields = [];
     if (Array.isArray(summary.fields)) {
       fields = summary.fields.map(function (field) {
+        var bits = Array.isArray(field.bits) ? field.bits.map(function (bit) {
+          return {
+            position: toNum(bit.position),
+            bitIndex: toNum(bit.bit_index != null ? bit.bit_index : bit.bitIndex),
+            symbol: toText(bit.symbol || ''),
+            value: toNum(bit.value),
+            meaning: toText(bit.meaning || ''),
+            status: toText(bit.status || '')
+          };
+        }) : [];
         return {
           name: toText(field.name || ''),
           label: toText(field.label || field.name || ''),
-          value: toText(field.value || '')
+          value: toText(field.value || ''),
+          byteStart: toNum(field.byte_start != null ? field.byte_start : field.byteStart),
+          byteEnd: toNum(field.byte_end != null ? field.byte_end : field.byteEnd),
+          rawHex: toText(field.raw_hex || field.rawHex || ''),
+          status: toText(field.status || ''),
+          note: toText(field.note || ''),
+          bits: bits
         };
       });
     }
+
+    var diagnostics = Array.isArray(summary.diagnostics) ? summary.diagnostics.map(function (diagnostic) {
+      return {
+        code: toText(diagnostic.code || ''),
+        severity: toText(diagnostic.severity || ''),
+        message: toText(diagnostic.message || '')
+      };
+    }) : [];
 
     return {
       kind: toText(summary.kind || ''),
       label: toText(summary.label || ''),
       description: toText(summary.description || ''),
+      status: toText(summary.status || ''),
+      byteLength: toNum(summary.byte_length != null ? summary.byte_length : summary.byteLength),
+      recordCount: toNum(summary.record_count != null ? summary.record_count : summary.recordCount),
       ascii: toText(summary.ascii || ''),
       crcValid: summary.crc_valid === true ? true : summary.crc_valid === false ? false : null,
       fields: fields,
+      diagnostics: diagnostics,
       rawText: toText(summary.rawText || '')
     };
   }
@@ -2462,7 +2490,13 @@
   }
 
   function closeModal() {
-    $('#modal-overlay').style.display = 'none';
+    var overlay = $('#modal-overlay');
+    var returnFocus = overlay._returnFocus;
+    overlay.style.display = 'none';
+    overlay._returnFocus = null;
+    if (returnFocus && document.contains(returnFocus) && typeof returnFocus.focus === 'function') {
+      returnFocus.focus();
+    }
   }
 
   async function doBindDevice(userId) {
@@ -3331,13 +3365,144 @@
     }
   }
 
+  function protocolStatusLabel(status) {
+    if (status === 'decoded') return '已解析';
+    if (status === 'confirmed') return '已确认';
+    if (status === 'partial') return '部分解析';
+    if (status === 'unknown') return '待确认';
+    if (status === 'invalid') return '异常';
+    return status || '--';
+  }
+
+  function protocolStatusClass(status) {
+    if (status === 'decoded' || status === 'confirmed') return 'is-confirmed';
+    if (status === 'partial' || status === 'unknown') return 'is-partial';
+    if (status === 'invalid') return 'is-invalid';
+    return 'is-neutral';
+  }
+
+  function protocolBadgeClass(status) {
+    if (status === 'decoded' || status === 'confirmed') return 'badge-success';
+    if (status === 'partial' || status === 'unknown') return 'badge-warning';
+    if (status === 'invalid') return 'badge-danger';
+    return 'badge-muted';
+  }
+
+  function protocolSafeFieldKey(name) {
+    return toText(name || '').replace(/[^a-zA-Z0-9_-]/g, '');
+  }
+
+  function renderProtocolBits(field) {
+    if (!field.bits || !field.bits.length) return '';
+    return '<div class="protocol-bit-grid" role="list" aria-label="Tag 位解释">' +
+      field.bits.map(function (bit) {
+        var statusClass = protocolStatusClass(bit.status);
+        return '<div class="protocol-bit ' + statusClass + '" role="listitem">' +
+          '<span class="protocol-bit-position">位 ' + escHtml(bit.position != null ? bit.position : '--') + ' · b' + escHtml(bit.bitIndex != null ? bit.bitIndex : '--') + '</span>' +
+          '<strong>' + escHtml(bit.symbol || '--') + '</strong>' +
+          '<span class="protocol-bit-value">' + escHtml(bit.value != null ? bit.value : '--') + '</span>' +
+          '<span class="protocol-bit-meaning">' + escHtml(bit.meaning || '--') + '</span>' +
+        '</div>';
+      }).join('') +
+    '</div>';
+  }
+
+  function renderProtocolFields(fields) {
+    if (!fields || !fields.length) return '';
+    return '<div class="protocol-field-table" role="list">' +
+      fields.map(function (field) {
+        var key = protocolSafeFieldKey(field.name);
+        var hasRange = field.rawHex && field.byteStart != null && field.byteEnd != null;
+        var byteRange = hasRange ? (field.byteStart === field.byteEnd ? String(field.byteStart) : field.byteStart + '..' + field.byteEnd) : '--';
+        return '<div class="protocol-field-row ' + protocolStatusClass(field.status) + '" data-protocol-field="' + escHtml(key) + '" role="listitem">' +
+          '<div class="protocol-field-head">' +
+            '<div><strong>' + escHtml(field.label || field.name || '--') + '</strong><span class="protocol-field-name">' + escHtml(field.name || '') + '</span></div>' +
+            '<span class="badge ' + protocolBadgeClass(field.status) + '">' + escHtml(protocolStatusLabel(field.status)) + '</span>' +
+          '</div>' +
+          '<div class="protocol-field-values">' +
+            '<span><small>字节范围</small><code>' + escHtml(byteRange) + '</code></span>' +
+            '<span><small>原始 Hex</small><code>' + escHtml(field.rawHex || '--') + '</code></span>' +
+            '<span><small>解释</small><b>' + escHtml(field.value || '--') + '</b></span>' +
+          '</div>' +
+          (field.note ? '<p class="protocol-field-note">' + escHtml(field.note) + '</p>' : '') +
+          renderProtocolBits(field) +
+        '</div>';
+      }).join('') +
+    '</div>';
+  }
+
+  function renderProtocolByteMap(payloadHex, fields) {
+    var clean = normalizeHexText(payloadHex || '');
+    if (!clean || clean.length % 2 !== 0) return '';
+    var bytes = [];
+    for (var i = 0; i < clean.length; i += 2) bytes.push(clean.slice(i, i + 2).toUpperCase());
+
+    var rangedFields = (fields || []).filter(function (field) {
+      return !!field.rawHex && field.byteStart != null && field.byteEnd != null;
+    });
+    var cells = bytes.map(function (value, index) {
+      var field = null;
+      for (var j = 0; j < rangedFields.length; j++) {
+        if (index >= rangedFields[j].byteStart && index <= rangedFields[j].byteEnd) {
+          field = rangedFields[j];
+          break;
+        }
+      }
+      var key = field ? protocolSafeFieldKey(field.name) : '';
+      var label = field ? field.label : '未解释字节';
+      var onclick = key ? ' onclick="payloadFocusProtocolField(\'' + key + '\')"' : '';
+      return '<button type="button" class="protocol-byte ' + protocolStatusClass(field ? field.status : '') + '"' + onclick +
+        ' data-protocol-byte-field="' + escHtml(key) + '" aria-label="字节 ' + index + '，' + escHtml(label) + '，' + value + '">' +
+          '<span>' + String(index).padStart(2, '0') + '</span><strong>' + value + '</strong>' +
+        '</button>';
+    }).join('');
+
+    var groups = rangedFields.map(function (field) {
+      var key = protocolSafeFieldKey(field.name);
+      var range = field.byteStart === field.byteEnd ? String(field.byteStart) : field.byteStart + '..' + field.byteEnd;
+      return '<button type="button" class="protocol-byte-group ' + protocolStatusClass(field.status) + '" onclick="payloadFocusProtocolField(\'' + key + '\')">' +
+        '<strong>' + escHtml(field.label || field.name || '--') + '</strong><span>[' + escHtml(range) + ']</span>' +
+      '</button>';
+    }).join('');
+
+    return '<div class="protocol-byte-map"><div class="protocol-byte-strip">' + cells + '</div>' +
+      '<div class="protocol-byte-groups" aria-label="报文字段分组">' + groups + '</div></div>';
+  }
+
+  function renderProtocolDiagnostics(diagnostics) {
+    if (!diagnostics || !diagnostics.length) return '';
+    return '<div class="protocol-diagnostics" role="status">' + diagnostics.map(function (diagnostic) {
+      var severityClass = diagnostic.severity === 'error' ? 'is-invalid' : 'is-partial';
+      return '<div class="protocol-diagnostic ' + severityClass + '"><strong>' +
+        (diagnostic.severity === 'error' ? '异常' : '待确认') + '</strong><span>' + escHtml(diagnostic.message || diagnostic.code || '--') + '</span></div>';
+    }).join('') + '</div>';
+  }
+
+  function payloadFocusProtocolField(fieldName) {
+    var overlay = $('#modal-overlay');
+    if (!overlay) return;
+    var key = protocolSafeFieldKey(fieldName);
+    overlay.querySelectorAll('[data-protocol-field], [data-protocol-byte-field]').forEach(function (element) {
+      element.classList.remove('is-active');
+    });
+    overlay.querySelectorAll('[data-protocol-byte-field="' + key + '"]').forEach(function (element) {
+      element.classList.add('is-active');
+    });
+    var field = overlay.querySelector('[data-protocol-field="' + key + '"]');
+    if (field) {
+      field.classList.add('is-active');
+      field.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }
+
   async function payloadViewDetail(rawEventId) {
     var overlay = $('#modal-overlay');
+    overlay._returnFocus = document.activeElement;
     overlay.style.display = 'flex';
-    overlay.innerHTML = '<div class="modal" style="max-width:720px">' +
+    overlay.innerHTML = '<div class="modal protocol-inspector-modal" role="dialog" aria-modal="true" aria-labelledby="payload-detail-title">' +
       '<div class="modal-header">' +
-        '<h3>原始报文详情</h3>' +
-        '<button class="modal-close" onclick="closeModal()">×</button>' +
+        '<h3 id="payload-detail-title">原始报文详情</h3>' +
+        '<button class="modal-close" onclick="closeModal()" aria-label="关闭原始报文详情">×</button>' +
       '</div>' +
       '<div class="modal-body" style="max-height:70vh;overflow-y:auto">' +
         '<div class="loading-state"><div class="loading-spinner"></div><p>加载中...</p></div>' +
@@ -3347,6 +3512,7 @@
         '<button class="btn btn-primary btn-sm" id="btn-payload-copy-detail" style="display:none" onclick="payloadCopySnapshot(\'' + rawEventId + '\')">📋 拷贝原始报文</button>' +
       '</div>' +
     '</div>';
+    overlay.querySelector('.modal-close').focus();
 
     try {
       var res = await NHApi.getPayloadEventDetail(rawEventId);
@@ -3367,6 +3533,8 @@
       var protocolLabelText = (protocolSummary && (protocolSummary.label || protocolSummary.rawText)) || '--';
       var protocolKindText = (protocolSummary && (protocolSummary.kind || protocolSummary.rawText)) || '--';
       var protocolDescText = (protocolSummary && (protocolSummary.description || protocolSummary.rawText)) || '--';
+      var isMCUProtocol = !!(protocolSummary && protocolSummary.kind && protocolSummary.kind.indexOf('mcu1_') === 0);
+      if (isMCUProtocol && !(protocolSummary && protocolSummary.ascii)) payloadAscii = '';
       var crcText = '--';
       if (protocolSummary) {
         if (protocolSummary.crcValid === true) crcText = '通过';
@@ -3375,15 +3543,23 @@
 
       var protocolFieldsHtml = '';
       if (protocolSummary && protocolSummary.fields && protocolSummary.fields.length) {
-        protocolFieldsHtml = '<div class="detail-mini-table">' +
-          protocolSummary.fields.map(function (field) {
-            return '<div class="detail-mini-row">' +
-              '<div class="detail-mini-key">' + escHtml(field.label || field.name || '--') + '</div>' +
-              '<div class="detail-mini-val">' + escHtml(field.value || '--') + '</div>' +
-            '</div>';
-          }).join('') +
-        '</div>';
+        if (isMCUProtocol) {
+          protocolFieldsHtml = renderProtocolFields(protocolSummary.fields);
+        } else {
+          protocolFieldsHtml = '<div class="detail-mini-table">' +
+            protocolSummary.fields.map(function (field) {
+              return '<div class="detail-mini-row">' +
+                '<div class="detail-mini-key">' + escHtml(field.label || field.name || '--') + '</div>' +
+                '<div class="detail-mini-val">' + escHtml(field.value || '--') + '</div>' +
+              '</div>';
+            }).join('') +
+          '</div>';
+        }
       }
+
+      var protocolByteMapHtml = isMCUProtocol ? renderProtocolByteMap(d.payloadHex || res.data.payload_hex || '', protocolSummary.fields || []) : '';
+      var protocolDiagnosticsHtml = isMCUProtocol ? renderProtocolDiagnostics(protocolSummary.diagnostics || []) : '';
+      var protocolDecodeStatus = protocolSummary ? protocolStatusLabel(protocolSummary.status) : '--';
 
       var bodyHtml = '<div class="detail-grid">' +
         '<div class="info-item"><label>原始报文 ID</label><span style="font-family:monospace">' + escHtml(String(d.rawEventId || '--')) + '</span></div>' +
@@ -3408,32 +3584,48 @@
         '<pre class="code-panel">' + escHtml(payloadHex || '(空)') + '</pre>' +
       '</div>';
 
-      bodyHtml += '<div class="detail-section">' +
-        '<div class="detail-section-head">' +
-          '<div>' +
-            '<div class="detail-section-title">ASCII</div>' +
-            '<div class="detail-section-sub">由协议摘要优先展示，缺失时按 Hex 反推。</div>' +
-          '</div>' +
-        '</div>' +
-        '<pre class="code-panel">' + escHtml(payloadAscii || '(空)') + '</pre>' +
-      '</div>';
-
       bodyHtml += '<div class="detail-grid detail-grid-4">' +
         '<div class="info-item"><label>CRC</label><span><span class="badge ' + (crcText === '通过' ? 'badge-success' : crcText === '不通过' ? 'badge-danger' : 'badge-muted') + '">' + escHtml(crcText) + '</span></span></div>' +
+        '<div class="info-item"><label>解码结果</label><span><span class="badge ' + protocolBadgeClass(protocolSummary ? protocolSummary.status : '') + '">' + escHtml(protocolDecodeStatus) + '</span></span></div>' +
         '<div class="info-item"><label>协议摘要</label><span>' + escHtml(protocolLabelText) + '</span></div>' +
         '<div class="info-item"><label>协议类型</label><span>' + escHtml(protocolKindText) + '</span></div>' +
         '<div class="info-item"><label>协议说明</label><span>' + escHtml(protocolDescText) + '</span></div>' +
+        (protocolSummary && protocolSummary.recordCount ? '<div class="info-item"><label>历史记录组数</label><span>' + escHtml(protocolSummary.recordCount) + '</span></div>' : '') +
       '</div>';
+
+      if (protocolByteMapHtml) {
+        bodyHtml += '<div class="detail-section">' +
+          '<div class="detail-section-head">' +
+            '<div>' +
+              '<div class="detail-section-title">报文字节透视</div>' +
+              '<div class="detail-section-sub">当前输入按一条完整 MCU1 报文解释；点击任一字节或字段可定位详细含义。</div>' +
+            '</div>' +
+          '</div>' +
+          protocolByteMapHtml + protocolDiagnosticsHtml +
+        '</div>';
+      }
 
       if (protocolFieldsHtml) {
         bodyHtml += '<div class="detail-section">' +
           '<div class="detail-section-head">' +
             '<div>' +
               '<div class="detail-section-title">协议字段</div>' +
-              '<div class="detail-section-sub">后端已解析出的稳定字段。</div>' +
+              '<div class="detail-section-sub">显示字节范围、原始值、解释和确认状态；Tag 字段展开到每一位。</div>' +
             '</div>' +
           '</div>' +
           protocolFieldsHtml +
+        '</div>';
+      }
+
+      if (payloadAscii) {
+        bodyHtml += '<div class="detail-section">' +
+          '<div class="detail-section-head">' +
+            '<div>' +
+              '<div class="detail-section-title">ASCII</div>' +
+              '<div class="detail-section-sub">由协议摘要优先展示，缺失时按 Hex 反推。</div>' +
+            '</div>' +
+          '</div>' +
+          '<pre class="code-panel">' + escHtml(payloadAscii) + '</pre>' +
         '</div>';
       }
 
@@ -3502,6 +3694,32 @@
     if (e.target.id === 'modal-overlay') closeModal();
   });
 
+  document.addEventListener('keydown', function (e) {
+    var overlay = $('#modal-overlay');
+    if (!overlay || overlay.style.display === 'none') return;
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      closeModal();
+      return;
+    }
+    if (e.key !== 'Tab') return;
+    var focusable = Array.prototype.slice.call(overlay.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'))
+      .filter(function (element) { return !element.disabled && element.offsetParent !== null; });
+    if (!focusable.length) {
+      e.preventDefault();
+      return;
+    }
+    var first = focusable[0];
+    var last = focusable[focusable.length - 1];
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  });
+
   // 暴露
   window.navigate = navigate;
   window.renderPage = renderPage;
@@ -3522,6 +3740,7 @@
   window.resetControlLogFilters = resetControlLogFilters;
   window.payloadCopySnapshot = payloadCopySnapshot;
   window.payloadViewDetail = payloadViewDetail;
+  window.payloadFocusProtocolField = payloadFocusProtocolField;
   window.openPointEditModal = openPointEditModal;
   window.openPointControlModal = openPointControlModal;
   window.openGatewayAccessModeModal = openGatewayAccessModeModal;

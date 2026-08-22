@@ -812,32 +812,31 @@ ORDER BY cn.node_id ASC, dp.updated_at DESC`, userID, userID, userID)
 	return devices, rows.Err()
 }
 
+const checkBindRelationQuery = `SELECT COUNT(*)
+ FROM device_points dp
+ WHERE dp.point_id = ?
+   AND (
+     EXISTS (
+       SELECT 1 FROM bind_relations br
+       WHERE br.user_id = ? AND br.point_id = dp.point_id AND br.bind_status = 1
+     )
+     OR EXISTS (
+       SELECT 1 FROM bind_relations br
+       WHERE br.user_id = ? AND br.node_id = dp.node_id AND br.point_id IS NULL AND br.bind_status = 1
+     )
+     OR EXISTS (
+       SELECT 1 FROM bind_relations br
+       JOIN cloud_gateways cg ON cg.gateway_id = dp.gateway_id
+       WHERE br.user_id = ? AND br.gateway_id = dp.gateway_id
+         AND br.node_id IS NULL AND br.point_id IS NULL
+         AND br.bind_status = 1 AND cg.access_mode = 'exclusive'
+     )
+   )`
+
 // CheckBindRelation 检查用户是否对某个功能点有 active 绑定关系。
 func (r *Repository) CheckBindRelation(ctx context.Context, userID uint64, pointID uint64) (bool, error) {
 	var count int
-	err := r.db.QueryRowContext(ctx,
-		`SELECT COUNT(*)
-		 FROM device_points dp
-		 WHERE dp.point_id = ?
-		   AND (
-		     EXISTS (
-		       SELECT 1 FROM bind_relations br
-		       WHERE br.user_id = ? AND br.point_id = dp.point_id AND br.bind_status = 1
-		     )
-		     OR EXISTS (
-		       SELECT 1 FROM bind_relations br
-		       WHERE br.user_id = ? AND br.node_id = dp.node_id AND br.point_id IS NULL AND br.bind_status = 1
-		     )
-		     OR EXISTS (
-		       SELECT 1 FROM bind_relations br
-		       JOIN cloud_gateways cg ON cg.gateway_id = dp.gateway_id
-		       WHERE br.user_id = ? AND br.gateway_id = dp.gateway_id
-		         AND br.node_id IS NULL AND br.point_id IS NULL
-		         AND br.bind_status = 1 AND cg.access_mode = 'exclusive'
-		     )
-		   )`,
-		pointID, userID, userID, userID,
-	).Scan(&count)
+	err := r.db.QueryRowContext(ctx, checkBindRelationQuery, pointID, userID, userID, userID).Scan(&count)
 	return count > 0, err
 }
 

@@ -227,6 +227,14 @@ func (s *Server) Routes() http.Handler {
 		}))))
 	mux.Handle("/api/v1/mini/devices",
 		authMiddleware(secret, farmerRoles(http.HandlerFunc(mh.handleDevices))))
+	mux.Handle("/api/v1/mini/control-commands/",
+		authMiddleware(secret, farmerRoles(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodGet {
+				writeCode(w, http.StatusMethodNotAllowed, 405, "method not allowed")
+				return
+			}
+			mh.handleControlCommandStatus(w, r)
+		}))))
 	mux.Handle("/api/v1/mini/devices/",
 		authMiddleware(secret, farmerRoles(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// 路由分发：/api/v1/mini/devices/{id}/realtime 或 /history 或 /control

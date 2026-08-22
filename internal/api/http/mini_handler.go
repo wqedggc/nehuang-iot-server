@@ -33,6 +33,8 @@ type miniRepository interface {
 	CheckBindRelation(ctx context.Context, userID uint64, pointID uint64) (bool, error)
 	// 创建控制命令，实际下发由 Adapter 异步处理。
 	CreateControlCommandForPoint(ctx context.Context, input domain.CreateControlCommandInput) (*domain.ControlCommand, error)
+	// 按 ID 获取既有控制命令，用于查询异步执行状态。
+	GetControlCommandByID(ctx context.Context, commandID uint64) (*domain.ControlCommand, error)
 }
 
 // miniHandler handles all /api/v1/mini/* endpoints.
@@ -573,6 +575,55 @@ func (h *miniHandler) handleControl(w http.ResponseWriter, r *http.Request) {
 			"action_label": label,
 			"status":       cmd.CommandStatus.Label(),
 			"message":      "控制命令已创建，等待 Adapter 下发",
+		},
+	})
+}
+
+// handleControlCommandStatus 处理 GET /api/v1/mini/control-commands/{command_id}。
+func (h *miniHandler) handleControlCommandStatus(w http.ResponseWriter, r *http.Request) {
+	claims, ok := ClaimsFromContext(r.Context())
+	if !ok {
+		writeCode(w, http.StatusUnauthorized, 401, "missing claims")
+		return
+	}
+
+	const prefix = "/api/v1/mini/control-commands/"
+	if !strings.HasPrefix(r.URL.Path, prefix) {
+		writeCode(w, http.StatusBadRequest, 400, "invalid command id")
+		return
+	}
+	commandID, err := strconv.ParseUint(strings.TrimPrefix(r.URL.Path, prefix), 10, 64)
+	if err != nil {
+		writeCode(w, http.StatusBadRequest, 400, "invalid command id")
+		return
+	}
+
+	cmd, err := h.repo.GetControlCommandByID(r.Context(), commandID)
+	if err != nil {
+		writeCode(w, http.StatusInternalServerError, 500, "internal error")
+		return
+	}
+	if cmd == nil || cmd.PointID == nil {
+		writeCode(w, http.StatusNotFound, 404, "control command not found")
+		return
+	}
+
+	bound, err := h.repo.CheckBindRelation(r.Context(), claims.UserID, *cmd.PointID)
+	if err != nil {
+		writeCode(w, http.StatusInternalServerError, 500, "internal error")
+		return
+	}
+	if !bound {
+		writeCode(w, http.StatusForbidden, 403, "device not bound to current user")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"data": map[string]any{
+			"command_id":     idStr(cmd.CommandID),
+			"status":         cmd.CommandStatus.Label(),
+			"finished_at_ms": cmd.FinishedAtMS,
+			"error_message":  cmd.ErrorMessage,
 		},
 	})
 }
