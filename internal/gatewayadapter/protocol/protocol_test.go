@@ -79,3 +79,25 @@ func TestClassifyPayload_DoesNotMisparseRandomBytes(t *testing.T) {
 		t.Fatalf("Kind = %s, want unknown", msg.Kind)
 	}
 }
+
+func TestClassifyPayload_MCU1UplinkUsesVariableCollectorID(t *testing.T) {
+	packet := AppendCRC16Modbus([]byte{
+		0x03, 0xE9, // collector ID: not a fixed AA AA header
+		0x01, // BB: automatic status/history
+		0x01, 0x02, 0x03,
+		0x00, // no history records
+		0xC0, // valid Tag
+	})
+	msg := ClassifyPayload(packet)
+	if msg.Kind != MessageWorkData {
+		t.Fatalf("Kind = %s, want work_data for MCU1 collector 0x03E9", msg.Kind)
+	}
+}
+
+func TestClassifyPayload_MCU1ShapeStillRequiresValidCRC(t *testing.T) {
+	packet := []byte{0x03, 0xE9, 0x03, 0x01, 0x02, 0x03, 0xC0, 0x00, 0x00}
+	msg := ClassifyPayload(packet)
+	if msg.Kind != MessageUnknown {
+		t.Fatalf("Kind = %s, want unknown for invalid CRC", msg.Kind)
+	}
+}

@@ -675,6 +675,7 @@ type DevicePointSearchResult struct {
 type PayloadEventQuery struct {
 	Page        int     `json:"page"`
 	Size        int     `json:"size"`
+	SourceType  *uint8  `json:"source_type"`
 	EventType   *uint8  `json:"event_type"`
 	ParseStatus *uint8  `json:"parse_status"`
 	Start       *string `json:"start"`

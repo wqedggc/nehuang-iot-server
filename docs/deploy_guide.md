@@ -437,6 +437,14 @@ curl http://localhost:18081/healthz
 # 本地模拟硬件 TCP 发包
 go run ./cmd/gateway-adapter-mock -addr 127.0.0.1:8081 -frame all
 
+# 持续发送 PPT MCU1 原始报文；03E9 是显式测试采集器 ID
+go run ./cmd/gateway-adapter-mock \
+  -addr 127.0.0.1:8081 \
+  -gateway FP_TEST_ADMIN_002 \
+  -collector-id-hex 03E9 \
+  -frame register,heartbeat,mcu1-auto-history,mcu1-manual,mcu1-fault \
+  -loop -heartbeat-interval 30s -work-interval 10s
+
 # 本地模拟硬件等待云端下行命令
 go run ./cmd/gateway-adapter-mock -addr 127.0.0.1:8081 -wait-downlink -wait-timeout 30s
 

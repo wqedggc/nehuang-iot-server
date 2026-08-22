@@ -66,6 +66,7 @@ TCP Port: 8081
 - `FP_` 前缀用于云端识别设备网关名称；不带 `FP_` 的公网扫描包会进入原始报文排查，但不会被当作正式设备网关注册。
 - 心跳包会刷新设备网关在线时间；当前离线扫描默认 35 秒未上报后标记离线。
 - MCU1 BB=01/02/03 工作包可做展示型协议解码；温度换算规则未确认前不承诺写入温度、告警或曲线业务数据。
+- MCU1 上行前两字节按采集执行器 ID 展示，不再假定为固定 `AA AA` 帧头；BB、报文长度和 CRC 共同确定 MCU1 上行类型。
 - mock telemetry 文本帧示例：
 
   ```text
@@ -88,7 +89,21 @@ Admin: http://43.143.208.153:8080/admin/
 - 事件类型：注册、心跳、工作数据、告警或未知包。
 - 原始 Hex 和 payload 快照。
 - 业务处理状态：注册/心跳可处理；MCU1 工作包可显示协议字段，但在设备映射和温度换算完成前仍不代表已写入业务数据。
-- 平台原始报文排查建议默认取最近 24 小时，支持按网关、`message_id`、`payload_hex` 过滤定位。
+- 平台原始报文排查默认取最近 24 小时的 `source_type=1` TCP 原始报文，支持切换查看结构化 Adapter 事件，并支持按网关、`message_id`、`payload_hex` 过滤定位。
+- `/api/v1/adapter/device-events` 的结构化 JSON 事件没有 `payload_hex` 是正常契约，不代表设备发送了空心跳或空 MCU1 报文。
+
+持续发送 PPT MCU1 样例（测试采集器 ID `03 E9`）可使用：
+
+```bash
+./gateway-adapter-mock \
+  -addr 127.0.0.1:8081 \
+  -gateway FP_TEST_ADMIN_002 \
+  -collector-id-hex 03E9 \
+  -frame register,heartbeat,mcu1-auto-history,mcu1-manual,mcu1-fault \
+  -loop -heartbeat-interval 30s -work-interval 10s
+```
+
+这里的 `03 E9` 仅是显式测试 ID；生产设备的字节序及其与平台采集执行器编号的映射仍需甲方确认。
 
 如果硬件端发了包但平台没有显示，优先排查：
 

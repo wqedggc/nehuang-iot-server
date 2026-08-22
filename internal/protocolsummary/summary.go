@@ -83,7 +83,7 @@ func Build(payloadHex string) *domain.ProtocolSummary {
 		return summary
 	}
 
-	if looksLikeMCU1Uplink(payload) {
+	if protocol.HasMCU1UplinkShape(payload) {
 		return buildMCU1Uplink(payload, summary)
 	}
 
@@ -342,22 +342,6 @@ func rawHex(data []byte) string {
 
 func formatBinary8(raw byte) string {
 	return fmt.Sprintf("%08b", raw)
-}
-
-func looksLikeMCU1Uplink(payload []byte) bool {
-	if len(payload) < 3 {
-		return false
-	}
-	switch payload[2] {
-	case 0x01:
-		return len(payload) == 10 || len(payload) == 45 || len(payload) == 48 || len(payload) == 51 || len(payload) == 54
-	case 0x02:
-		return len(payload) == 10 || len(payload) == 11
-	case 0x03:
-		return len(payload) == 9
-	default:
-		return false
-	}
 }
 
 func mcu1UplinkName(messageType protocol.MCU1MessageType) (string, string) {

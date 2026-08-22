@@ -145,6 +145,10 @@ func (r *Repository) ListPayloadEvents(ctx context.Context, params domain.Payloa
 	var conditions []string
 	var args []interface{}
 
+	if params.SourceType != nil {
+		conditions = append(conditions, "source_type = ?")
+		args = append(args, *params.SourceType)
+	}
 	if params.EventType != nil {
 		conditions = append(conditions, "event_type = ?")
 		args = append(args, *params.EventType)

@@ -58,6 +58,13 @@ func ClassifyPayload(payload []byte) Message {
 		}
 	}
 
+	// MCU1 上行报文前两字节是采集执行器 ID，不是固定帧头。报文类型由
+	// 第 3 字节 BB、总长度和 CRC 共同确定。
+	if HasMCU1UplinkShape(payload) && msg.CRCValid {
+		msg.Kind = MessageWorkData
+		return msg
+	}
+
 	if len(payload) >= 7 && payload[0] == 0xAA && payload[1] == 0xAA {
 		if isAlarmFrame(payload) {
 			msg.Kind = MessageAlarm
@@ -67,6 +74,25 @@ func ClassifyPayload(payload []byte) Message {
 	}
 
 	return msg
+}
+
+// HasMCU1UplinkShape reports whether payload has a documented MCU1 uplink BB
+// and total length. CRC validation is intentionally separate so callers can
+// still produce useful diagnostics for a damaged packet.
+func HasMCU1UplinkShape(payload []byte) bool {
+	if len(payload) < 3 {
+		return false
+	}
+	switch payload[2] {
+	case 0x01:
+		return len(payload) == 10 || len(payload) == 45 || len(payload) == 48 || len(payload) == 51 || len(payload) == 54
+	case 0x02:
+		return len(payload) == 10 || len(payload) == 11
+	case 0x03:
+		return len(payload) == 9
+	default:
+		return false
+	}
 }
 
 func NormalizeGatewayName(raw string) string {

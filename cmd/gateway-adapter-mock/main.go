@@ -25,7 +25,8 @@ type sampleFrame struct {
 func main() {
 	addr := flag.String("addr", "127.0.0.1:8081", "gateway adapter TCP address")
 	gatewayName := flag.String("gateway", "FP_TEST_ADMIN_002", "gateway name used in the register frame")
-	frameName := flag.String("frame", "all", "frame to send: all, register, heartbeat, heartbeat-message, telemetry, telemetry-temp, telemetry-soil, telemetry-relay, modbus-read, mcu1, mcu1-auto, mcu1-manual, mcu1-fault, binary-work, alarm, unknown")
+	collectorIDHex := flag.String("collector-id-hex", "AAAA", "MCU1 collector ID as exactly two hex bytes, for example 03E9")
+	frameName := flag.String("frame", "all", "frame to send: all, register, heartbeat, heartbeat-message, telemetry, telemetry-temp, telemetry-soil, telemetry-relay, modbus-read, mcu1, mcu1-auto, mcu1-auto-history, mcu1-manual, mcu1-fault, binary-work, alarm, unknown")
 	repeat := flag.Int("repeat", 1, "repeat count")
 	delay := flag.Duration("delay", 300*time.Millisecond, "delay between frames")
 	loop := flag.Bool("loop", false, "keep the TCP connection open and send periodic mock frames")
@@ -42,9 +43,16 @@ func main() {
 	selectedFrameName := *frameName
 	if *waitDownlink && strings.EqualFold(strings.TrimSpace(selectedFrameName), "all") {
 		selectedFrameName = "register,heartbeat"
+	} else if *loop && strings.EqualFold(strings.TrimSpace(selectedFrameName), "all") {
+		selectedFrameName = "register,heartbeat,telemetry"
 	}
 
-	frames, err := selectFrames(selectedFrameName, *gatewayName)
+	collectorID, err := parseCollectorIDHex(*collectorIDHex)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+	frames, err := selectFrames(selectedFrameName, *gatewayName, collectorID)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
@@ -61,7 +69,7 @@ func main() {
 	defer conn.Close()
 
 	if *loop {
-		if err := runLoop(conn, *gatewayName, *duration, *heartbeatInterval, *workInterval, *alarmInterval, *unknownInterval, *modbusReadInterval, *waitDownlink, *waitTimeout); err != nil {
+		if err := runLoop(conn, *gatewayName, frames, *duration, *heartbeatInterval, *workInterval, *alarmInterval, *unknownInterval, *modbusReadInterval, *waitDownlink, *waitTimeout, *delay); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
@@ -83,11 +91,34 @@ func main() {
 	}
 }
 
-func selectFrames(name string, gatewayName string) ([]sampleFrame, error) {
+func parseCollectorIDHex(raw string) ([]byte, error) {
+	cleaned := strings.TrimSpace(raw)
+	cleaned = strings.TrimPrefix(strings.TrimPrefix(cleaned, "0x"), "0X")
+	cleaned = strings.ReplaceAll(cleaned, " ", "")
+	decoded, err := hex.DecodeString(cleaned)
+	if err != nil || len(decoded) != 2 {
+		return nil, fmt.Errorf("collector-id-hex must be exactly two hex bytes, got %q", raw)
+	}
+	return decoded, nil
+}
+
+func selectFrames(name string, gatewayName string, collectorID []byte) ([]sampleFrame, error) {
 	gatewayName = strings.TrimSpace(gatewayName)
 	if gatewayName == "" {
 		gatewayName = "FP_TEST_ADMIN_002"
 	}
+	if len(collectorID) != 2 {
+		return nil, fmt.Errorf("collector ID must contain exactly two bytes")
+	}
+	mcu1Body := func(rest ...byte) []byte {
+		body := append([]byte(nil), collectorID...)
+		return append(body, rest...)
+	}
+	historyBody := mcu1Body(0x01, 0x01, 0x02, 0x03)
+	for sequence := byte(1); sequence <= 12; sequence++ {
+		historyBody = append(historyBody, sequence, 0x00, 0x14+sequence)
+	}
+	historyBody = append(historyBody, 0xC0)
 	all := []sampleFrame{
 		{
 			name:    "register",
@@ -126,17 +157,22 @@ func selectFrames(name string, gatewayName string) ([]sampleFrame, error) {
 		},
 		{
 			name:    "mcu1-auto",
-			payload: protocol.AppendCRC16Modbus(mustHex("AAAA0101020300C0")),
+			payload: protocol.AppendCRC16Modbus(mcu1Body(0x01, 0x01, 0x02, 0x03, 0x00, 0xC0)),
 			note:    "MCU1 BB=01 automatic status without history; raw time=01 02 03, Tag=C0 normal/stopped",
 		},
 		{
+			name:    "mcu1-auto-history",
+			payload: protocol.AppendCRC16Modbus(historyBody),
+			note:    "MCU1 BB=01 automatic status with 12 raw history-temperature records; conversion remains pending protocol confirmation",
+		},
+		{
 			name:    "mcu1-manual",
-			payload: protocol.AppendCRC16Modbus(mustHex("AAAA0201020319C0")),
+			payload: protocol.AppendCRC16Modbus(mcu1Body(0x02, 0x01, 0x02, 0x03, 0x19, 0xC0)),
 			note:    "MCU1 BB=02 manual status; raw time=01 02 03, temperature=19, Tag=C0 normal/stopped",
 		},
 		{
 			name:    "mcu1-fault",
-			payload: protocol.AppendCRC16Modbus(mustHex("AAAA03010203E0")),
+			payload: protocol.AppendCRC16Modbus(mcu1Body(0x03, 0x01, 0x02, 0x03, 0xE0)),
 			note:    "MCU1 BB=03 fault status; raw time=01 02 03, Tag=E0 rail fault",
 		},
 		{
@@ -175,23 +211,23 @@ func selectFrames(name string, gatewayName string) ([]sampleFrame, error) {
 			continue
 		}
 		if part == "mcu1" {
-			for _, mcu1Name := range []string{"mcu1-auto", "mcu1-manual", "mcu1-fault"} {
+			for _, mcu1Name := range []string{"mcu1-auto", "mcu1-auto-history", "mcu1-manual", "mcu1-fault"} {
 				selected = append(selected, byName[mcu1Name])
 			}
 			continue
 		}
 		frame, ok := byName[part]
 		if !ok {
-			return nil, fmt.Errorf("unknown frame %q; use all, register, heartbeat, heartbeat-message, telemetry, telemetry-temp, telemetry-soil, telemetry-relay, modbus-read, mcu1, mcu1-auto, mcu1-manual, mcu1-fault, binary-work, alarm, or unknown", part)
+			return nil, fmt.Errorf("unknown frame %q; use all, register, heartbeat, heartbeat-message, telemetry, telemetry-temp, telemetry-soil, telemetry-relay, modbus-read, mcu1, mcu1-auto, mcu1-auto-history, mcu1-manual, mcu1-fault, binary-work, alarm, or unknown", part)
 		}
 		selected = append(selected, frame)
 	}
 	return selected, nil
 }
 
-func runLoop(conn net.Conn, gatewayName string, duration time.Duration, heartbeatInterval time.Duration, workInterval time.Duration, alarmInterval time.Duration, unknownInterval time.Duration, modbusReadInterval time.Duration, waitDownlink bool, waitTimeout time.Duration) error {
-	if heartbeatInterval <= 0 {
-		return fmt.Errorf("heartbeat-interval must be greater than 0 in loop mode")
+func runLoop(conn net.Conn, gatewayName string, frames []sampleFrame, duration time.Duration, heartbeatInterval time.Duration, workInterval time.Duration, alarmInterval time.Duration, unknownInterval time.Duration, modbusReadInterval time.Duration, waitDownlink bool, waitTimeout time.Duration, frameDelay time.Duration) error {
+	if len(frames) == 0 {
+		return fmt.Errorf("at least one frame must be selected in loop mode")
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -201,28 +237,16 @@ func runLoop(conn net.Conn, gatewayName string, duration time.Duration, heartbea
 		defer cancel()
 	}
 
-	frames, err := selectFrames("register,heartbeat,telemetry,binary-work,alarm,unknown,modbus-read", gatewayName)
-	if err != nil {
-		return err
-	}
-	byName := make(map[string]sampleFrame, len(frames))
-	for _, frame := range frames {
-		byName[frame.name] = frame
-	}
-
 	if waitDownlink {
 		go waitForDownlink(conn, waitTimeout)
 	}
 
-	if err := sendFrame(conn, byName["register"]); err != nil {
-		return err
-	}
-	if err := sendFrame(conn, byName["heartbeat"]); err != nil {
-		return err
-	}
-	for _, name := range []string{"telemetry-temp", "telemetry-soil", "telemetry-relay"} {
-		if err := sendFrame(conn, byName[name]); err != nil {
+	for index, frame := range frames {
+		if err := sendFrame(conn, frame); err != nil {
 			return err
+		}
+		if frameDelay > 0 && index < len(frames)-1 {
+			time.Sleep(frameDelay)
 		}
 	}
 
@@ -230,24 +254,24 @@ func runLoop(conn net.Conn, gatewayName string, duration time.Duration, heartbea
 		frame  sampleFrame
 		ticker *time.Ticker
 	}
-	periodic := []periodicFrame{
-		{frame: byName["heartbeat"], ticker: time.NewTicker(heartbeatInterval)},
-	}
-	if workInterval > 0 {
-		periodic = append(periodic,
-			periodicFrame{frame: byName["telemetry-temp"], ticker: time.NewTicker(workInterval)},
-			periodicFrame{frame: byName["telemetry-soil"], ticker: time.NewTicker(workInterval)},
-			periodicFrame{frame: byName["telemetry-relay"], ticker: time.NewTicker(workInterval)},
-		)
-	}
-	if alarmInterval > 0 {
-		periodic = append(periodic, periodicFrame{frame: byName["alarm"], ticker: time.NewTicker(alarmInterval)})
-	}
-	if unknownInterval > 0 {
-		periodic = append(periodic, periodicFrame{frame: byName["unknown"], ticker: time.NewTicker(unknownInterval)})
-	}
-	if modbusReadInterval > 0 {
-		periodic = append(periodic, periodicFrame{frame: byName["modbus-read"], ticker: time.NewTicker(modbusReadInterval)})
+	periodic := make([]periodicFrame, 0, len(frames))
+	for _, frame := range frames {
+		var interval time.Duration
+		switch {
+		case frame.name == "heartbeat" || frame.name == "heartbeat-message":
+			interval = heartbeatInterval
+		case strings.HasPrefix(frame.name, "telemetry-") || strings.HasPrefix(frame.name, "mcu1-") || frame.name == "binary-work":
+			interval = workInterval
+		case frame.name == "alarm":
+			interval = alarmInterval
+		case frame.name == "unknown":
+			interval = unknownInterval
+		case frame.name == "modbus-read":
+			interval = modbusReadInterval
+		}
+		if interval > 0 {
+			periodic = append(periodic, periodicFrame{frame: frame, ticker: time.NewTicker(interval)})
+		}
 	}
 	defer func() {
 		for _, item := range periodic {
@@ -255,7 +279,11 @@ func runLoop(conn net.Conn, gatewayName string, duration time.Duration, heartbea
 		}
 	}()
 
-	fmt.Printf("loop started gateway=%s heartbeat_interval=%s duration=%s\n", strings.TrimSpace(gatewayName), heartbeatInterval, duration)
+	selectedNames := make([]string, 0, len(frames))
+	for _, frame := range frames {
+		selectedNames = append(selectedNames, frame.name)
+	}
+	fmt.Printf("loop started gateway=%s frames=%s heartbeat_interval=%s work_interval=%s duration=%s\n", strings.TrimSpace(gatewayName), strings.Join(selectedNames, ","), heartbeatInterval, workInterval, duration)
 	for {
 		select {
 		case <-ctx.Done():
@@ -271,6 +299,9 @@ func runLoop(conn net.Conn, gatewayName string, duration time.Duration, heartbea
 			case <-item.ticker.C:
 				if err := sendFrame(conn, item.frame); err != nil {
 					return err
+				}
+				if frameDelay > 0 {
+					time.Sleep(frameDelay)
 				}
 			default:
 			}

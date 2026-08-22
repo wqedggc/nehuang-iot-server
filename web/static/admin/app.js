@@ -325,6 +325,7 @@
       gatewayName: toText(item.gateway_name || item.gateway || '--'),
       deviceIdentity: toText(item.device_identity || item.deviceIdentity || ''),
       protocolLabel: toText(item.protocol_label || item.protocolLabel || ''),
+	  sourceType: toNum(item.source_type),
       sourceName: toText(item.source_type_name || item.source || '--'),
       isMock: !!item.is_mock,
       parseStatusName: toText(item.parse_status_name || item.status_name || '--'),
@@ -3299,6 +3300,7 @@
       page: 1,
       size: 20,
       range: '24h',
+	  source_type: 1,
       event_type: null,
       parse_status: null,
       start: null,
@@ -3324,6 +3326,7 @@
       if (eventTypeForServer != null) {
         params.event_type = eventTypeForServer;
       }
+	  if (payloadState.source_type != null) params.source_type = payloadState.source_type;
       if (payloadState.parse_status != null) params.parse_status = payloadState.parse_status;
       var res = await NHApi.getPayloadEvents(params);
       var data = res.data || {};
@@ -3361,9 +3364,17 @@
         { val: '4', label: '业务部分处理' },
         { val: '5', label: '已忽略' }
       ];
+	  var sourceTypeOptions = [
+		{ val: '1', label: 'TCP 原始报文' },
+		{ val: '', label: '全部来源' },
+		{ val: '2', label: '结构化 Adapter 事件' },
+		{ val: '3', label: '手动录入' },
+		{ val: '4', label: 'Mock 脚本' }
+	  ];
 
       var selectedET = payloadState.event_type != null ? String(payloadState.event_type) : '';
       var selectedPS = payloadState.parse_status != null ? String(payloadState.parse_status) : '';
+	  var selectedST = payloadState.source_type != null ? String(payloadState.source_type) : '';
 
       var html = '<div class="table-section">' +
         '<div class="table-header">' +
@@ -3371,6 +3382,9 @@
         '</div>' +
         renderFilterBar(payloadState, 'pe-filter-keyword', '搜索设备网关 / 消息 ID / Hex', 'payloadResetFilters') +
         '<div class="filter-bar" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding-top:0">' +
+		  '<select class="form-input" id="pe-filter-source" style="width:168px;height:32px;font-size:13px">' +
+			sourceTypeOptions.map(function (o) { return '<option value="' + o.val + '"' + (selectedST === o.val ? ' selected' : '') + '>' + o.label + '</option>'; }).join('') +
+		  '</select>' +
           '<select class="form-input" id="pe-filter-type" style="width:120px;height:32px;font-size:13px">' +
             eventTypeOptions.map(function (o) { return '<option value="' + o.val + '"' + (selectedET === o.val ? ' selected' : '') + '>' + o.label + '</option>'; }).join('') +
           '</select>' +
@@ -3392,6 +3406,7 @@
                 var ip = item.remoteIp || '--';
                 var port = item.remotePort || '';
                 var remoteAddress = ip;
+				var packetSizeLabel = item.payloadLen > 0 ? item.payloadLen + 'B' : (item.sourceType === 1 ? '0B（未收到字节）' : '结构化事件（非 TCP）');
                 if (ip && port) remoteAddress = ip + ':' + port;
                 else if (port) remoteAddress = port;
                 return '<tr>' +
@@ -3410,7 +3425,7 @@
                   '<td title="Adapter 生成：TCP 连接 ID + 本连接帧序号" style="font-family:monospace;font-size:11px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + (isMock ? '<span class="badge badge-warning" style="margin-right:4px">MOCK</span>' : '') + escHtml(item.messageId || '--') + '</td>' +
                   '<td><span style="font-size:12px">' + (item.parsedCount != null ? item.parsedCount : 0) + '/' + (item.eventCount != null ? item.eventCount : 0) + '</span></td>' +
                   '<td style="font-size:12px">' + escHtml(remoteAddress) + '</td>' +
-                  '<td style="font-size:11px;color:var(--color-text-muted)">' + (item.payloadLen != null ? item.payloadLen : 0) + 'B</td>' +
+				  '<td style="font-size:11px;color:var(--color-text-muted)">' + escHtml(packetSizeLabel) + '</td>' +
                   '<td><div style="display:flex;gap:4px">' +
                     '<button class="btn btn-outline btn-sm" onclick="payloadCopySnapshot(\'' + item.rawEventId + '\')" title="拷贝原始报文">📋</button>' +
                     '<button class="btn btn-outline btn-sm" onclick="payloadViewDetail(\'' + item.rawEventId + '\')" title="查看详情">🔍</button>' +
@@ -3427,6 +3442,7 @@
       container.innerHTML = html;
 
       // 绑定筛选事件
+	  $('#pe-filter-source').onchange = function () { var v = this.value; payloadState.source_type = v === '' ? null : parseInt(v); payloadState.page = 1; renderPage(); };
       $('#pe-filter-type').onchange = function () { var v = this.value; payloadState.event_type = v === '' ? null : v; payloadState.page = 1; renderPage(); };
       $('#pe-filter-status').onchange = function () { var v = this.value; payloadState.parse_status = v === '' ? null : parseInt(v); payloadState.page = 1; renderPage(); };
 
@@ -3641,6 +3657,7 @@
       if (d.remoteIp && d.remotePort) remoteAddress = d.remoteIp + ':' + d.remotePort;
       else if (d.remotePort) remoteAddress = d.remotePort;
       var payloadHex = formatHexDisplay(d.payloadHex || res.data.payload_hex || '');
+	  var hasRawHex = !!normalizeHexText(d.payloadHex || res.data.payload_hex || '');
       var payloadAscii = d.protocolSummary && d.protocolSummary.ascii ? d.protocolSummary.ascii : hexToAscii(d.payloadHex || res.data.payload_hex || '');
       var protocolSummary = d.protocolSummary || normalizeProtocolSummary(res.data.protocol_summary || res.data.protocolSummary || null);
       var protocolLabelText = (protocolSummary && (protocolSummary.label || protocolSummary.rawText)) || '--';
@@ -3678,11 +3695,11 @@
       bodyHtml += '<div class="detail-section">' +
         '<div class="detail-section-head">' +
           '<div>' +
-            '<div class="detail-section-title">原始 Hex</div>' +
-            '<div class="detail-section-sub">已兼容 `payload_hex` 为空的情况。</div>' +
+			'<div class="detail-section-title">' + (hasRawHex ? 'TCP 原始 Hex' : '无 TCP 原始 Hex') + '</div>' +
+			'<div class="detail-section-sub">' + (hasRawHex ? '以下是 Adapter 从 TCP 连接实际收到的原始字节。' : '这是一条没有 TCP 原始字节的结构化事件；请结合事件类型和下方请求快照排查，不能按 MCU1 字节协议解码。') + '</div>' +
           '</div>' +
         '</div>' +
-        '<pre class="code-panel">' + escHtml(payloadHex || '(空)') + '</pre>' +
+		'<pre class="code-panel">' + escHtml(payloadHex || '无原始字节；请查看下方事件请求快照') + '</pre>' +
       '</div>';
 
       bodyHtml += '<div class="detail-grid detail-grid-4">' +
@@ -3742,7 +3759,7 @@
       }
 
       bodyHtml += '<div style="margin-top:12px">' +
-        '<label style="font-size:11px;color:var(--color-text-muted);text-transform:uppercase;letter-spacing:0.3px;margin-bottom:6px;display:block">原始报文快照' + (isJSON ? ' (JSON)' : '') + ' — ' + snapshot.length + ' 字符</label>' +
+		'<label style="font-size:11px;color:var(--color-text-muted);text-transform:uppercase;letter-spacing:0.3px;margin-bottom:6px;display:block">' + (hasRawHex ? '原始报文快照' : '事件请求快照') + (isJSON ? ' (JSON)' : '') + ' — ' + snapshot.length + ' 字符</label>' +
         '<pre style="background:var(--color-bg);border:1px solid var(--color-border);border-radius:var(--radius-sm);padding:12px;font-size:12px;font-family:monospace;max-height:400px;overflow:auto;white-space:pre-wrap;word-break:break-all">' + escHtml(formattedPayload || '(空)') + '</pre>' +
       '</div>';
 

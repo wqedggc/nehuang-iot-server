@@ -45,6 +45,7 @@ type mockAdminRepo struct {
 	payloadEventDetail            *domain.PayloadEventDetail
 	payloadEvents                 []domain.PayloadEventListItem
 	payloadEventTotal             int
+	payloadEventQuery             domain.PayloadEventQuery
 	operationLogs                 []domain.OperationRecord
 	operationTotal                int
 	operationLogQuery             domain.OperationLogQuery
@@ -179,6 +180,7 @@ func (m *mockAdminRepo) CreateControlCommandForPoint(ctx context.Context, input 
 	}, nil
 }
 func (m *mockAdminRepo) ListPayloadEvents(ctx context.Context, params domain.PayloadEventQuery) ([]domain.PayloadEventListItem, int, error) {
+	m.payloadEventQuery = params
 	return m.payloadEvents, m.payloadEventTotal, nil
 }
 func (m *mockAdminRepo) GetPayloadEventDetail(ctx context.Context, rawEventID uint64) (*domain.PayloadEventDetail, error) {
@@ -1196,6 +1198,22 @@ func TestPayloadEventListIncludesProtocolAndCollectorIdentity(t *testing.T) {
 	}
 	if contains(rec.Body.String(), `"payload_hex"`) {
 		t.Fatalf("payload_hex must stay out of list response: body=%s", rec.Body.String())
+	}
+}
+
+func TestPayloadEventListFiltersTCPRawSource(t *testing.T) {
+	repo := &mockAdminRepo{}
+	handler := &adminHandler{repo: repo}
+	req := httptest.NewRequest("GET", "/api/v1/admin/payload-events?source_type=1", nil)
+	rec := httptest.NewRecorder()
+
+	handler.handlePayloadEvents(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("payload list: want 200, got %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if repo.payloadEventQuery.SourceType == nil || *repo.payloadEventQuery.SourceType != uint8(domain.SourceTypeGateway) {
+		t.Fatalf("source_type query = %+v, want gateway", repo.payloadEventQuery.SourceType)
 	}
 }
 

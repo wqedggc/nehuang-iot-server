@@ -1751,7 +1751,7 @@ func (h *adminHandler) handleFarmers(w http.ResponseWriter, r *http.Request) {
 }
 
 // handlePayloadEvents 处理 GET /api/v1/admin/payload-events。
-// 分页查询 payload 事件列表，支持 event_type/parse_status/时间范围/keyword 筛选。
+// 分页查询 payload 事件列表，支持 source_type/event_type/parse_status/时间范围/keyword 筛选。
 func (h *adminHandler) handlePayloadEvents(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	params := domain.PayloadEventQuery{
@@ -1766,6 +1766,12 @@ func (h *adminHandler) handlePayloadEvents(w http.ResponseWriter, r *http.Reques
 	if v := q.Get("size"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 100 {
 			params.Size = n
+		}
+	}
+	if v := q.Get("source_type"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= int(domain.SourceTypeGateway) && n <= int(domain.SourceTypeMock) {
+			n8 := uint8(n)
+			params.SourceType = &n8
 		}
 	}
 	if v := q.Get("event_type"); v != "" {

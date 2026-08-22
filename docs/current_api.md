@@ -41,7 +41,9 @@ API 与展示口径（当前）：
 | POST | `/api/v1/adapter/commands/{command_id}/sent` | `X-Adapter-Token` | 新增，Adapter 标记已下发 |
 | POST | `/api/v1/adapter/commands/{command_id}/result` | `X-Adapter-Token` | 新增，Adapter 回写 ACK/成功/失败/超时 |
 
-说明：`gateway-adapter` 的 TCP 主链路会把收到的 bytes 写入 raw journal，并按联调策略上报到 `/api/v1/adapter/raw-frames`（unknown 包默认本地留存，`NEHUANG_GATEWAY_FORWARD_UNKNOWN_FRAMES=true` 可透传）；Server 先写 `raw_device_events`。第一版解析 `FP_` 注册包，以及 `keepalive/keepalive message/HEARTBEAT/HB/PING/HEART` 心跳包；心跳只刷新网关在线状态，工作/telemetry 才会刷新采集执行器与功能点。工作包、告警包、未知包会先按 `event_type=3/6/7` 分开展示，但业务解析仍保持 pending，等真实协议稳定后补 parser。`/api/v1/adapter/device-events` 保留给已结构化 JSON 上报和旧联调脚本（可作为 telemetry mock 联调输入）。
+说明：`gateway-adapter` 的 TCP 主链路会把收到的 bytes 写入 raw journal，并按联调策略上报到 `/api/v1/adapter/raw-frames`（unknown 包默认本地留存，`NEHUANG_GATEWAY_FORWARD_UNKNOWN_FRAMES=true` 可透传）；Server 先写 `raw_device_events`。第一版解析 `FP_` 注册包，以及 `keepalive/keepalive message/HEARTBEAT/HB/PING/HEART` 心跳包；心跳只刷新网关在线状态，工作/telemetry 才会刷新采集执行器与功能点。MCU1 上行按“前两字节采集执行器 ID + BB + 报文长度 + CRC”分类，不要求固定 `AA AA`。工作包、告警包、未知包会先按 `event_type=3/6/7` 分开展示，但业务解析仍保持 pending，等真实协议稳定后补 parser。`/api/v1/adapter/device-events` 保留给已结构化 JSON 上报和旧联调脚本（可作为 telemetry mock 联调输入）；该 JSON 接口不提供 `payload_hex` 时，记录不是 TCP 原始报文。
+
+`GET /api/v1/admin/payload-events` 支持 `source_type` 筛选：`1` TCP Gateway、`2` 结构化 Adapter、`3` 手动录入、`4` Mock 脚本。管理端原始报文排查默认使用 `source_type=1`。
 
 ### POST `/api/v1/adapter/raw-frames`
 
