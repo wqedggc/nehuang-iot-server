@@ -246,7 +246,7 @@ go run ./cmd/gateway-adapter-replay -raw-log data/gateway-adapter/raw-frames/raw
 
 `gateway-adapter-mock` 是云端开发自测工具，用来在没有真实硬件时模拟 TCP client。硬件端联调时不需要使用该工具，直接用真实硬件网关连接 TCP 地址即可。
 
-`gateway-adapter-mock` 的 `-frame` 支持逗号分隔组合（例如：`register`、`heartbeat`、`heartbeat-message`、`modbus-read`、`work`、`alarm`、`unknown`）。
+`gateway-adapter-mock` 的 `-frame` 支持逗号分隔组合（例如：`register`、`heartbeat`、`heartbeat-message`、`modbus-read`、`mcu1`、`work`、`alarm`、`unknown`）。
 
 发送全部样例：
 
@@ -283,6 +283,18 @@ go run ./cmd/gateway-adapter-mock -addr 127.0.0.1:8081 -frame modbus-read
 ```bash
 go run ./cmd/gateway-adapter-mock -addr 127.0.0.1:8081 -frame work
 ```
+
+按 MCU1 说明书第 14–15 页发送三类完整上行样例（`BB=01/02/03`，均带合法 Tag 和 CRC16）：
+
+```bash
+go run ./cmd/gateway-adapter-mock \
+  -addr 43.143.208.153:8081 \
+  -gateway FP_TEST_ADMIN_002 \
+  -frame register,mcu1 \
+  -delay 500ms
+```
+
+其中时间字段使用原始测试字节 `01 02 03`，只验证字段定位，不代表时间编码已经冻结。也可以分别使用 `mcu1-auto`、`mcu1-manual`、`mcu1-fault`。
 
 只发送告警包：
 

@@ -25,7 +25,7 @@ type sampleFrame struct {
 func main() {
 	addr := flag.String("addr", "127.0.0.1:8081", "gateway adapter TCP address")
 	gatewayName := flag.String("gateway", "FP_TEST_ADMIN_002", "gateway name used in the register frame")
-	frameName := flag.String("frame", "all", "frame to send: all, register, heartbeat, heartbeat-message, telemetry, telemetry-temp, telemetry-soil, telemetry-relay, modbus-read, binary-work, alarm, unknown")
+	frameName := flag.String("frame", "all", "frame to send: all, register, heartbeat, heartbeat-message, telemetry, telemetry-temp, telemetry-soil, telemetry-relay, modbus-read, mcu1, mcu1-auto, mcu1-manual, mcu1-fault, binary-work, alarm, unknown")
 	repeat := flag.Int("repeat", 1, "repeat count")
 	delay := flag.Duration("delay", 300*time.Millisecond, "delay between frames")
 	loop := flag.Bool("loop", false, "keep the TCP connection open and send periodic mock frames")
@@ -125,6 +125,21 @@ func selectFrames(name string, gatewayName string) ([]sampleFrame, error) {
 			note:    "mock telemetry relay state frame; Server projects it to collector/device point data",
 		},
 		{
+			name:    "mcu1-auto",
+			payload: protocol.AppendCRC16Modbus(mustHex("AAAA0101020300C0")),
+			note:    "MCU1 BB=01 automatic status without history; raw time=01 02 03, Tag=C0 normal/stopped",
+		},
+		{
+			name:    "mcu1-manual",
+			payload: protocol.AppendCRC16Modbus(mustHex("AAAA0201020319C0")),
+			note:    "MCU1 BB=02 manual status; raw time=01 02 03, temperature=19, Tag=C0 normal/stopped",
+		},
+		{
+			name:    "mcu1-fault",
+			payload: protocol.AppendCRC16Modbus(mustHex("AAAA03010203E0")),
+			note:    "MCU1 BB=03 fault status; raw time=01 02 03, Tag=E0 rail fault",
+		},
+		{
 			name:    "binary-work",
 			payload: protocol.AppendCRC16Modbus(mustHex("AAAA0B010203")),
 			note:    "CRC-valid placeholder work frame; Server keeps it pending until protocol fields freeze",
@@ -159,9 +174,15 @@ func selectFrames(name string, gatewayName string) ([]sampleFrame, error) {
 			}
 			continue
 		}
+		if part == "mcu1" {
+			for _, mcu1Name := range []string{"mcu1-auto", "mcu1-manual", "mcu1-fault"} {
+				selected = append(selected, byName[mcu1Name])
+			}
+			continue
+		}
 		frame, ok := byName[part]
 		if !ok {
-			return nil, fmt.Errorf("unknown frame %q; use all, register, heartbeat, heartbeat-message, telemetry, telemetry-temp, telemetry-soil, telemetry-relay, modbus-read, binary-work, alarm, or unknown", part)
+			return nil, fmt.Errorf("unknown frame %q; use all, register, heartbeat, heartbeat-message, telemetry, telemetry-temp, telemetry-soil, telemetry-relay, modbus-read, mcu1, mcu1-auto, mcu1-manual, mcu1-fault, binary-work, alarm, or unknown", part)
 		}
 		selected = append(selected, frame)
 	}
