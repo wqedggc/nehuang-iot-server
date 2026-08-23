@@ -398,6 +398,7 @@
       cmdStatus: toText(item.cmd_status || item.status || ''),
       cmdStatusLabel: statusText || '--',
       commandHex: normalizeHexText(item.command_hex || item.commandHex || ''),
+      protocolSummary: normalizeProtocolSummary(item.protocol_summary || item.protocolSummary || null),
       result: toText(item.result || ''),
       gatewayResponse: toText(item.gateway_response || item.gatewayResponse || ''),
       errorMessage: toText(item.error_message || item.errorMessage || ''),
@@ -883,7 +884,7 @@
       ['MCU1 工作数据包', '采集执行器 → 设备网关 → 云端接入层 → 业务平台', 'BB=01 自动状态/历史、BB=02 手动状态、BB=03 故障状态', '先校验 CRC，再解释设备 ID、BB、HH MM SS、Tag 与温度记录；仅协议解码不等于已写入业务数据。'],
       ['告警包', '采集执行器 → 设备网关 → 云端接入层 → 业务平台', '出现异常时主动上报，是否重复发送按硬件最终规则', '优先留痕与展示类型；去重和告警等级按最终样例补齐。'],
       ['未知包', '设备网关或采集执行器 → 云端接入层', '任意联调阶段都可能出现', '默认仅保留本地 raw journal；排障时打开开关后才进入原始报文排查。'],
-      ['下行控制包', '管理端 / C 端 → 业务平台 → 云端接入层 → 设备网关 → 采集执行器', '用户点击控制或联调人员手动输入 Hex 时触发', '先生成 pending，接入层写回 TCP 后变 sent；未收到明确 ACK 前不自动判成功。'],
+      ['下行控制包', '管理端 / C 端 → 业务平台 → 云端接入层 → 设备网关 → 采集执行器', 'BB=00 校时、BB=01 自动配置/读取、BB=02 历史包确认、BB=03 手动控制', '控制日志按下行方向解释 ID、BB、时间、阈值/Tag 与 CRC；未收到明确 ACK 前不自动判成功。'],
       ['时间字段', '上下行报文采集执行器 ID 与 BB 之后', '当前文档定义 HH MM SS 共 3 字节', '建议联调暂定 BCD、东八区、时/分/秒各 1 字节并计入 CRC；甲方确认前仍标记待确认。']
     ];
     var html = '<div class="help-packet-table"><div class="help-packet-row help-packet-head"><div>报文</div><div>方向</div><div>触发/周期</div><div>平台处理</div></div>';
@@ -1025,11 +1026,13 @@
             '<li>云端仅收包，不要求设备直连 HTTP。</li>' +
             '<li>建议在联调阶段先发 register + keepalive + 工作 / 告警样例；未识别样例默认只用于接入层本地排查。</li>' +
             '<li>MCU1 上行以 BB=01/02/03 区分自动、手动和故障状态；Tag 按 1/N/R/S/V/W/T/U 从高到低解释，CRC 使用低字节在前的 Modbus CRC16。</li>' +
+            '<li>MCU1 下行以 BB=00/01/02/03 区分校时初始化、自动温控配置与读取、历史包收到确认、手动控制；控制日志会按下行方向逐字段解释。</li>' +
             '<li>HH MM SS 已定位为 3 字节。建议本轮联调暂定为 BCD、Asia/Shanghai（UTC+8）、各 1 字节并参与 CRC；需甲方书面确认后才升级为已确认规则。</li>' +
             '<li>MCU1 自动无历史包用 00 占位，因此没有温度；自动历史包在一条消息中携带 12–15 组温度；手动包每条带当前温度。</li>' +
             '<li>温度的 2 字节宽度在历史包中明确，但字节序、符号和缩放尚未说明；换算规则确认前只展示原始值，不伪造摄氏度。</li>' +
             '<li>当前 PPT 只描述 MCU1 采集执行器及其 NTC、限位、继电器功能，没有给出 MCU2/MCU3 或全部设备类型清单。</li>' +
             '<li>测试曲线使用结构化 telemetry 生成波动值；MCU1 TCP raw 可独立持续发送，用于验证收包与协议透视。</li>' +
+            '<li>旧单字节 F0/0F/00 只是平台早期 Mock/兼容控制字，不是 PPT 第 14 页定义的完整 MCU1 下行包。</li>' +
             '<li>所有调试入口使用占位符，不暴露真实内网地址或凭证信息；示例地址使用 192.0.2.1:8081。</li>' +
           '</ul>' +
           '<div class="code-panel">示例：\n1) 先发送注册（FP_xxx）\n2) 每隔固定间隔发送心跳\n3) 发送工作/告警样例测试排查</div>' +
@@ -3203,6 +3206,7 @@
                   timeHtml += '<div style="font-size:11px;color:var(--color-text-muted);margin-top:2px">' + escHtml(timeParts.join(' · ')) + '</div>';
                 }
                 var detailID = l.commandId || l.opId;
+                var protocolHint = l.protocolSummary && l.protocolSummary.label ? l.protocolSummary.label : '';
                 return '<tr class="clickable-row" tabindex="0" title="点击查看完整命令详情" onclick="controlLogViewDetail(\'' + escHtml(detailID) + '\')" onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();controlLogViewDetail(\'' + escHtml(detailID) + '\')}">' +
                   '<td style="font-family:monospace;font-size:12px">' + escHtml(l.opId || '--') + '</td>' +
                   '<td><span class="badge badge-muted">' + escHtml(l.sourceLabel || '--') + '</span></td>' +
@@ -3210,7 +3214,8 @@
                   '<td>' + escHtml(l.bindUserName || '--') + '</td>' +
                   '<td>' + escHtml(l.funcName || '--') + '</td>' +
                   '<td>' + escHtml(l.opType || '--') + '</td>' +
-                  '<td><code class="code-pill">' + escHtml(formatHexDisplay(l.commandHex) || '--') + '</code></td>' +
+                  '<td><code class="code-pill">' + escHtml(formatHexDisplay(l.commandHex) || '--') + '</code>' +
+                    (protocolHint ? '<div style="font-size:11px;color:var(--color-text-muted);margin-top:4px">' + escHtml(protocolHint) + '</div>' : '') + '</td>' +
                   '<td><span class="badge ' + statusClass + '">' + escHtml(l.cmdStatusLabel || '--') + '</span></td>' +
                   '<td class="log-result-cell">' + escHtml(resultParts.join('；') || '--') + '</td>' +
                   '<td>' + timeHtml + '</td>' +
@@ -3252,6 +3257,23 @@
       ['下发', record.sentAt, !!record.sentAt],
       ['完成', record.finishedAt, !!record.finishedAt]
     ];
+    var protocolSummary = record.protocolSummary;
+    var protocolFieldsHtml = protocolSummary && protocolSummary.fields && protocolSummary.fields.length ? renderProtocolFields(protocolSummary.fields, true) : '';
+    var protocolByteMapHtml = protocolFieldsHtml ? renderProtocolByteMap(record.commandHex, protocolSummary.fields) : '';
+    var protocolDiagnosticsHtml = protocolSummary ? renderProtocolDiagnostics(protocolSummary.diagnostics || []) : '';
+    var crcText = '--';
+    if (protocolSummary && protocolSummary.crcValid === true) crcText = '通过';
+    else if (protocolSummary && protocolSummary.crcValid === false) crcText = '不通过';
+    var protocolDetailHtml = protocolSummary ?
+      '<div class="detail-grid detail-grid-4">' +
+        '<div class="info-item"><label>协议摘要</label><span>' + escHtml(protocolSummary.label || '--') + '</span></div>' +
+        '<div class="info-item"><label>协议解码状态</label><span><span class="badge ' + protocolBadgeClass(protocolSummary.status) + '">' + escHtml(protocolStatusLabel(protocolSummary.status)) + '</span></span></div>' +
+        '<div class="info-item"><label>协议类型</label><span>' + escHtml(protocolSummary.kind || '--') + '</span></div>' +
+        '<div class="info-item"><label>CRC</label><span><span class="badge ' + (crcText === '通过' ? 'badge-success' : crcText === '不通过' ? 'badge-danger' : 'badge-muted') + '">' + escHtml(crcText) + '</span></span></div>' +
+      '</div>' +
+      (protocolSummary.description ? '<p class="protocol-field-note">' + escHtml(protocolSummary.description) + '</p>' : '') +
+      protocolByteMapHtml + protocolDiagnosticsHtml + protocolFieldsHtml :
+      renderCommandHexBytes(record.commandHex) + '<div class="protocol-diagnostic"><strong>协议边界</strong><span>当前下发内容未匹配到已确认的 MCU1 或 Modbus 结构，只保留原始字节用于联调。</span></div>';
     overlay.innerHTML = '<div class="modal protocol-inspector-modal" role="dialog" aria-modal="true" aria-labelledby="control-detail-title">' +
       '<div class="modal-header"><h3 id="control-detail-title">控制命令详情</h3><button class="modal-close" onclick="closeModal()" aria-label="关闭控制命令详情">×</button></div>' +
       '<div class="modal-body">' +
@@ -3267,10 +3289,9 @@
           '<div class="info-item"><label>功能</label><span>' + escHtml(record.funcName || '--') + '</span></div>' +
           '<div class="info-item"><label>操作类型</label><span>' + escHtml(record.opType || '--') + '</span></div>' +
         '</div>' +
-        '<div class="detail-section"><div class="detail-section-head"><div><div class="detail-section-title">下发报文</div><div class="detail-section-sub">command_hex 是整条下行报文，不是单独的控制字；字段含义须由对应下行协议决定。</div></div></div>' +
+        '<div class="detail-section"><div class="detail-section-head"><div><div class="detail-section-title">下发报文</div><div class="detail-section-sub">command_hex 是整条下行报文；字段解释按 MCU1 说明书第 14–15 页生成，未确认规则保留原始值。</div></div></div>' +
           '<pre class="code-panel">' + escHtml(formatHexDisplay(record.commandHex) || '(空)') + '</pre>' +
-          renderCommandHexBytes(record.commandHex) +
-          '<div class="protocol-diagnostic"><strong>协议边界</strong><span>MCU1 文档说明自动控制包含采集执行器 ID、BB、HH MM SS、上下限温度与 CRC；当前控制日志尚未保存“采用了哪一版协议模板”，因此这里先完整展示，不伪造逐字段解释。</span></div>' +
+          protocolDetailHtml +
         '</div>' +
         '<div class="detail-section"><div class="detail-section-title">生命周期</div><div class="command-lifecycle">' + lifecycle.map(function (item) {
           return '<div class="' + (item[2] ? 'is-done' : '') + '"><strong>' + item[0] + '</strong><span>' + (item[1] ? formatFullTime(item[1]) : '尚未发生') + '</span></div>';

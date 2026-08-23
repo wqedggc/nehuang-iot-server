@@ -6,7 +6,7 @@
 (function (global) {
   'use strict';
 
-  const VERSION = '0.4.1';
+  const VERSION = '0.4.2';
   const BUILD_DATE = '20260823';
   const VERSION_STRING = VERSION + ' (' + BUILD_DATE + ')';
 

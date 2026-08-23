@@ -1047,9 +1047,12 @@ func TestHandleOperationLogsPaginated(t *testing.T) {
 }
 
 func TestHandleControlLogsLegacyFormatWithoutPagination(t *testing.T) {
+	commandHex := hex.EncodeToString(protocol.AppendCRC16Modbus([]byte{
+		0x12, 0x34, 0x03, 0x10, 0x20, 0x30, 0xC2,
+	}))
 	repo := &mockAdminRepo{
 		controlLogs: []domain.ControlLogSummary{
-			{CommandID: 8001, GatewayID: 5001, BindUserName: "admin", CmdStatusLabel: "succeeded"},
+			{CommandID: 8001, GatewayID: 5001, BindUserName: "admin", CmdStatusLabel: "succeeded", CommandHex: commandHex},
 		},
 	}
 	handler := &adminHandler{repo: repo}
@@ -1076,6 +1079,14 @@ func TestHandleControlLogsLegacyFormatWithoutPagination(t *testing.T) {
 	}
 	if len(items) != 1 {
 		t.Fatalf("legacy control logs item count: want 1, got %d", len(items))
+	}
+	item, ok := items[0].(map[string]any)
+	if !ok {
+		t.Fatalf("control log item should be object, got %T", items[0])
+	}
+	summary, ok := item["protocol_summary"].(map[string]any)
+	if !ok || summary["kind"] != "mcu1_downlink_manual_control" {
+		t.Fatalf("protocol summary missing: %#v", item["protocol_summary"])
 	}
 }
 

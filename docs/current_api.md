@@ -127,7 +127,7 @@ API 与展示口径（当前）：
 | POST | `/api/v1/admin/gateways/{gateway_id}/collectors` | 正式建档；给已注册设备网关创建/更新采集执行器和默认功能点 |
 | POST | `/api/v1/admin/gateways/{gateway_id}/seed-points` | 兼容旧路径；内部等同 `/collectors` |
 | GET | `/api/v1/admin/raw-events?limit=` | 正式 |
-| GET | `/api/v1/admin/control-logs` | 正式；读取 `control_commands`，展示来源、command hex、命令状态、下发/完成时间 |
+| GET | `/api/v1/admin/control-logs` | 正式；读取 `control_commands`，展示来源、command hex、命令状态、下发/完成时间，并附展示型下行 `protocol_summary` |
 | GET | `/api/v1/admin/operation-logs` | 正式；读取 `op_records`，展示绑定、解绑、配置、控制等操作审计 |
 | GET | `/api/v1/admin/device-tree` | 正式 |
 | GET | `/api/v1/admin/device-points?keyword=&bind_status=` | 正式 |
@@ -140,7 +140,7 @@ API 与展示口径（当前）：
 
 - `payload-events` 支持分页+筛选：`page`、`size`、`event_type`、`parse_status`、`start`、`end`、`keyword`。
 - `payload-events` 列表会附带展示型 `protocol_label` 和可识别时的 `device_identity`；原始事件 ID 是数据库记录 ID，`message_id` 是 Adapter 生成的“TCP 连接 ID-连接内帧序号”。
-- `control-logs` 支持分页+筛选：`page`、`size`、`start`、`end`、`keyword`、`cmd_status`、`source`；不带 `page/size` 时兼容旧数组响应。
+- `control-logs` 支持分页+筛选：`page`、`size`、`start`、`end`、`keyword`、`cmd_status`、`source`；不带 `page/size` 时兼容旧数组响应。每条命令的 `protocol_summary` 按下行方向解释 MCU1/Modbus 字段；旧 `F0/0F/00` 会标识为非完整 MCU1 联调控制字。
 - `operation-logs` 支持分页+筛选：`page`、`size`、`start`、`end`、`keyword`、`op_type`；不带 `page/size` 时兼容旧数组响应。
 - `raw-events` 当前保留 `limit` 模式。
 

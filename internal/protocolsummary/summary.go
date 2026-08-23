@@ -103,12 +103,135 @@ func Build(payloadHex string) *domain.ProtocolSummary {
 	return summary
 }
 
+// BuildDownlink returns a display-only summary for bytes sent from cloud to MCU1.
+// Direction is supplied by the control-command context because BB=03 has the same
+// total length in the documented uplink and downlink formats.
+func BuildDownlink(payloadHex string) *domain.ProtocolSummary {
+	payloadHex = strings.ToUpper(strings.TrimSpace(payloadHex))
+	payload, err := hex.DecodeString(payloadHex)
+	if err != nil || len(payload) == 0 {
+		return nil
+	}
+
+	if len(payload) == 1 {
+		if label, ok := legacyControlWordLabel(payload[0]); ok {
+			return &domain.ProtocolSummary{
+				Kind:        "legacy_control_word",
+				Label:       label,
+				Description: "这是平台早期联调用的单字节控制字，不是 MCU1 说明书第 14 页定义的完整下行报文。",
+				Status:      "partial",
+				ByteLength:  1,
+				Fields: []domain.ProtocolSummaryField{
+					byteField("legacy_control_word", "旧联调控制字", payload, 0, 0, label, "unknown", "真实 MCU1 下行仍需采集执行器 ID、BB、HH MM SS、Tag/阈值和按报文类型要求的 CRC。"),
+				},
+				Diagnostics: []domain.ProtocolDiagnostic{{
+					Code:     "not_complete_mcu1_downlink",
+					Severity: "warning",
+					Message:  "当前只有 1 字节，不符合 PPT 中的完整 MCU1 下行结构。",
+				}},
+			}
+		}
+	}
+
+	if hasMCU1DownlinkShape(payload) {
+		summary := &domain.ProtocolSummary{
+			Kind:        "unknown",
+			Label:       "未知下行包",
+			Description: "暂未匹配到已确认的下行协议。",
+			Status:      "unknown",
+			ByteLength:  len(payload),
+		}
+		return buildMCU1Downlink(payload, summary)
+	}
+
+	return Build(payloadHex)
+}
+
 func field(name, label, value string) domain.ProtocolSummaryField {
 	return domain.ProtocolSummaryField{Name: name, Label: label, Value: value}
 }
 
 func derivedField(name, label, value, note string) domain.ProtocolSummaryField {
 	return domain.ProtocolSummaryField{Name: name, Label: label, Value: value, Status: "decoded", Note: note}
+}
+
+func buildMCU1Downlink(payload []byte, summary *domain.ProtocolSummary) *domain.ProtocolSummary {
+	bb := payload[2]
+	messageType, err := protocol.DecodeMCU1MessageType(protocol.MCU1DirectionDownlink, bb)
+	if err != nil {
+		return summary
+	}
+
+	summary.Kind, summary.Label = mcu1DownlinkName(messageType)
+	summary.Description = "按照 MCU1 说明书第 14–15 页解释云端下行报文；未确认的时间和温度编码保留原始字节。"
+	summary.Status = "partial"
+	summary.Fields = []domain.ProtocolSummaryField{
+		byteField("device_id", "采集执行器 ID", payload, 0, 1, "0x"+strings.ReplaceAll(rawHex(payload[0:2]), " ", ""), "decoded", "原始 2 字节标识；数值字节序待双方最终确认。"),
+		byteField("function_code", "功能字节 BB", payload, 2, 2, mcu1DownlinkFunctionLabel(bb), "decoded", "下行方向与 BB 共同确定报文类型。"),
+		byteField("report_time", "下发时间 HH MM SS", payload, 3, 5, rawHex(payload[3:6])+"（原始字节）", "unknown", "字段长度已确认；BCD/普通整数编码、合法范围和时区仍待甲方确认。"),
+	}
+	summary.Diagnostics = append(summary.Diagnostics, domain.ProtocolDiagnostic{
+		Code:     "time_encoding_unknown",
+		Severity: "warning",
+		Message:  "下发时间字段已定位，但编码方式和时区尚未确认。",
+	})
+
+	switch messageType {
+	case protocol.MCU1MessageDownlinkInitialization:
+		appendMCU1CRC(payload, summary)
+	case protocol.MCU1MessageDownlinkAutomaticConfigAndRead:
+		summary.Fields = append(summary.Fields,
+			byteField("lower_temperature_threshold", "温度下限 XX", payload, 6, 7, "换算规则待确认", "unknown", "PPT 明确该字段占 2 字节；字节序、符号位和缩放规则待确认。"),
+			byteField("upper_temperature_threshold", "温度上限 YY", payload, 8, 9, "换算规则待确认", "unknown", "PPT 明确该字段占 2 字节；字节序、符号位和缩放规则待确认。"),
+		)
+		summary.Diagnostics = append(summary.Diagnostics, domain.ProtocolDiagnostic{
+			Code:     "temperature_encoding_unknown",
+			Severity: "warning",
+			Message:  "上下限字段边界已确认，但温度换算规则尚未确认。",
+		})
+		appendMCU1CRC(payload, summary)
+	case protocol.MCU1MessageDownlinkHistoryReceived:
+		summary.CRCValid = nil
+		summary.Diagnostics = append(summary.Diagnostics, domain.ProtocolDiagnostic{
+			Code:     "ack_semantics_unknown",
+			Severity: "warning",
+			Message:  "PPT 第 4、14 页把 BB=02 写为 6 字节且未列 CRC；它与清缓存/收到确认的最终语义仍需甲方确认。",
+		})
+	case protocol.MCU1MessageDownlinkManualControl:
+		appendMCU1TagAndCRC(payload, 6, summary)
+	}
+	return summary
+}
+
+func hasMCU1DownlinkShape(payload []byte) bool {
+	if len(payload) < 3 {
+		return false
+	}
+	switch payload[2] {
+	case 0x00:
+		return len(payload) == 8
+	case 0x01:
+		return len(payload) == 12
+	case 0x02:
+		return len(payload) == 6
+	case 0x03:
+		return len(payload) == 9
+	default:
+		return false
+	}
+}
+
+func legacyControlWordLabel(raw byte) (string, bool) {
+	switch raw {
+	case 0xF0:
+		return "旧联调控制字：开启", true
+	case 0x0F:
+		return "旧联调控制字：关闭", true
+	case 0x00:
+		return "旧联调控制字：停止", true
+	default:
+		return "", false
+	}
 }
 
 func buildMCU1Uplink(payload []byte, summary *domain.ProtocolSummary) *domain.ProtocolSummary {
@@ -237,10 +360,19 @@ func appendMCU1TagAndCRC(payload []byte, tagOffset int, summary *domain.Protocol
 		})
 	}
 	summary.Fields = append(summary.Fields, tagField)
+	appendMCU1CRC(payload, summary)
+}
 
+func appendMCU1CRC(payload []byte, summary *domain.ProtocolSummary) {
+	if len(payload) < 2 {
+		setInvalidLength(summary, len(payload), "报文中没有足够字节容纳 2 字节 CRC。")
+		return
+	}
 	crcOffset := len(payload) - 2
 	computed := protocol.CRC16Modbus(payload[:crcOffset])
 	received := uint16(payload[crcOffset]) | uint16(payload[crcOffset+1])<<8
+	valid := computed == received
+	summary.CRCValid = &valid
 	crcStatus := "decoded"
 	crcValue := fmt.Sprintf("通过；收到 0x%04X，计算 0x%04X", received, computed)
 	if summary.CRCValid == nil || !*summary.CRCValid {
@@ -354,6 +486,36 @@ func mcu1UplinkName(messageType protocol.MCU1MessageType) (string, string) {
 		return "mcu1_uplink_fault", "MCU1 故障状态上报"
 	default:
 		return "mcu1_uplink", "MCU1 上行报文"
+	}
+}
+
+func mcu1DownlinkName(messageType protocol.MCU1MessageType) (string, string) {
+	switch messageType {
+	case protocol.MCU1MessageDownlinkInitialization:
+		return "mcu1_downlink_initialization", "MCU1 整点校时/初始化下行"
+	case protocol.MCU1MessageDownlinkAutomaticConfigAndRead:
+		return "mcu1_downlink_automatic_config_read", "MCU1 自动温控配置与读取下行"
+	case protocol.MCU1MessageDownlinkHistoryReceived:
+		return "mcu1_downlink_history_received", "MCU1 历史温度包收到确认"
+	case protocol.MCU1MessageDownlinkManualControl:
+		return "mcu1_downlink_manual_control", "MCU1 手动控制下行"
+	default:
+		return "mcu1_downlink", "MCU1 下行报文"
+	}
+}
+
+func mcu1DownlinkFunctionLabel(bb byte) string {
+	switch bb {
+	case 0x00:
+		return "整点校时/初始化"
+	case 0x01:
+		return "自动温控配置与读取"
+	case 0x02:
+		return "历史温度包收到确认"
+	case 0x03:
+		return "手动控制"
+	default:
+		return fmt.Sprintf("未知 BB 0x%02X", bb)
 	}
 }
 

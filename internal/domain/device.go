@@ -496,31 +496,32 @@ type OperationLogQuery struct {
 
 // ControlLogSummary 控制日志列表摘要，供管理端控制日志页使用。
 type ControlLogSummary struct {
-	CommandID       uint64     `json:"command_id,string,omitempty"`
-	OpID            uint64     `json:"op_id,string"`
-	GatewayID       uint64     `json:"gateway_id,string"`
-	GatewayName     string     `json:"gateway_name"`
-	NodeID          uint64     `json:"node_id,string,omitempty"`
-	PointID         uint64     `json:"point_id,string,omitempty"`
-	BindUserName    string     `json:"bind_usr_name"`
-	RequestedBy     uint64     `json:"requested_by,string,omitempty"`
-	CommandSource   uint8      `json:"command_source"`
-	SourceLabel     string     `json:"command_source_label"`
-	Frequency       int        `json:"freq"`
-	DevExternalID   string     `json:"devid"`
-	FunctionType    uint8      `json:"func"`
-	FunctionName    string     `json:"func_name"`
-	OpType          string     `json:"op_type"`
-	RunMode         uint8      `json:"run_mode"`
-	CmdStatus       uint8      `json:"cmd_status"`
-	CmdStatusLabel  string     `json:"cmd_status_label"`
-	CommandHex      string     `json:"command_hex"`
-	Result          string     `json:"result"`
-	GatewayResponse string     `json:"gateway_response"`
-	ErrorMessage    string     `json:"error_message"`
-	OpTime          time.Time  `json:"op_time"`
-	SentAt          *time.Time `json:"sent_at_ms,omitempty"`
-	FinishedAt      *time.Time `json:"finished_at_ms,omitempty"`
+	CommandID       uint64           `json:"command_id,string,omitempty"`
+	OpID            uint64           `json:"op_id,string"`
+	GatewayID       uint64           `json:"gateway_id,string"`
+	GatewayName     string           `json:"gateway_name"`
+	NodeID          uint64           `json:"node_id,string,omitempty"`
+	PointID         uint64           `json:"point_id,string,omitempty"`
+	BindUserName    string           `json:"bind_usr_name"`
+	RequestedBy     uint64           `json:"requested_by,string,omitempty"`
+	CommandSource   uint8            `json:"command_source"`
+	SourceLabel     string           `json:"command_source_label"`
+	Frequency       int              `json:"freq"`
+	DevExternalID   string           `json:"devid"`
+	FunctionType    uint8            `json:"func"`
+	FunctionName    string           `json:"func_name"`
+	OpType          string           `json:"op_type"`
+	RunMode         uint8            `json:"run_mode"`
+	CmdStatus       uint8            `json:"cmd_status"`
+	CmdStatusLabel  string           `json:"cmd_status_label"`
+	CommandHex      string           `json:"command_hex"`
+	Result          string           `json:"result"`
+	GatewayResponse string           `json:"gateway_response"`
+	ErrorMessage    string           `json:"error_message"`
+	OpTime          time.Time        `json:"op_time"`
+	SentAt          *time.Time       `json:"sent_at_ms,omitempty"`
+	FinishedAt      *time.Time       `json:"finished_at_ms,omitempty"`
+	ProtocolSummary *ProtocolSummary `json:"protocol_summary,omitempty"`
 }
 
 // ControlLogQuery is query args for admin control logs list.

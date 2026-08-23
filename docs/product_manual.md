@@ -190,6 +190,7 @@
 - Adapter 已支持把 pending command 的 `command_hex` 写回当前 TCP 连接，并标记 `sent`。
 - Admin 控制日志展示命令来源、目标功能点/设备网关、command hex、状态、请求时间、下发时间、完成时间、网关响应和错误信息。
 - 控制日志支持点击打开完整命令详情，并可按设备网关跳转到对应上行原始报文；上下行生命周期不同，因此保留两个页面而不混成一张表。
+- 完整 MCU1 下行 Hex 会按 PPT 第 14–15 页解释 ID、BB、HH MM SS、阈值/Tag 和 CRC；旧单字节 `F0/0F/00` 会明确标识为非完整 MCU1 联调控制字。
 - 控制状态模型：`pending -> sent -> ack -> succeeded/failed/timeout`。
 
 未完成：

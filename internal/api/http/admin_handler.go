@@ -822,6 +822,9 @@ func (h *adminHandler) handleControlLogs(w http.ResponseWriter, r *http.Request)
 		writeCode(w, http.StatusInternalServerError, 500, "internal error: "+err.Error())
 		return
 	}
+	for i := range logs {
+		logs[i].ProtocolSummary = protocolsummary.BuildDownlink(logs[i].CommandHex)
+	}
 	if !params.Paginated {
 		if logs == nil {
 			logs = make([]domain.ControlLogSummary, 0)

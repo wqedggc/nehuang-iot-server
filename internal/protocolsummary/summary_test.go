@@ -90,6 +90,95 @@ func TestBuildMCU1AutomaticStatusWithoutHistory(t *testing.T) {
 	assertBit(t, tag.Bits, "U", 0, "关闭继电器已停止")
 }
 
+func TestBuildDownlinkMCU1Initialization(t *testing.T) {
+	packet := protocol.AppendCRC16Modbus([]byte{
+		0x12, 0x34, 0x00, 0x10, 0x20, 0x30,
+	})
+	summary := BuildDownlink(hex.EncodeToString(packet))
+	if summary == nil {
+		t.Fatal("summary is nil")
+	}
+	if summary.Kind != "mcu1_downlink_initialization" || summary.Status != "partial" {
+		t.Fatalf("kind/status = %q/%q", summary.Kind, summary.Status)
+	}
+	if summary.CRCValid == nil || !*summary.CRCValid {
+		t.Fatalf("crc_valid = %#v, want true", summary.CRCValid)
+	}
+	assertFieldDetail(t, summary.Fields, "device_id", 0, 1, "12 34", "0x1234")
+	assertFieldDetail(t, summary.Fields, "function_code", 2, 2, "00", "整点校时/初始化")
+	assertFieldDetail(t, summary.Fields, "report_time", 3, 5, "10 20 30", "10 20 30（原始字节）")
+}
+
+func TestBuildDownlinkMCU1AutomaticConfigAndRead(t *testing.T) {
+	packet := protocol.AppendCRC16Modbus([]byte{
+		0x12, 0x34, 0x01, 0x10, 0x20, 0x30,
+		0x00, 0x19, 0x00, 0x1E,
+	})
+	summary := BuildDownlink(hex.EncodeToString(packet))
+	if summary == nil {
+		t.Fatal("summary is nil")
+	}
+	if summary.Kind != "mcu1_downlink_automatic_config_read" || summary.Status != "partial" {
+		t.Fatalf("kind/status = %q/%q", summary.Kind, summary.Status)
+	}
+	assertFieldDetail(t, summary.Fields, "lower_temperature_threshold", 6, 7, "00 19", "换算规则待确认")
+	assertFieldDetail(t, summary.Fields, "upper_temperature_threshold", 8, 9, "00 1E", "换算规则待确认")
+}
+
+func TestBuildDownlinkMCU1HistoryReceivedHasNoDocumentedCRC(t *testing.T) {
+	summary := BuildDownlink("123402102030")
+	if summary == nil {
+		t.Fatal("summary is nil")
+	}
+	if summary.Kind != "mcu1_downlink_history_received" || summary.Status != "partial" {
+		t.Fatalf("kind/status = %q/%q", summary.Kind, summary.Status)
+	}
+	if summary.CRCValid != nil {
+		t.Fatalf("crc_valid = %#v, want nil for documented six-byte reply", summary.CRCValid)
+	}
+	if !hasDiagnostic(summary.Diagnostics, "ack_semantics_unknown") {
+		t.Fatalf("diagnostics = %#v", summary.Diagnostics)
+	}
+}
+
+func TestBuildDownlinkMCU1ManualControlDecodesTag(t *testing.T) {
+	packet := protocol.AppendCRC16Modbus([]byte{
+		0x12, 0x34, 0x03, 0x10, 0x20, 0x30, 0xC2,
+	})
+	summary := BuildDownlink(hex.EncodeToString(packet))
+	if summary == nil {
+		t.Fatal("summary is nil")
+	}
+	if summary.Kind != "mcu1_downlink_manual_control" || summary.Status != "partial" {
+		t.Fatalf("kind/status = %q/%q", summary.Kind, summary.Status)
+	}
+	tag := findField(t, summary.Fields, "tag")
+	assertBit(t, tag.Bits, "T", 1, "开启继电器已启动")
+	assertBit(t, tag.Bits, "U", 0, "关闭继电器已停止")
+}
+
+func TestBuildDownlinkMarksLegacyOneByteControlWord(t *testing.T) {
+	tests := []struct {
+		hex   string
+		label string
+	}{
+		{hex: "F0", label: "旧联调控制字：开启"},
+		{hex: "0F", label: "旧联调控制字：关闭"},
+		{hex: "00", label: "旧联调控制字：停止"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.hex, func(t *testing.T) {
+			summary := BuildDownlink(tt.hex)
+			if summary == nil || summary.Kind != "legacy_control_word" || summary.Label != tt.label {
+				t.Fatalf("summary = %#v", summary)
+			}
+			if summary.Status != "partial" || summary.CRCValid != nil {
+				t.Fatalf("status/crc = %q/%#v", summary.Status, summary.CRCValid)
+			}
+		})
+	}
+}
+
 func TestBuildMCU1ManualStatusKeepsUnknownTemperatureRaw(t *testing.T) {
 	packet := protocol.AppendCRC16Modbus([]byte{
 		0x00, 0x2A, 0x02, 0x11, 0x22, 0x33, 0x01, 0x90, 0xC0,
