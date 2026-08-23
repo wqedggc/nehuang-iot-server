@@ -568,7 +568,7 @@ Gateway (云边网关) ──1:N──→ CollectorNode (采集执行器) ──
 3. **CORS 中间件**：已在 `server.go` 的 `Routes()` 最外层应用，允许所有来源跨域访问。
 4. **安全组**：HTTP 管理端/API 需要放行 8080；硬件 TCP Adapter 联调需要放行 8081；Adapter health 18081 建议只允许本机或内网访问。
 5. **CNB token**：服务器 git remote 中嵌入了 token，生产环境建议改用 SSH key 认证。
-6. **GitHub 认证**：本机或 Agent 推送 GitHub 时必须使用 `/Users/shore/Desktop/Knowledge/tools/github_device_push.sh`。该脚本使用 device flow 和临时 `GH_CONFIG_DIR`，并在 `git push` 时清空默认 credential helper，禁止使用 macOS Keychain 或登录钥匙串密码。
+6. **GitHub 认证**：本机或 Agent 推送 GitHub 时必须使用 `/Users/shore/Desktop/Knowledge/tools/github_device_push.sh`。本仓库使用仓库专用 SSH Deploy Key；脚本检测到 GitHub SSH remote 后直接走仓库级 SSH 配置，不使用 GitHub CLI 或 macOS Keychain。GitHub API 操作复用工作区外、仅当前用户可读的仓库专用 `GH_CONFIG_DIR`，只有登录缺失、失效或被撤销时才重新执行 device flow。
 7. **前端模式切换**：`web/static/mock/mock-api.js` 中 `MODE` 变量控制调真实 API（`'real'`）还是本地 mock（`'mock'`）。当前已设为 `'real'`，后端未实现的接口会自动 fallback mock。
 8. **Adapter Token**：`NEHUANG_ADAPTER_TOKEN` 用于 `gateway-adapter` 调 Go HTTP 内部接口，不走用户 JWT。硬件网关第一版不直接使用该 token，而是连 TCP 端口。
 9. **NewServer 签名**：`NewServer(repo repository, cfg config.Config)`，接收完整 Config（含 JWT + AdapterToken）。
