@@ -282,9 +282,15 @@ cloud_gateways
 | `payload_snapshot` | `TEXT` | 是 | 原始快照文本，禁止JSON类型 |
 | `parse_status` | `TINYINT UNSIGNED NOT NULL DEFAULT 1` | 否 | 解析状态：1=pending 2=parsed 3=failed 4=ignored |
 | `parse_error` | `VARCHAR(512) DEFAULT NULL` | 是 | 解析错误 |
+| `message_id` | `VARCHAR(128) DEFAULT NULL` | 是 | 协议或上报消息ID；保留历史语义 |
+| `capture_id` | `VARCHAR(128) DEFAULT NULL` | 是 | Adapter 原始字节首次落盘时生成的传输幂等ID |
+| `event_count` | `INT NOT NULL DEFAULT 0` | 否 | 事件总数 |
+| `parsed_count` | `INT NOT NULL DEFAULT 0` | 否 | 成功解析事件数 |
 | `received_at_ms` | `TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)` | 否 | 接收时间 |
 | `created_at` | `TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)` | 否 | 创建时间 |
 | `updated_at` | `TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)` | 否 | 更新时间 |
+
+唯一约束：`uk_raw_source_capture(source_type, capture_id)`。旧数据和非 Adapter 来源允许 `capture_id=NULL`；不得为了加唯一约束删除或改写旧 `message_id` 事实。
 
 ### 3.10 `control_commands`
 

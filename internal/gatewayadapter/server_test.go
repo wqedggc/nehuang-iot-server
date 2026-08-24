@@ -17,7 +17,7 @@ import (
 	"nehuang-iot-server/internal/gatewayadapter/protocol"
 )
 
-func TestHandleConnForwardsRecognizedReadsAsRawFrameAndSkipsUnknownByDefault(t *testing.T) {
+func TestHandleConnForwardsEveryReadAsRawCapture(t *testing.T) {
 	var mu sync.Mutex
 	var received []RawFrameEnvelope
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -85,8 +85,8 @@ func TestHandleConnForwardsRecognizedReadsAsRawFrameAndSkipsUnknownByDefault(t *
 
 	mu.Lock()
 	defer mu.Unlock()
-	if len(received) != len(frames)-1 {
-		t.Fatalf("raw frame posts: want %d, got %d", len(frames)-1, len(received))
+	if len(received) < len(frames) {
+		t.Fatalf("raw captures: want at least %d TCP chunks, got %d", len(frames), len(received))
 	}
 	if received[0].GatewayName != "FP_TEST_ADMIN_001" {
 		t.Fatalf("register gateway name: want FP_TEST_ADMIN_001, got %q", received[0].GatewayName)
@@ -94,16 +94,35 @@ func TestHandleConnForwardsRecognizedReadsAsRawFrameAndSkipsUnknownByDefault(t *
 	if received[1].GatewayName != "FP_TEST_ADMIN_001" {
 		t.Fatalf("heartbeat should keep connection gateway name, got %q", received[1].GatewayName)
 	}
+	var captured []byte
 	for i, envelope := range received {
 		if envelope.PayloadHex == "" {
 			t.Fatalf("frame %d missing payload_hex", i)
 		}
+		chunk, err := hex.DecodeString(envelope.PayloadHex)
+		if err != nil {
+			t.Fatalf("decode captured chunk %d: %v", i, err)
+		}
+		captured = append(captured, chunk...)
 		if envelope.MessageID == "" || envelope.ConnectionID == "" {
 			t.Fatalf("frame %d missing message identity", i)
+		}
+		if envelope.CaptureID != envelope.MessageID {
+			t.Fatalf("frame %d capture identity mismatch: capture=%q message=%q", i, envelope.CaptureID, envelope.MessageID)
 		}
 		if envelope.Direction != string(journal.DirectionInbound) {
 			t.Fatalf("frame %d direction: want inbound, got %q", i, envelope.Direction)
 		}
+	}
+	var sent []byte
+	for _, frame := range frames {
+		sent = append(sent, frame...)
+	}
+	if got, want := strings.ToUpper(hex.EncodeToString(captured)), strings.ToUpper(hex.EncodeToString(sent)); got != want {
+		t.Fatalf("captured TCP bytes differ: want %s, got %s", want, got)
+	}
+	if got := jw.PendingCount(); got != 0 {
+		t.Fatalf("pending after successful forwards: want 0, got %d", got)
 	}
 }
 
@@ -127,11 +146,10 @@ func TestHandleConnForwardsUnknownWhenEnabled(t *testing.T) {
 	defer jw.Close()
 
 	srv := NewServer(Config{
-		APIBaseURL:           api.URL,
-		AdapterToken:         "test-token",
-		ReadBufferSize:       64,
-		ReadTimeout:          time.Second,
-		ForwardUnknownFrames: true,
+		APIBaseURL:     api.URL,
+		AdapterToken:   "test-token",
+		ReadBufferSize: 64,
+		ReadTimeout:    time.Second,
 	}, jw, NewLogger(io.Discard))
 
 	serverConn, clientConn := net.Pipe()
@@ -154,6 +172,7 @@ func TestHandleConnForwardsUnknownWhenEnabled(t *testing.T) {
 
 func TestHandleConnDispatchesPendingCommandsAndMarksSent(t *testing.T) {
 	var rawFrames atomic.Int32
+	var outboundFrames atomic.Int32
 	var pendingRequests atomic.Int32
 	var sentRequests atomic.Int32
 	sentCh := make(chan struct{}, 1)
@@ -162,6 +181,13 @@ func TestHandleConnDispatchesPendingCommandsAndMarksSent(t *testing.T) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/adapter/raw-frames":
 			rawFrames.Add(1)
+			var envelope RawFrameEnvelope
+			if err := json.NewDecoder(r.Body).Decode(&envelope); err != nil {
+				t.Errorf("decode raw frame: %v", err)
+			}
+			if envelope.Direction == string(journal.DirectionOutbound) {
+				outboundFrames.Add(1)
+			}
 			w.WriteHeader(http.StatusOK)
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/adapter/commands/pending":
 			pendingRequests.Add(1)
@@ -247,8 +273,85 @@ func TestHandleConnDispatchesPendingCommandsAndMarksSent(t *testing.T) {
 	if sentRequests.Load() != 1 {
 		t.Fatalf("sent requests: want 1, got %d", sentRequests.Load())
 	}
-	if rawFrames.Load() != 1 {
-		t.Fatalf("raw frame posts: want 1, got %d", rawFrames.Load())
+	if rawFrames.Load() != 2 {
+		t.Fatalf("raw frame posts including outbound command: want 2, got %d", rawFrames.Load())
+	}
+	if outboundFrames.Load() != 1 {
+		t.Fatalf("outbound raw captures: want 1, got %d", outboundFrames.Load())
+	}
+}
+
+func TestReplayPendingBatchForwardsAfterUpstreamRecovery(t *testing.T) {
+	var available atomic.Bool
+	var received atomic.Int32
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/adapter/raw-frames" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		if !available.Load() {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		received.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer api.Close()
+
+	jw, err := journal.NewWriter(t.TempDir(), 1024*1024)
+	if err != nil {
+		t.Fatalf("new journal writer: %v", err)
+	}
+	defer jw.Close()
+	frame := journal.Frame{
+		MessageID:    "conn-replay-1",
+		ConnectionID: "conn-replay",
+		RemoteAddr:   "127.0.0.1:10001",
+		Direction:    journal.DirectionInbound,
+		PayloadHex:   "01020304",
+		ReceivedAt:   time.Now().UTC(),
+		RawSeq:       1,
+	}
+	if err := jw.Write(frame); err != nil {
+		t.Fatalf("write pending frame: %v", err)
+	}
+	srv := NewServer(Config{APIBaseURL: api.URL, RawReplayBatch: 10}, jw, NewLogger(io.Discard))
+
+	srv.replayPendingBatch(t.Context())
+	if got := jw.PendingCount(); got != 1 {
+		t.Fatalf("pending while upstream unavailable: want 1, got %d", got)
+	}
+	available.Store(true)
+	srv.replayPendingBatch(t.Context())
+	if got := jw.PendingCount(); got != 0 {
+		t.Fatalf("pending after recovery: want 0, got %d", got)
+	}
+	if got := received.Load(); got != 1 {
+		t.Fatalf("successful replay posts: want 1, got %d", got)
+	}
+}
+
+func TestReadyzAcceptsTrafficWhenUpstreamIsTemporarilyUnavailable(t *testing.T) {
+	jw, err := journal.NewWriter(t.TempDir(), 1024*1024)
+	if err != nil {
+		t.Fatalf("new journal writer: %v", err)
+	}
+	defer jw.Close()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer listener.Close()
+	srv := NewServer(Config{APIBaseURL: "http://127.0.0.1:1"}, jw, NewLogger(io.Discard))
+	srv.listener = listener
+
+	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+	rec := httptest.NewRecorder()
+	srv.healthRoutes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("readyz while upstream unavailable: want 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"upstream_status":"unavailable"`) {
+		t.Fatalf("readyz missing degraded upstream status: %s", rec.Body.String())
 	}
 }
 

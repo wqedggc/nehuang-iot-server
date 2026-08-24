@@ -25,8 +25,8 @@ type adapterHandler struct {
 // adapterRepository 定义 Adapter 所需的数据访问方法。
 type adapterRepository interface {
 	// InsertRawEvent 写入原始设备事件到 raw_device_events 表。
-	// 返回插入后的 raw_event_id。
-	InsertRawEvent(ctx context.Context, event *domain.RawDeviceEvent) (uint64, error)
+	// 返回 raw_event_id、是否新建；重复 capture_id 返回既有 ID 且 created=false。
+	InsertRawEvent(ctx context.Context, event *domain.RawDeviceEvent) (rawEventID uint64, created bool, err error)
 	// UpsertGatewayByExternalID 按 gateway_external_id 创建或更新云边设备。
 	UpsertGatewayByExternalID(ctx context.Context, gateway *domain.Gateway) (uint64, error)
 	// UpsertCollectorNode 按 gateway_id + frequency + device_external_id 创建或更新采集执行器节点。
@@ -82,6 +82,8 @@ type rawFrameEnvelope struct {
 	ProtocolVersion string `json:"protocol_version"`
 	SourceType      string `json:"source_type"`
 	MessageID       string `json:"message_id"`
+	CaptureID       string `json:"capture_id"`
+	CaptureKind     string `json:"capture_kind"`
 	ConnectionID    string `json:"connection_id"`
 	GatewayName     string `json:"gateway_name"`
 	RemoteIP        string `json:"remote_ip"`
@@ -116,6 +118,26 @@ func (h *adapterHandler) handleRawFrames(w http.ResponseWriter, r *http.Request)
 	var envelope rawFrameEnvelope
 	if err := json.Unmarshal(bodyBytes, &envelope); err != nil {
 		writeCode(w, http.StatusBadRequest, 400, "invalid request body: "+err.Error())
+		return
+	}
+	captureID := strings.TrimSpace(envelope.CaptureID)
+	if captureID == "" {
+		captureID = strings.TrimSpace(envelope.MessageID)
+	}
+	if captureID == "" || len(captureID) > 128 {
+		writeCode(w, http.StatusBadRequest, 400, "invalid capture_id")
+		return
+	}
+	if strings.TrimSpace(envelope.MessageID) == "" || len(envelope.MessageID) > 128 {
+		writeCode(w, http.StatusBadRequest, 400, "invalid message_id")
+		return
+	}
+	if envelope.Direction != "inbound" && envelope.Direction != "outbound" {
+		writeCode(w, http.StatusBadRequest, 400, "invalid direction")
+		return
+	}
+	if envelope.RawSeq == 0 {
+		writeCode(w, http.StatusBadRequest, 400, "invalid raw_seq")
 		return
 	}
 
@@ -153,13 +175,24 @@ func (h *adapterHandler) handleRawFrames(w http.ResponseWriter, r *http.Request)
 		PayloadSnapshot: &payloadSnapshot,
 		ParseStatus:     domain.ParseStatusPending,
 		MessageID:       strPtr(envelope.MessageID),
+		CaptureID:       strPtr(captureID),
 		EventCount:      1,
 		ParsedCount:     0,
 		ReceivedAtMS:    receivedAt,
 	}
-	rawEventID, err := h.repo.InsertRawEvent(r.Context(), rawEvent)
+	rawEventID, created, err := h.repo.InsertRawEvent(r.Context(), rawEvent)
 	if err != nil {
 		writeCode(w, http.StatusInternalServerError, 500, "failed to insert raw frame: "+err.Error())
+		return
+	}
+	if !created {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"data": map[string]any{
+				"raw_event_id": rawEventID,
+				"parse_status": "duplicate",
+				"duplicate":    true,
+			},
+		})
 		return
 	}
 
@@ -230,7 +263,7 @@ func (h *adapterHandler) handleDeviceEvents(w http.ResponseWriter, r *http.Reque
 		ParseStatus:     domain.ParseStatusPending,
 	}
 
-	rawEventID, err := h.repo.InsertRawEvent(r.Context(), rawEvent)
+	rawEventID, _, err := h.repo.InsertRawEvent(r.Context(), rawEvent)
 	if err != nil {
 		writeCode(w, http.StatusInternalServerError, 500, "failed to insert raw event: "+err.Error())
 		return

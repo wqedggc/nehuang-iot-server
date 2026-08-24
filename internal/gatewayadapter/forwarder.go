@@ -38,6 +38,8 @@ type RawFrameEnvelope struct {
 	ProtocolVersion string `json:"protocol_version"`
 	SourceType      string `json:"source_type"`
 	MessageID       string `json:"message_id"`
+	CaptureID       string `json:"capture_id"`
+	CaptureKind     string `json:"capture_kind"`
 	ConnectionID    string `json:"connection_id"`
 	GatewayName     string `json:"gateway_name,omitempty"`
 	RemoteIP        string `json:"remote_ip,omitempty"`

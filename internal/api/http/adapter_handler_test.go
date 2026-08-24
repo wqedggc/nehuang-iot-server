@@ -26,15 +26,16 @@ type mockAdapterRepo struct {
 	upsertedPoints    []domain.DevicePoint
 	sensorData        []domain.SensorData
 	realtimeUpdates   []domain.DevicePoint
+	duplicateCapture  bool
 }
 
-func (m *mockAdapterRepo) InsertRawEvent(ctx context.Context, event *domain.RawDeviceEvent) (uint64, error) {
+func (m *mockAdapterRepo) InsertRawEvent(ctx context.Context, event *domain.RawDeviceEvent) (uint64, bool, error) {
 	if m.rawEventID == 0 {
 		m.rawEventID = 1001
 	}
 	event.RawEventID = m.rawEventID
 	m.insertedRawEvents = append(m.insertedRawEvents, *event)
-	return m.rawEventID, nil
+	return m.rawEventID, !m.duplicateCapture, nil
 }
 
 func (m *mockAdapterRepo) UpsertGatewayByExternalID(ctx context.Context, gateway *domain.Gateway) (uint64, error) {
@@ -96,6 +97,9 @@ func TestHandleRawFramesParsesMockTelemetry(t *testing.T) {
 	}
 	if repo.insertedRawEvents[0].EventType != domain.RawEventWork {
 		t.Fatalf("event type: want work, got %v", repo.insertedRawEvents[0].EventType)
+	}
+	if repo.insertedRawEvents[0].CaptureID == nil || *repo.insertedRawEvents[0].CaptureID != "conn-1-3" {
+		t.Fatalf("capture id: %+v", repo.insertedRawEvents[0].CaptureID)
 	}
 	if repo.parseStatus != domain.ParseStatusParsed {
 		t.Fatalf("parse status: want parsed, got %v err=%v", repo.parseStatus, repo.parseStatusErr)
@@ -371,5 +375,37 @@ func TestHandleRawFramesRejectsMissingTokenAndInvalidHex(t *testing.T) {
 	handler.handleRawFrames(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("invalid hex: want 400, got %d", rec.Code)
+	}
+}
+
+func TestHandleRawFramesRejectsMissingCaptureIdentity(t *testing.T) {
+	handler := &adapterHandler{repo: &mockAdapterRepo{}, adapterToken: "test-token"}
+	body := `{"direction":"inbound","payload_hex":"0102","raw_seq":1}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/adapter/raw-frames", strings.NewReader(body))
+	req.Header.Set("X-Adapter-Token", "test-token")
+	rec := httptest.NewRecorder()
+	handler.handleRawFrames(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("missing message_id: want 400, got %d", rec.Code)
+	}
+}
+
+func TestHandleRawFramesDoesNotProjectDuplicateCapture(t *testing.T) {
+	repo := &mockAdapterRepo{duplicateCapture: true}
+	handler := &adapterHandler{repo: repo, adapterToken: "test-token"}
+	payload := "NH_TELEMETRY|frequency=1|device_external_id=1001|function_type=1|channel_no=1|value=26.5|unit=C"
+	body := `{"protocol_version":"nehuang-gateway-adapter-v1","source_type":"gateway_adapter","message_id":"conn-duplicate-1","connection_id":"conn-duplicate","direction":"inbound","payload_hex":"` + strings.ToUpper(hex.EncodeToString([]byte(payload))) + `","received_at":"2026-07-04T18:08:05Z","raw_seq":1}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/adapter/raw-frames", strings.NewReader(body))
+	req.Header.Set("X-Adapter-Token", "test-token")
+	rec := httptest.NewRecorder()
+	handler.handleRawFrames(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("duplicate capture: want 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if len(repo.sensorData) != 0 || len(repo.upsertedPoints) != 0 {
+		t.Fatalf("duplicate capture projected business data: sensors=%d points=%d", len(repo.sensorData), len(repo.upsertedPoints))
+	}
+	if !strings.Contains(rec.Body.String(), `"duplicate":true`) {
+		t.Fatalf("duplicate response missing marker: %s", rec.Body.String())
 	}
 }

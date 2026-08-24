@@ -17,7 +17,7 @@ import (
 
 // InsertRawEvent 写入原始设备事件到 raw_device_events 表。
 // 返回插入后的 raw_event_id。
-func (r *Repository) InsertRawEvent(ctx context.Context, event *domain.RawDeviceEvent) (uint64, error) {
+func (r *Repository) InsertRawEvent(ctx context.Context, event *domain.RawDeviceEvent) (uint64, bool, error) {
 	if event.RawEventID == 0 {
 		event.RawEventID = idgen.NextID()
 	}
@@ -34,19 +34,21 @@ func (r *Repository) InsertRawEvent(ctx context.Context, event *domain.RawDevice
 		event.SourceType = domain.SourceTypeAdapter
 	}
 
-	_, err := r.db.ExecContext(ctx, `
+	result, err := r.db.ExecContext(ctx, `
 INSERT INTO raw_device_events
   (raw_event_id, gateway_id, node_id, point_id,
    gateway_name, event_type, source_type,
    remote_ip, remote_port, payload_hex, payload_snapshot,
-   parse_status, parse_error, message_id, event_count, parsed_count,
+   parse_status, parse_error, message_id, capture_id, event_count, parsed_count,
    received_at_ms, created_at, updated_at)
 VALUES
   (?, ?, ?, ?,
    ?, ?, ?,
    ?, ?, ?, ?,
-   ?, ?, ?, ?, ?,
-   ?, ?, ?)`,
+   ?, ?, ?, ?, ?, ?,
+   ?, ?, ?)
+ON DUPLICATE KEY UPDATE
+  raw_event_id = LAST_INSERT_ID(raw_event_id)`,
 		event.RawEventID,
 		nullableUint64(event.GatewayID),
 		nullableUint64(event.NodeID),
@@ -61,6 +63,7 @@ VALUES
 		uint8(event.ParseStatus),
 		nullableString(event.ParseError),
 		nullableString(event.MessageID),
+		nullableString(event.CaptureID),
 		event.EventCount,
 		event.ParsedCount,
 		event.ReceivedAtMS,
@@ -68,9 +71,16 @@ VALUES
 		event.UpdatedAt,
 	)
 	if err != nil {
-		return 0, err
+		return 0, false, err
 	}
-	return event.RawEventID, nil
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return 0, false, err
+	}
+	if existingID, err := result.LastInsertId(); err == nil && existingID > 0 {
+		event.RawEventID = uint64(existingID)
+	}
+	return event.RawEventID, rowsAffected == 1, nil
 }
 
 // UpdateRawEventParseStatus 更新原始事件的解析状态。

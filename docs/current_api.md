@@ -24,7 +24,7 @@ HTTP Adapter API 是 Go `gateway-adapter` 和 Go `nehuang-server` 之间的内�
 - 工作/告警/ACK/清缓存/4 小时读取字段语义未最终冻结，当前只做原始留存与状态追踪。
 - `mock telemetry` 联调文本帧示例：
   `NH_TELEMETRY|frequency=1|device_external_id=1001|function_type=1|channel_no=1|value=26.5|unit=C`。
-- raw 入口默认不转发未知包到 Server，仅保留本地 journal；如需联调时透传 unknown，可打开 `NEHUANG_GATEWAY_FORWARD_UNKNOWN_FRAMES=true`。
+- raw 入口对注册、心跳、工作、告警、CRC 错误和 unknown 一视同仁：先写本地 durable journal，再上报 Server；分类结果不决定是否留存。
 - 在线口径：心跳只刷新设备网关在线状态；只有工作/telemetry 才会刷新采集执行器与功能点状态、实时值。
 
 API 与展示口径（当前）：
@@ -41,7 +41,7 @@ API 与展示口径（当前）：
 | POST | `/api/v1/adapter/commands/{command_id}/sent` | `X-Adapter-Token` | 新增，Adapter 标记已下发 |
 | POST | `/api/v1/adapter/commands/{command_id}/result` | `X-Adapter-Token` | 新增，Adapter 回写 ACK/成功/失败/超时 |
 
-说明：`gateway-adapter` 的 TCP 主链路会把收到的 bytes 写入 raw journal，并按联调策略上报到 `/api/v1/adapter/raw-frames`（unknown 包默认本地留存，`NEHUANG_GATEWAY_FORWARD_UNKNOWN_FRAMES=true` 可透传）；Server 先写 `raw_device_events`。第一版解析 `FP_` 注册包，以及 `keepalive/keepalive message/HEARTBEAT/HB/PING/HEART` 心跳包；心跳只刷新网关在线状态，工作/telemetry 才会刷新采集执行器与功能点。MCU1 上行按“前两字节采集执行器 ID + BB + 报文长度 + CRC”分类，不要求固定 `AA AA`。工作包、告警包、未知包会先按 `event_type=3/6/7` 分开展示，但业务解析仍保持 pending，等真实协议稳定后补 parser。`/api/v1/adapter/device-events` 保留给已结构化 JSON 上报和旧联调脚本（可作为 telemetry mock 联调输入）；该 JSON 接口不提供 `payload_hex` 时，记录不是 TCP 原始报文。
+说明：`gateway-adapter` 把每次 TCP `Read` 得到的 bytes 作为 `tcp_chunk` 写入本地分段 journal，然后全部上报 `/api/v1/adapter/raw-frames`。上报失败时保留未确认记录并自动补传；Server 使用 `source_type + capture_id` 幂等落 `raw_device_events`。一次 `Read` 不等于逻辑包，外层分帧规则确认前管理端展示的是原始捕获块。第一版只稳定解析 `FP_` 注册包和显式心跳包；MCU1 候选包可展示协议摘要，但工作/告警/unknown 的业务投影仍保持 pending。
 
 `GET /api/v1/admin/payload-events` 支持 `source_type` 筛选：`1` TCP Gateway、`2` 结构化 Adapter、`3` 手动录入、`4` Mock 脚本。管理端原始报文排查默认使用 `source_type=1`。
 
@@ -52,6 +52,8 @@ API 与展示口径（当前）：
 - `protocol_version`
 - `source_type`
 - `message_id`
+- `capture_id`（新 Adapter 必传；旧 Adapter 缺省时兼容使用 `message_id`）
+- `capture_kind`（`tcp_read` 或 `tcp_write_attempt`；旧 Adapter 可省略）
 - `connection_id`
 - `gateway_name`
 - `remote_ip`
@@ -62,6 +64,8 @@ API 与展示口径（当前）：
 - `raw_seq`
 
 返回 `raw_event_id` 和 `parse_status`。该接口不要求同步完成业务解析。
+
+`capture_id` 在第一次本地落盘后固定，补传必须复用；`message_id` 保留协议/历史兼容。重复 capture 返回原 `raw_event_id`、`parse_status=duplicate` 和 `duplicate=true`，不会再次执行业务投影。
 
 ### POST `/api/v1/adapter/device-events`
 

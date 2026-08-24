@@ -91,7 +91,7 @@
 - 健康检查端口，默认 `NEHUANG_GATEWAY_HEALTH_ADDR=:18081`。
 - 每个 TCP 连接生成 `connection_id`。
 - 收到任何 bytes 后立即写 raw frame journal。
-- 未识别为 register/heartbeat 的 unknown raw 默认只保留本地 journal；如需联调排障可通过 `NEHUANG_GATEWAY_FORWARD_UNKNOWN_FRAMES=true` 打开该开关，透传到 `raw-frames`。
+- register、heartbeat、work、alarm、CRC 错误和 unknown raw 均先写本地 durable journal，再全量上报 `raw-frames`；失败会保留并自动补传，分类不再控制是否留存。
 - 心跳仅刷新网关在线状态；工作包/telemetry 才会推动采集执行器与功能点在线/实时值更新口径。
 - 示例联调文本包：`NH_TELEMETRY|frequency=1|device_external_id=1001|function_type=1|channel_no=1|value=26.5|unit=C`（文本帧联调约定）。
 - runtime log 使用结构化 JSON。

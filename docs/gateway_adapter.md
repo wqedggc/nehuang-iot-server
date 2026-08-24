@@ -173,7 +173,7 @@ Admin/Mini 创建控制命令
 
 - 接收硬件网关 TCP 连接，默认监听 `NEHUANG_GATEWAY_TCP_ADDR=:8081`。
 - 收到任意 bytes 后立即写 raw frame journal。
-- 联调默认不透传 unknown raw 包到 Server，仅保存本地 journal；如需排障可通过 `NEHUANG_GATEWAY_FORWARD_UNKNOWN_FRAMES=true` 开关透传 unknown。
+- 注册、心跳、工作、告警、CRC 错误和 unknown 均全量上报 Server；分类只影响解析，不影响事实留存。
 - 将每次 TCP read 到的原始 bytes 上报到 `POST /api/v1/adapter/raw-frames`。
 - 保留旧网关 `FP_xxx` 注册包和显式心跳包的最小分类，用于连接维度 `gateway_name` 和 debug 日志；业务解析由 Go 服务完成。
 - 识别出设备网关后，按 `gateway_external_id` 拉取 Server 中的 pending control command。
@@ -184,7 +184,8 @@ Admin/Mini 创建控制命令
 ## 日志分工
 
 - runtime log：结构化 JSON，记录启动、连接、断开、转发失败、raw 写入失败。
-- raw frame journal：JSONL，默认目录 `data/gateway-adapter/raw-frames`，字段包含 `connection_id`、`gateway_name`、`remote_addr`、`direction`、`payload_hex`、`received_at`、`raw_seq`。
+- raw journal：不可变分段 JSONL，默认目录 `data/gateway-adapter/raw-frames`，字段包含稳定 `message_id`、`capture_kind`、`connection_id`、`gateway_name`、`remote_addr`、`direction`、`payload_hex`、`received_at`、`raw_seq`。入站为 `tcp_read`；下行为发送前持久化的 `tcp_write_attempt`，是否写成功仍以命令 `sent` 状态为准。目录权限 `0700`、文件 `0600`，每条写入完成后同步落盘。
+- forward acknowledgement：Server 幂等接收成功后追加 `raw-forwarded-YYYYMMDD.jsonl`；进程重启时自动恢复未确认记录并补传。
 - debug/protocol log：通过 `NEHUANG_GATEWAY_DEBUG=true` 开启，记录协议分类和 CRC 等调试字段。
 - command log：结构化 JSON，记录 pending 拉取、TCP 写回、`sent` 回调和失败原因。
 
@@ -203,8 +204,7 @@ go build ./cmd/gateway-adapter-replay
 ```bash
 NEHUANG_GATEWAY_TCP_ADDR=:8081 \
 NEHUANG_GATEWAY_HEALTH_ADDR=:18081 \
-NEHUANG_GATEWAY_FORWARD_UNKNOWN_FRAMES=false \
-NEHUANG_GATEWAY_API_BASE_URL=http://43.143.208.153:8080 \
+NEHUANG_GATEWAY_API_BASE_URL=http://127.0.0.1:8080 \
 NEHUANG_ADAPTER_TOKEN=nehuang-adapter-dev-token \
 go run ./cmd/gateway-adapter
 ```
@@ -216,12 +216,14 @@ go run ./cmd/gateway-adapter
 | `NEHUANG_GATEWAY_COMMAND_POLL_INTERVAL_SECONDS` | `2` | 每个已识别设备网关连接拉取 pending command 的间隔 |
 | `NEHUANG_GATEWAY_COMMAND_POLL_LIMIT` | `20` | 每次拉取命令数量上限 |
 | `NEHUANG_GATEWAY_COMMAND_WRITE_TIMEOUT_SECONDS` | `5` | 写回 TCP 连接的超时时间 |
-| `NEHUANG_GATEWAY_FORWARD_UNKNOWN_FRAMES` | `false` | unknown 包是否透传到 `/api/v1/adapter/raw-frames`；默认 `false` 时仅保留本地 journal |
+| `NEHUANG_GATEWAY_RAW_REPLAY_INTERVAL_SECONDS` | `5` | 未确认 raw 的补传扫描间隔 |
+| `NEHUANG_GATEWAY_RAW_REPLAY_BATCH` | `100` | 每轮最多补传记录数 |
+| `NEHUANG_GATEWAY_RAW_DISK_MAX_USED_PERCENT` | `90` | journal 磁盘使用达到该比例时 readiness 失败，不静默删未确认数据 |
 
 回放 raw journal：
 
 ```bash
-go run ./cmd/gateway-adapter-replay -raw-log data/gateway-adapter/raw-frames/raw-frames-YYYYMMDD.jsonl
+go run ./cmd/gateway-adapter-replay -raw-log data/gateway-adapter/raw-frames/raw-frames-YYYYMMDD-000001.jsonl
 ```
 
 ## 云端内部实现口径
@@ -238,11 +240,11 @@ go run ./cmd/gateway-adapter-replay -raw-log data/gateway-adapter/raw-frames/raw
 2. 连接建立后，直接向 socket 写入原始 bytes。可以是 ASCII 注册包，也可以是 MCU 透传出来的二进制包。
 3. 第一版不要求硬件网关先组 JSON，也不要求硬件网关调用 HTTP。
 4. 每次写入的 bytes 都会被 Adapter 立即写入 raw frame journal，用于后续确认真实协议和解析规则。
-5. 除已识别注册/心跳外，unknown 包默认仅保留本地 journal；如需排障可通过 `NEHUANG_GATEWAY_FORWARD_UNKNOWN_FRAMES=true` 将 unknown 透传到 Go 服务。MCU1 BB=01/02/03 可生成展示型协议摘要；业务温度和告警投影仍待正式规则确认。
+5. 所有读取块都会上报 Go 服务；Server 临时不可用时留在本地，恢复后自动补传。MCU1 BB=01/02/03 可生成展示型协议摘要；业务温度和告警投影仍待正式规则确认。
 
 业务解析边界：
 
-- TCP 接收循环只负责连接、读写、raw journal、raw 上传策略（unknown 默认仅本地保留 + 可选透传）和最小分类。
+- TCP 接收循环只负责连接、读写、raw journal、全量 raw 上报/补传和最小分类。
 - 工作包、告警包、ACK 的业务字段解析必须基于真实 raw 样例和 replay 回归。
 - 不把 MCU 温控算法、时隙策略、告警去重规则写死在 TCP 接收循环中。
 
@@ -255,7 +257,7 @@ go run ./cmd/gateway-adapter-replay -raw-log data/gateway-adapter/raw-frames/raw
 | Mock 工作数据 | ASCII `NH_TELEMETRY|frequency=1|device_external_id=1001|function_type=1|channel_no=1|value=26.5|unit=C` | Adapter 上报 raw；Go 服务解析并投影采集执行器、功能点、实时值和时序数据 |
 | MCU1 工作包 | 二进制 `AA AA BB HH MM SS ... Tag CRC_LO CRC_HI` | Adapter 上报 raw；Go 服务展示 ID、BB、时间原字节、Tag、CRC 和温度记录边界，不代表已写入温度业务 |
 | 告警包 | 二进制 `AA AA ... FF FF ... CRC_LO CRC_HI` | Adapter 上报 raw；Go 服务保持 pending，去重和告警入库等真实样例确认后补 |
-| 未知包 | 任意无法识别 bytes | 默认仅写 local journal；`NEHUANG_GATEWAY_FORWARD_UNKNOWN_FRAMES=true` 时上报 raw；不中断连接 |
+| 未知包 | 任意无法识别 bytes | 写 local journal 并上报 raw；不更新业务投影，不中断连接 |
 
 ### 云端内部调试工具：gateway-adapter-mock
 
@@ -400,7 +402,7 @@ NEHUANG_GATEWAY_DEBUG=true go run ./cmd/gateway-adapter
 默认文件：
 
 ```text
-data/gateway-adapter/raw-frames/raw-frames-YYYYMMDD.jsonl
+data/gateway-adapter/raw-frames/raw-frames-YYYYMMDD-000001.jsonl
 ```
 
 每一行是一条原始收包记录，示例：
@@ -424,7 +426,7 @@ data/gateway-adapter/raw-frames/raw-frames-YYYYMMDD.jsonl
 回放统计：
 
 ```bash
-go run ./cmd/gateway-adapter-replay -raw-log data/gateway-adapter/raw-frames/raw-frames-YYYYMMDD.jsonl
+go run ./cmd/gateway-adapter-replay -raw-log data/gateway-adapter/raw-frames/raw-frames-YYYYMMDD-000001.jsonl
 ```
 
 ## 联调顺序

@@ -8,6 +8,7 @@
 - `004_bind_relations_user_id.sql`
 - `005_fix_realtime_projection.sql`
 - `006_gateway_access_mode_collector_binding.sql`
+- `007_raw_event_delivery_idempotency.sql`
 
 执行前确认：
 

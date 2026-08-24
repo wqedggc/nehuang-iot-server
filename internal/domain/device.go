@@ -52,6 +52,7 @@ type RawDeviceEvent struct {
 	ParseStatus     ParseStatus
 	ParseError      *string
 	MessageID       *string // 消息唯一ID（从 payload 解析）
+	CaptureID       *string // Adapter 原始字节首次落盘时生成的传输幂等ID
 	EventCount      int     // events[] 数组长度
 	ParsedCount     int     // 成功解析的 events 数量
 	ReceivedAtMS    time.Time

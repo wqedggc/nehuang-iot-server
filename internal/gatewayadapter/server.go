@@ -19,18 +19,20 @@ import (
 )
 
 type Config struct {
-	TCPAddr              string
-	HealthAddr           string
-	APIBaseURL           string
-	AdapterToken         string
-	RawLogDir            string
-	Debug                bool
-	ReadBufferSize       int
-	ReadTimeout          time.Duration
-	CommandPollInterval  time.Duration
-	CommandPollLimit     int
-	CommandWriteTimeout  time.Duration
-	ForwardUnknownFrames bool
+	TCPAddr             string
+	HealthAddr          string
+	APIBaseURL          string
+	AdapterToken        string
+	RawLogDir           string
+	Debug               bool
+	ReadBufferSize      int
+	ReadTimeout         time.Duration
+	CommandPollInterval time.Duration
+	CommandPollLimit    int
+	CommandWriteTimeout time.Duration
+	RawReplayInterval   time.Duration
+	RawReplayBatch      int
+	RawDiskMaxUsedPct   float64
 }
 
 type Server struct {
@@ -57,7 +59,7 @@ func NewServer(cfg Config, jw *journal.Writer, logger *Logger) *Server {
 		cfg.HealthAddr = ":18081"
 	}
 	if cfg.APIBaseURL == "" {
-		cfg.APIBaseURL = "http://43.143.208.153:8080"
+		cfg.APIBaseURL = "http://127.0.0.1:8080"
 	}
 	if cfg.ReadBufferSize <= 0 {
 		cfg.ReadBufferSize = 4096
@@ -73,6 +75,15 @@ func NewServer(cfg Config, jw *journal.Writer, logger *Logger) *Server {
 	}
 	if cfg.CommandWriteTimeout <= 0 {
 		cfg.CommandWriteTimeout = 5 * time.Second
+	}
+	if cfg.RawReplayInterval <= 0 {
+		cfg.RawReplayInterval = 5 * time.Second
+	}
+	if cfg.RawReplayBatch <= 0 {
+		cfg.RawReplayBatch = 100
+	}
+	if cfg.RawDiskMaxUsedPct <= 0 {
+		cfg.RawDiskMaxUsedPct = 90
 	}
 	if logger == nil {
 		logger = NewLogger(nil)
@@ -95,8 +106,18 @@ func (s *Server) Run(ctx context.Context) error {
 		"tcp_addr":               s.cfg.TCPAddr,
 		"health_addr":            s.cfg.HealthAddr,
 		"raw_log_dir":            s.cfg.RawLogDir,
-		"forward_unknown_frames": s.cfg.ForwardUnknownFrames,
+		"raw_forward_policy":     "all",
+		"raw_replay_interval_ms": s.cfg.RawReplayInterval.Milliseconds(),
+		"raw_replay_batch":       s.cfg.RawReplayBatch,
 	})
+
+	replayCtx, replayCancel := context.WithCancel(ctx)
+	defer replayCancel()
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		s.replayPendingFrames(replayCtx)
+	}()
 
 	healthSrv := &http.Server{
 		Addr:              s.cfg.HealthAddr,
@@ -121,6 +142,7 @@ func (s *Server) Run(ctx context.Context) error {
 	select {
 	case <-ctx.Done():
 		s.closing.Store(true)
+		replayCancel()
 		_ = ln.Close()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
@@ -129,6 +151,7 @@ func (s *Server) Run(ctx context.Context) error {
 		return nil
 	case err := <-errCh:
 		s.closing.Store(true)
+		replayCancel()
 		_ = healthSrv.Close()
 		s.wg.Wait()
 		return err
@@ -162,7 +185,7 @@ func (s *Server) handleConn(conn net.Conn) {
 	remoteIP, remotePort := splitRemote(remoteAddr)
 	var gatewayName string
 	var gatewayExternalID string
-	var rawSeq uint64
+	var rawSeq atomic.Uint64
 	connCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	var startCommandPolling sync.Once
@@ -181,6 +204,19 @@ func (s *Server) handleConn(conn net.Conn) {
 
 	buf := make([]byte, s.cfg.ReadBufferSize)
 	for {
+		if disk, err := s.journal.DiskUsage(); err != nil || disk.UsedPercent >= s.cfg.RawDiskMaxUsedPct {
+			fields := map[string]any{
+				"connection_id": connectionID,
+				"gateway_name":  gatewayName,
+			}
+			if err != nil {
+				fields["error"] = err.Error()
+			} else {
+				fields["disk_used_percent"] = disk.UsedPercent
+			}
+			s.logger.Error("gateway_raw_journal_capacity_blocked", fields)
+			return
+		}
 		_ = conn.SetReadDeadline(time.Now().Add(s.cfg.ReadTimeout))
 		n, err := conn.Read(buf)
 		if err != nil {
@@ -195,17 +231,19 @@ func (s *Server) handleConn(conn net.Conn) {
 		if n == 0 {
 			return
 		}
-		rawSeq++
+		seq := rawSeq.Add(1)
 		payload := append([]byte(nil), buf[:n]...)
 		payloadHex := strings.ToUpper(hex.EncodeToString(payload))
 		frame := journal.Frame{
+			MessageID:    connectionID + "-" + strconv.FormatUint(seq, 10),
+			CaptureKind:  "tcp_read",
 			ConnectionID: connectionID,
 			GatewayName:  gatewayName,
 			RemoteAddr:   remoteAddr,
 			Direction:    journal.DirectionInbound,
 			PayloadHex:   payloadHex,
 			ReceivedAt:   time.Now().UTC(),
-			RawSeq:       rawSeq,
+			RawSeq:       seq,
 		}
 		if err := s.journal.Write(frame); err != nil {
 			s.rawWriteFailures.Add(1)
@@ -213,7 +251,7 @@ func (s *Server) handleConn(conn net.Conn) {
 				"connection_id": connectionID,
 				"error":         err.Error(),
 			})
-			continue
+			return
 		}
 		s.rawFrames.Add(1)
 
@@ -226,17 +264,8 @@ func (s *Server) handleConn(conn net.Conn) {
 			"gateway_name":  gatewayName,
 			"kind":          msg.Kind,
 			"crc_valid":     msg.CRCValid,
-			"raw_seq":       rawSeq,
+			"raw_seq":       seq,
 		})
-
-		if msg.Kind == protocol.MessageUnknown && !s.cfg.ForwardUnknownFrames {
-			s.logger.Debug(s.cfg.Debug, "gateway_unknown_frame_not_forwarded", map[string]any{
-				"connection_id": connectionID,
-				"gateway_name":  gatewayName,
-				"raw_seq":       rawSeq,
-			})
-			continue
-		}
 
 		if msg.Kind == protocol.MessageHeartbeat && gatewayName == "" {
 			gatewayName = msg.GatewayName
@@ -246,7 +275,7 @@ func (s *Server) handleConn(conn net.Conn) {
 		}
 		if gatewayExternalID != "" {
 			startCommandPolling.Do(func() {
-				s.startPendingCommandLoop(connCtx, conn, connectionID, gatewayName, gatewayExternalID)
+				s.startPendingCommandLoop(connCtx, conn, connectionID, gatewayName, gatewayExternalID, remoteAddr, remoteIP, remotePort, &rawSeq)
 			})
 		}
 		if err := s.forwardRawFrame(context.Background(), frame, gatewayName, remoteIP, remotePort); err != nil {
@@ -255,14 +284,21 @@ func (s *Server) handleConn(conn net.Conn) {
 				"connection_id": connectionID,
 				"gateway_name":  gatewayName,
 				"kind":          msg.Kind,
-				"raw_seq":       rawSeq,
+				"raw_seq":       seq,
+				"error":         err.Error(),
+			})
+		} else if err := s.journal.MarkForwarded(frame.MessageID, time.Now().UTC()); err != nil {
+			s.rawWriteFailures.Add(1)
+			s.logger.Error("gateway_raw_forward_ack_write_failed", map[string]any{
+				"connection_id": connectionID,
+				"message_id":    frame.MessageID,
 				"error":         err.Error(),
 			})
 		}
 	}
 }
 
-func (s *Server) startPendingCommandLoop(ctx context.Context, conn net.Conn, connectionID, gatewayName, gatewayExternalID string) {
+func (s *Server) startPendingCommandLoop(ctx context.Context, conn net.Conn, connectionID, gatewayName, gatewayExternalID, remoteAddr, remoteIP string, remotePort int, rawSeq *atomic.Uint64) {
 	s.logger.Info("gateway_command_polling_started", map[string]any{
 		"connection_id":       connectionID,
 		"gateway_name":        gatewayName,
@@ -273,11 +309,11 @@ func (s *Server) startPendingCommandLoop(ctx context.Context, conn net.Conn, con
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
-		s.pollPendingCommands(ctx, conn, connectionID, gatewayName, gatewayExternalID)
+		s.pollPendingCommands(ctx, conn, connectionID, gatewayName, gatewayExternalID, remoteAddr, remoteIP, remotePort, rawSeq)
 	}()
 }
 
-func (s *Server) pollPendingCommands(ctx context.Context, conn net.Conn, connectionID, gatewayName, gatewayExternalID string) {
+func (s *Server) pollPendingCommands(ctx context.Context, conn net.Conn, connectionID, gatewayName, gatewayExternalID, remoteAddr, remoteIP string, remotePort int, rawSeq *atomic.Uint64) {
 	timer := time.NewTimer(0)
 	defer timer.Stop()
 	for {
@@ -299,14 +335,14 @@ func (s *Server) pollPendingCommands(ctx context.Context, conn net.Conn, connect
 				"error":               err.Error(),
 			})
 		} else {
-			s.dispatchPendingCommands(ctx, conn, connectionID, gatewayName, gatewayExternalID, commands)
+			s.dispatchPendingCommands(ctx, conn, connectionID, gatewayName, gatewayExternalID, remoteAddr, remoteIP, remotePort, rawSeq, commands)
 		}
 
 		timer.Reset(s.cfg.CommandPollInterval)
 	}
 }
 
-func (s *Server) dispatchPendingCommands(ctx context.Context, conn net.Conn, connectionID, gatewayName, gatewayExternalID string, commands []PendingCommand) {
+func (s *Server) dispatchPendingCommands(ctx context.Context, conn net.Conn, connectionID, gatewayName, gatewayExternalID, remoteAddr, remoteIP string, remotePort int, rawSeq *atomic.Uint64, commands []PendingCommand) {
 	for _, command := range commands {
 		if ctx.Err() != nil {
 			return
@@ -325,6 +361,28 @@ func (s *Server) dispatchPendingCommands(ctx context.Context, conn net.Conn, con
 		if s.cfg.CommandWriteTimeout > 0 {
 			_ = conn.SetWriteDeadline(time.Now().Add(s.cfg.CommandWriteTimeout))
 		}
+		seq := rawSeq.Add(1)
+		frame := journal.Frame{
+			MessageID:    connectionID + "-" + strconv.FormatUint(seq, 10),
+			CaptureKind:  "tcp_write_attempt",
+			ConnectionID: connectionID,
+			GatewayName:  gatewayName,
+			RemoteAddr:   remoteAddr,
+			Direction:    journal.DirectionOutbound,
+			PayloadHex:   strings.ToUpper(hex.EncodeToString(payload)),
+			ReceivedAt:   time.Now().UTC(),
+			RawSeq:       seq,
+		}
+		if err := s.journal.Write(frame); err != nil {
+			s.rawWriteFailures.Add(1)
+			s.logger.Error("gateway_outbound_journal_write_failed", map[string]any{
+				"connection_id": connectionID,
+				"command_id":    command.CommandID,
+				"error":         err.Error(),
+			})
+			return
+		}
+		s.rawFrames.Add(1)
 		if _, err := conn.Write(payload); err != nil {
 			s.logger.Warn("gateway_pending_command_write_failed", map[string]any{
 				"connection_id":       connectionID,
@@ -334,6 +392,23 @@ func (s *Server) dispatchPendingCommands(ctx context.Context, conn net.Conn, con
 				"error":               err.Error(),
 			})
 			return
+		}
+		if err := s.forwardRawFrame(context.Background(), frame, gatewayName, remoteIP, remotePort); err != nil {
+			s.forwardFailures.Add(1)
+			s.logger.Warn("gateway_outbound_raw_forward_failed", map[string]any{
+				"connection_id": connectionID,
+				"command_id":    command.CommandID,
+				"message_id":    frame.MessageID,
+				"error":         err.Error(),
+			})
+		} else if err := s.journal.MarkForwarded(frame.MessageID, time.Now().UTC()); err != nil {
+			s.rawWriteFailures.Add(1)
+			s.logger.Error("gateway_outbound_forward_ack_write_failed", map[string]any{
+				"connection_id": connectionID,
+				"command_id":    command.CommandID,
+				"message_id":    frame.MessageID,
+				"error":         err.Error(),
+			})
 		}
 		if s.cfg.CommandWriteTimeout > 0 {
 			_ = conn.SetWriteDeadline(time.Time{})
@@ -378,7 +453,9 @@ func (s *Server) forwardRawFrame(ctx context.Context, frame journal.Frame, gatew
 	envelope := RawFrameEnvelope{
 		ProtocolVersion: "nehuang-gateway-adapter-v1",
 		SourceType:      "gateway_adapter",
-		MessageID:       frame.ConnectionID + "-" + strconv.FormatUint(frame.RawSeq, 10),
+		MessageID:       frame.MessageID,
+		CaptureID:       frame.MessageID,
+		CaptureKind:     frame.CaptureKind,
 		ConnectionID:    frame.ConnectionID,
 		GatewayName:     gatewayName,
 		RemoteIP:        remoteIP,
@@ -391,6 +468,58 @@ func (s *Server) forwardRawFrame(ctx context.Context, frame journal.Frame, gatew
 	return s.forwarder.PostRawFrame(ctx, envelope)
 }
 
+func (s *Server) replayPendingFrames(ctx context.Context) {
+	timer := time.NewTimer(0)
+	defer timer.Stop()
+	backoff := s.cfg.RawReplayInterval
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-timer.C:
+		}
+		succeeded := s.replayPendingBatch(ctx)
+		delay := s.cfg.RawReplayInterval
+		if succeeded {
+			backoff = s.cfg.RawReplayInterval
+			if s.journal.PendingCount() > 0 {
+				delay = 10 * time.Millisecond
+			}
+		} else {
+			backoff *= 2
+			if backoff > time.Minute {
+				backoff = time.Minute
+			}
+			delay = backoff
+		}
+		timer.Reset(delay)
+	}
+}
+
+func (s *Server) replayPendingBatch(ctx context.Context) bool {
+	for _, frame := range s.journal.Pending(s.cfg.RawReplayBatch) {
+		remoteIP, remotePort := splitRemote(frame.RemoteAddr)
+		if err := s.forwardRawFrame(ctx, frame, frame.GatewayName, remoteIP, remotePort); err != nil {
+			s.forwardFailures.Add(1)
+			s.logger.Warn("gateway_raw_replay_failed", map[string]any{
+				"message_id": frame.MessageID,
+				"raw_seq":    frame.RawSeq,
+				"error":      err.Error(),
+			})
+			return false
+		}
+		if err := s.journal.MarkForwarded(frame.MessageID, time.Now().UTC()); err != nil {
+			s.rawWriteFailures.Add(1)
+			s.logger.Error("gateway_raw_replay_ack_write_failed", map[string]any{
+				"message_id": frame.MessageID,
+				"error":      err.Error(),
+			})
+			return false
+		}
+	}
+	return true
+}
+
 func (s *Server) healthRoutes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
@@ -398,6 +527,9 @@ func (s *Server) healthRoutes() http.Handler {
 			"status":             "ok",
 			"active_connections": s.activeConnections.Load(),
 			"raw_frames":         s.rawFrames.Load(),
+			"raw_pending":        s.journal.PendingCount(),
+			"raw_write_failures": s.rawWriteFailures.Load(),
+			"forward_failures":   s.forwardFailures.Load(),
 		})
 	})
 	mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
@@ -409,13 +541,32 @@ func (s *Server) healthRoutes() http.Handler {
 			writeProbe(w, http.StatusServiceUnavailable, map[string]any{"status": "unavailable", "error": "raw journal not writable: " + err.Error()})
 			return
 		}
-		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
-		defer cancel()
-		if err := s.forwarder.Ready(ctx); err != nil {
-			writeProbe(w, http.StatusServiceUnavailable, map[string]any{"status": "unavailable", "error": err.Error()})
+		disk, err := s.journal.DiskUsage()
+		if err != nil {
+			writeProbe(w, http.StatusServiceUnavailable, map[string]any{"status": "unavailable", "error": "raw journal disk usage unavailable: " + err.Error()})
 			return
 		}
-		writeProbe(w, http.StatusOK, map[string]any{"status": "ready"})
+		if disk.UsedPercent >= s.cfg.RawDiskMaxUsedPct {
+			writeProbe(w, http.StatusServiceUnavailable, map[string]any{
+				"status":            "unavailable",
+				"error":             "raw journal disk usage above limit",
+				"disk_used_percent": disk.UsedPercent,
+				"raw_pending":       s.journal.PendingCount(),
+			})
+			return
+		}
+		upstreamStatus := "ready"
+		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+		if err := s.forwarder.Ready(ctx); err != nil {
+			upstreamStatus = "unavailable"
+		}
+		cancel()
+		writeProbe(w, http.StatusOK, map[string]any{
+			"status":            "ready",
+			"upstream_status":   upstreamStatus,
+			"raw_pending":       s.journal.PendingCount(),
+			"disk_used_percent": disk.UsedPercent,
+		})
 	})
 	return mux
 }

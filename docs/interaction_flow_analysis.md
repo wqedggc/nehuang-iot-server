@@ -97,7 +97,7 @@
 1. **硬件网关** 作为 TCP Client 连接 `gateway-adapter :8081`
 2. **gateway-adapter** 收到 bytes 后：
    - 生成 `connection_id`（随机 8 字节 hex）
-   - 立即写入 raw frame journal（本地 `data/gateway-adapter/raw-frames/raw-frames-YYYYMMDD.jsonl`）
+   - 立即写入 raw chunk journal（本地分段 `data/gateway-adapter/raw-frames/raw-frames-YYYYMMDD-000001.jsonl`）
    - 调用 `protocol.ClassifyPayload()` 做最小分类
    - 构造 `RawFrameEnvelope` JSON，POST 到 `nehuang-server /api/v1/adapter/raw-frames`
    - 如果识别到注册包 → 记录 `gatewayName`，提取 `gatewayExternalID`
