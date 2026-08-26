@@ -136,6 +136,8 @@ NEHUANG_GATEWAY_DEBUG=false
 NEHUANG_GATEWAY_RAW_REPLAY_INTERVAL_SECONDS=5
 NEHUANG_GATEWAY_RAW_REPLAY_BATCH=100
 NEHUANG_GATEWAY_RAW_DISK_MAX_USED_PERCENT=90
+NEHUANG_GATEWAY_RAW_RETENTION_DAYS=14
+NEHUANG_GATEWAY_RAW_PRUNE_INTERVAL_SECONDS=3600
 NEHUANG_GATEWAY_COMMAND_POLL_INTERVAL_SECONDS=2
 NEHUANG_GATEWAY_COMMAND_POLL_LIMIT=20
 NEHUANG_GATEWAY_COMMAND_WRITE_TIMEOUT_SECONDS=5
@@ -238,6 +240,8 @@ export NEHUANG_GATEWAY_RAW_LOG_DIR="${NEHUANG_GATEWAY_RAW_LOG_DIR:-data/gateway-
 export NEHUANG_GATEWAY_RAW_REPLAY_INTERVAL_SECONDS="${NEHUANG_GATEWAY_RAW_REPLAY_INTERVAL_SECONDS:-5}"
 export NEHUANG_GATEWAY_RAW_REPLAY_BATCH="${NEHUANG_GATEWAY_RAW_REPLAY_BATCH:-100}"
 export NEHUANG_GATEWAY_RAW_DISK_MAX_USED_PERCENT="${NEHUANG_GATEWAY_RAW_DISK_MAX_USED_PERCENT:-90}"
+export NEHUANG_GATEWAY_RAW_RETENTION_DAYS="${NEHUANG_GATEWAY_RAW_RETENTION_DAYS:-14}"
+export NEHUANG_GATEWAY_RAW_PRUNE_INTERVAL_SECONDS="${NEHUANG_GATEWAY_RAW_PRUNE_INTERVAL_SECONDS:-3600}"
 export NEHUANG_GATEWAY_COMMAND_POLL_INTERVAL_SECONDS="${NEHUANG_GATEWAY_COMMAND_POLL_INTERVAL_SECONDS:-2}"
 export NEHUANG_GATEWAY_COMMAND_POLL_LIMIT="${NEHUANG_GATEWAY_COMMAND_POLL_LIMIT:-20}"
 export NEHUANG_GATEWAY_COMMAND_WRITE_TIMEOUT_SECONDS="${NEHUANG_GATEWAY_COMMAND_WRITE_TIMEOUT_SECONDS:-5}"
@@ -247,6 +251,7 @@ echo $! > gateway-adapter.pid
 
 sleep 2
 curl http://localhost:18081/healthz
+curl http://localhost:18081/readyz
 ```
 
 ### 6.6 验证
@@ -270,6 +275,7 @@ curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/mini/
 
 # Adapter health
 curl http://localhost:18081/healthz
+curl http://localhost:18081/readyz
 
 # 监听端口
 ss -tlnp | grep -E ':8080|:8081|:18081'
@@ -322,6 +328,8 @@ export NEHUANG_GATEWAY_RAW_LOG_DIR="${NEHUANG_GATEWAY_RAW_LOG_DIR:-data/gateway-
 export NEHUANG_GATEWAY_RAW_REPLAY_INTERVAL_SECONDS="${NEHUANG_GATEWAY_RAW_REPLAY_INTERVAL_SECONDS:-5}"
 export NEHUANG_GATEWAY_RAW_REPLAY_BATCH="${NEHUANG_GATEWAY_RAW_REPLAY_BATCH:-100}"
 export NEHUANG_GATEWAY_RAW_DISK_MAX_USED_PERCENT="${NEHUANG_GATEWAY_RAW_DISK_MAX_USED_PERCENT:-90}"
+export NEHUANG_GATEWAY_RAW_RETENTION_DAYS="${NEHUANG_GATEWAY_RAW_RETENTION_DAYS:-14}"
+export NEHUANG_GATEWAY_RAW_PRUNE_INTERVAL_SECONDS="${NEHUANG_GATEWAY_RAW_PRUNE_INTERVAL_SECONDS:-3600}"
 export NEHUANG_GATEWAY_COMMAND_POLL_INTERVAL_SECONDS="${NEHUANG_GATEWAY_COMMAND_POLL_INTERVAL_SECONDS:-2}"
 export NEHUANG_GATEWAY_COMMAND_POLL_LIMIT="${NEHUANG_GATEWAY_COMMAND_POLL_LIMIT:-20}"
 export NEHUANG_GATEWAY_COMMAND_WRITE_TIMEOUT_SECONDS="${NEHUANG_GATEWAY_COMMAND_WRITE_TIMEOUT_SECONDS:-5}"
@@ -333,6 +341,7 @@ sleep 2
 curl http://localhost:8080/healthz
 curl http://localhost:8080/readyz
 curl http://localhost:18081/healthz
+curl http://localhost:18081/readyz
 ss -tlnp | grep -E ':8080|:8081|:18081'
 ```
 
@@ -583,3 +592,4 @@ Gateway (云边网关) ──1:N──→ CollectorNode (采集执行器) ──
 12. **部署铁律**：所有代码变更（后端 + 前端）必须走 `git commit → git push cnb master → 服务器 git pull origin master → bash deploy.sh / go build` 流程，严禁 scp 覆盖。
 13. **重启安全**：不要用 `pkill -f nehuang-server`，该模式可能匹配 SSH wrapper 或部署 shell；停止 HTTP 服务使用 `deploy.sh` 内置的 `pkill -x nehuang-server`，停止 Adapter 使用 `pkill -x gateway-adapter`。
 14. **部署完成标准**：不能只看命令退出码。必须确认 `curl /healthz`、`curl /readyz`、`curl :18081/healthz`、`/admin/`、`/mini/` 和端口监听都正常。
+15. **Journal 安全回收**：Adapter 只自动删除超过保留期、已关闭且整段全部收到 durable acknowledgement 的 raw 分段；当前分段、pending、空/异常分段均保留。只有不再被任何 raw 引用的过期 ACK 文件才会整文件删除。部署后同时检查 `:18081/healthz` 与 `:18081/readyz`；`raw_last_prune_at_ms` 必须非零、`raw_last_prune_ok=true`，并记录 raw/ACK 累计回收量和失败数。

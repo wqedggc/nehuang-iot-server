@@ -99,7 +99,7 @@
    - 生成 `connection_id`（随机 8 字节 hex）
    - 立即写入 raw chunk journal（本地分段 `data/gateway-adapter/raw-frames/raw-frames-YYYYMMDD-000001.jsonl`）
    - 调用 `protocol.ClassifyPayload()` 做最小分类
-   - 构造 `RawFrameEnvelope` JSON，POST 到 `nehuang-server /api/v1/adapter/raw-frames`
+   - TCP 收包循环不等待中心 HTTP；独立补传 worker 从 pending journal 构造 `RawFrameEnvelope`，POST 到 `nehuang-server /api/v1/adapter/raw-frames`
    - 如果识别到注册包 → 记录 `gatewayName`，提取 `gatewayExternalID`
    - 如果识别到 `gatewayExternalID` → 启动 `startPendingCommandLoop`（定时拉取待下发命令）
 3. **nehuang-server** `handleRawFrames` 收到后：

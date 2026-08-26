@@ -29,6 +29,8 @@ func main() {
 		RawReplayInterval:   time.Duration(envInt("NEHUANG_GATEWAY_RAW_REPLAY_INTERVAL_SECONDS", 5)) * time.Second,
 		RawReplayBatch:      envInt("NEHUANG_GATEWAY_RAW_REPLAY_BATCH", 100),
 		RawDiskMaxUsedPct:   float64(envInt("NEHUANG_GATEWAY_RAW_DISK_MAX_USED_PERCENT", 90)),
+		RawRetention:        time.Duration(envInt("NEHUANG_GATEWAY_RAW_RETENTION_DAYS", 14)) * 24 * time.Hour,
+		RawPruneInterval:    time.Duration(envInt("NEHUANG_GATEWAY_RAW_PRUNE_INTERVAL_SECONDS", 3600)) * time.Second,
 	}
 
 	logger := gatewayadapter.NewLogger(os.Stdout)

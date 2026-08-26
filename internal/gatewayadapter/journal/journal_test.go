@@ -97,6 +97,27 @@ func TestWriterRestoresPendingAndForwardedState(t *testing.T) {
 	}
 }
 
+func TestWriterRejectsMessageIDAlreadyForwarded(t *testing.T) {
+	dir := t.TempDir()
+	w, err := NewWriter(dir, 1024*1024)
+	if err != nil {
+		t.Fatalf("NewWriter: %v", err)
+	}
+	defer w.Close()
+	first := Frame{MessageID: "capture-1", ConnectionID: "conn-1", Direction: DirectionInbound, PayloadHex: "01", RawSeq: 1}
+	if err := w.Write(first); err != nil {
+		t.Fatalf("Write first capture: %v", err)
+	}
+	if err := w.MarkForwarded(first.MessageID, time.Now().UTC()); err != nil {
+		t.Fatalf("MarkForwarded: %v", err)
+	}
+	duplicate := first
+	duplicate.PayloadHex = "02"
+	if err := w.Write(duplicate); err == nil {
+		t.Fatal("reusing a forwarded message_id must be rejected")
+	}
+}
+
 func TestWriterRotatesToDistinctSegmentsAndRestrictsPermissions(t *testing.T) {
 	dir := t.TempDir()
 	w, err := NewWriter(dir, 1)
@@ -150,5 +171,155 @@ func TestWriterIgnoresIncompleteTailAfterCrash(t *testing.T) {
 	pending := w.Pending(10)
 	if len(pending) != 1 || pending[0].MessageID != "conn-1-1" {
 		t.Fatalf("pending after incomplete tail: %+v", pending)
+	}
+}
+
+func TestPruneForwardedSegmentsDeletesOnlyClosedFullyAcknowledgedOldSegments(t *testing.T) {
+	dir := t.TempDir()
+	w, err := NewWriter(dir, 1)
+	if err != nil {
+		t.Fatalf("NewWriter: %v", err)
+	}
+	defer w.Close()
+
+	old := time.Date(2026, 7, 5, 10, 0, 0, 0, time.UTC)
+	frames := []Frame{
+		{MessageID: "acked-closed", ConnectionID: "conn-1", Direction: DirectionInbound, PayloadHex: "01", ReceivedAt: old, RawSeq: 1},
+		{MessageID: "pending-closed", ConnectionID: "conn-1", Direction: DirectionInbound, PayloadHex: "02", ReceivedAt: old, RawSeq: 2},
+		{MessageID: "acked-current", ConnectionID: "conn-1", Direction: DirectionInbound, PayloadHex: "03", ReceivedAt: old, RawSeq: 3},
+	}
+	for _, frame := range frames {
+		if err := w.Write(frame); err != nil {
+			t.Fatalf("Write %s: %v", frame.MessageID, err)
+		}
+	}
+	for _, messageID := range []string{"acked-closed", "acked-current"} {
+		if err := w.MarkForwarded(messageID, old.Add(time.Minute)); err != nil {
+			t.Fatalf("MarkForwarded %s: %v", messageID, err)
+		}
+	}
+
+	result, err := w.PruneForwardedSegments(old.Add(24 * time.Hour))
+	if err != nil {
+		t.Fatalf("PruneForwardedSegments: %v", err)
+	}
+	if result.Segments != 1 {
+		t.Fatalf("pruned segments: want 1, got %+v", result)
+	}
+	if result.Bytes == 0 {
+		t.Fatalf("pruned bytes: want > 0, got %+v", result)
+	}
+
+	assertPathMissing(t, filepath.Join(dir, "raw-frames-20260705-000001.jsonl"))
+	assertPathExists(t, filepath.Join(dir, "raw-frames-20260705-000002.jsonl"))
+	assertPathExists(t, filepath.Join(dir, "raw-frames-20260705-000003.jsonl"))
+	if pending := w.Pending(10); len(pending) != 1 || pending[0].MessageID != "pending-closed" {
+		t.Fatalf("pending frames after prune: %+v", pending)
+	}
+}
+
+func TestPruneForwardedSegmentsUsesDurableAcknowledgementsAfterRestart(t *testing.T) {
+	dir := t.TempDir()
+	old := time.Date(2026, 7, 5, 10, 0, 0, 0, time.UTC)
+	w, err := NewWriter(dir, 1)
+	if err != nil {
+		t.Fatalf("NewWriter: %v", err)
+	}
+	if err := w.Write(Frame{MessageID: "acked-before-restart", ConnectionID: "conn-1", Direction: DirectionInbound, PayloadHex: "01", ReceivedAt: old, RawSeq: 1}); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if err := w.MarkForwarded("acked-before-restart", old.Add(time.Minute)); err != nil {
+		t.Fatalf("MarkForwarded: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	reopened, err := NewWriter(dir, 1024*1024)
+	if err != nil {
+		t.Fatalf("reopen NewWriter: %v", err)
+	}
+	defer reopened.Close()
+	result, err := reopened.PruneForwardedSegments(old.Add(24 * time.Hour))
+	if err != nil {
+		t.Fatalf("PruneForwardedSegments: %v", err)
+	}
+	if result.Segments != 1 {
+		t.Fatalf("pruned segments after restart: want 1, got %+v", result)
+	}
+	if result.AckFiles != 1 {
+		t.Fatalf("pruned acknowledgement files after restart: want 1, got %+v", result)
+	}
+	assertPathMissing(t, filepath.Join(dir, "raw-frames-20260705-000001.jsonl"))
+	assertPathMissing(t, filepath.Join(dir, "raw-forwarded-20260705.jsonl"))
+}
+
+func TestPruneForwardedSegmentsRetainsMalformedSegmentWithoutBlockingSafeCleanup(t *testing.T) {
+	dir := t.TempDir()
+	old := time.Date(2026, 7, 5, 10, 0, 0, 0, time.UTC)
+	w, err := NewWriter(dir, 1)
+	if err != nil {
+		t.Fatalf("NewWriter: %v", err)
+	}
+	defer w.Close()
+	if err := w.Write(Frame{MessageID: "safe-acked", ConnectionID: "conn-1", Direction: DirectionInbound, PayloadHex: "01", ReceivedAt: old, RawSeq: 1}); err != nil {
+		t.Fatalf("Write safe frame: %v", err)
+	}
+	if err := w.Write(Frame{MessageID: "keep-current", ConnectionID: "conn-1", Direction: DirectionInbound, PayloadHex: "02", ReceivedAt: old, RawSeq: 2}); err != nil {
+		t.Fatalf("Write current frame: %v", err)
+	}
+	if err := w.MarkForwarded("safe-acked", old.Add(time.Minute)); err != nil {
+		t.Fatalf("MarkForwarded: %v", err)
+	}
+	malformedPath := filepath.Join(dir, "raw-frames-20260704-000001.jsonl")
+	if err := os.WriteFile(malformedPath, []byte("not-json\n"), 0o600); err != nil {
+		t.Fatalf("write malformed segment: %v", err)
+	}
+
+	result, err := w.PruneForwardedSegments(old.Add(24 * time.Hour))
+	if err == nil {
+		t.Fatal("malformed segment must report a prune failure")
+	}
+	if result.Segments != 1 {
+		t.Fatalf("safe cleanup result: want 1 segment, got %+v", result)
+	}
+	assertPathMissing(t, filepath.Join(dir, "raw-frames-20260705-000001.jsonl"))
+	assertPathExists(t, malformedPath)
+}
+
+func TestPruneForwardedSegmentsRetainsIncompleteTail(t *testing.T) {
+	dir := t.TempDir()
+	w, err := NewWriter(dir, 1024*1024)
+	if err != nil {
+		t.Fatalf("NewWriter: %v", err)
+	}
+	defer w.Close()
+	path := filepath.Join(dir, "raw-frames-20260704-000001.jsonl")
+	frame := Frame{MessageID: "truncated-1", ConnectionID: "conn-1", Direction: DirectionInbound, PayloadHex: "01", ReceivedAt: time.Date(2026, 7, 4, 10, 0, 0, 0, time.UTC), RawSeq: 1}
+	line, err := json.Marshal(frame)
+	if err != nil {
+		t.Fatalf("marshal frame: %v", err)
+	}
+	if err := os.WriteFile(path, line, 0o600); err != nil {
+		t.Fatalf("write incomplete segment: %v", err)
+	}
+
+	if _, err := w.PruneForwardedSegments(time.Date(2026, 7, 6, 10, 0, 0, 0, time.UTC)); err == nil {
+		t.Fatal("incomplete segment must report a prune failure")
+	}
+	assertPathExists(t, path)
+}
+
+func assertPathExists(t *testing.T, path string) {
+	t.Helper()
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("expected %s to exist: %v", path, err)
+	}
+}
+
+func assertPathMissing(t *testing.T, path string) {
+	t.Helper()
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("expected %s to be absent, stat err=%v", path, err)
 	}
 }

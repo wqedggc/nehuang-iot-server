@@ -174,7 +174,7 @@ Admin/Mini 创建控制命令
 - 接收硬件网关 TCP 连接，默认监听 `NEHUANG_GATEWAY_TCP_ADDR=:8081`。
 - 收到任意 bytes 后立即写 raw frame journal。
 - 注册、心跳、工作、告警、CRC 错误和 unknown 均全量上报 Server；分类只影响解析，不影响事实留存。
-- 将每次 TCP read 到的原始 bytes 上报到 `POST /api/v1/adapter/raw-frames`。
+- TCP 收包循环只负责同步落本地 journal，不等待中心 HTTP；独立补传 worker 将每次 read 的原始 bytes 上报到 `POST /api/v1/adapter/raw-frames`。
 - 保留旧网关 `FP_xxx` 注册包和显式心跳包的最小分类，用于连接维度 `gateway_name` 和 debug 日志；业务解析由 Go 服务完成。
 - 识别出设备网关后，按 `gateway_external_id` 拉取 Server 中的 pending control command。
 - 将 pending command 的 `command_hex` 写回当前 TCP 连接，写成功后回调 Server 标记 `sent`。
@@ -183,9 +183,10 @@ Admin/Mini 创建控制命令
 
 ## 日志分工
 
-- runtime log：结构化 JSON，记录启动、连接、断开、转发失败、raw 写入失败。
+- runtime log：结构化 JSON，记录启动、连接、断开、补传失败、raw 写入失败和 safe retention 成功/失败。
 - raw journal：不可变分段 JSONL，默认目录 `data/gateway-adapter/raw-frames`，字段包含稳定 `message_id`、`capture_kind`、`connection_id`、`gateway_name`、`remote_addr`、`direction`、`payload_hex`、`received_at`、`raw_seq`。入站为 `tcp_read`；下行为发送前持久化的 `tcp_write_attempt`，是否写成功仍以命令 `sent` 状态为准。目录权限 `0700`、文件 `0600`，每条写入完成后同步落盘。
-- forward acknowledgement：Server 幂等接收成功后追加 `raw-forwarded-YYYYMMDD.jsonl`；进程重启时自动恢复未确认记录并补传。
+- forward acknowledgement：独立补传 worker 在 Server 幂等接收成功后追加 `raw-forwarded-YYYYMMDD.jsonl`；单条失败不阻塞同批其他 raw，进程重启时自动恢复未确认记录并补传。
+- safe retention：启动时及之后每小时检查一次；默认只回收 `received_at` 已超过 14 天、已经关闭且分段内每条记录都有 durable acknowledgement 的 raw 分段。当前活动分段、任何 pending、空分段、解析异常分段或检查期间发生变化的分段都保留。超过保留期且其中所有 ID 已不被任何 raw 分段引用的 ACK 文件才会整文件回收；文件新建和删除都同步目录元数据。磁盘门禁命中时只唤醒同一个回收 worker，不并发扫描目录。
 - debug/protocol log：通过 `NEHUANG_GATEWAY_DEBUG=true` 开启，记录协议分类和 CRC 等调试字段。
 - command log：结构化 JSON，记录 pending 拉取、TCP 写回、`sent` 回调和失败原因。
 
@@ -219,6 +220,8 @@ go run ./cmd/gateway-adapter
 | `NEHUANG_GATEWAY_RAW_REPLAY_INTERVAL_SECONDS` | `5` | 未确认 raw 的补传扫描间隔 |
 | `NEHUANG_GATEWAY_RAW_REPLAY_BATCH` | `100` | 每轮最多补传记录数 |
 | `NEHUANG_GATEWAY_RAW_DISK_MAX_USED_PERCENT` | `90` | journal 磁盘使用达到该比例时 readiness 失败，不静默删未确认数据 |
+| `NEHUANG_GATEWAY_RAW_RETENTION_DAYS` | `14` | 全部确认且已关闭的 raw 分段最短本地保留天数 |
+| `NEHUANG_GATEWAY_RAW_PRUNE_INTERVAL_SECONDS` | `3600` | safe retention 检查周期 |
 
 回放 raw journal：
 

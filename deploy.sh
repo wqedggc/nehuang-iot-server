@@ -208,7 +208,7 @@ for migration in schema/mysql/*.sql; do
     fi
 
     log_info "执行数据库迁移: $version"
-    mysql "${MYSQL_BASE_ARGS[@]}" < "$migration"
+    mysql "${MYSQL_BASE_ARGS[@]}" "${NEHUANG_MYSQL_DATABASE}" < "$migration"
     mysql "${MYSQL_BASE_ARGS[@]}" "${NEHUANG_MYSQL_DATABASE}" -e \
         "INSERT INTO schema_migrations (version) VALUES ('${version}');"
 done

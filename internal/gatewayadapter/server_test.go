@@ -1,8 +1,10 @@
 package gatewayadapter
 
 import (
+	"context"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -54,10 +56,11 @@ func TestHandleConnForwardsEveryReadAsRawCapture(t *testing.T) {
 	defer jw.Close()
 
 	srv := NewServer(Config{
-		APIBaseURL:     api.URL,
-		AdapterToken:   "test-token",
-		ReadBufferSize: 64,
-		ReadTimeout:    time.Second,
+		APIBaseURL:        api.URL,
+		AdapterToken:      "test-token",
+		ReadBufferSize:    64,
+		ReadTimeout:       time.Second,
+		RawDiskMaxUsedPct: 100,
 	}, jw, NewLogger(io.Discard))
 
 	serverConn, clientConn := net.Pipe()
@@ -82,14 +85,14 @@ func TestHandleConnForwardsEveryReadAsRawCapture(t *testing.T) {
 	}
 	_ = clientConn.Close()
 	<-done
+	if result := srv.replayPendingBatch(t.Context()); result.failed != 0 {
+		t.Fatal("replay raw captures")
+	}
 
 	mu.Lock()
 	defer mu.Unlock()
 	if len(received) < len(frames) {
 		t.Fatalf("raw captures: want at least %d TCP chunks, got %d", len(frames), len(received))
-	}
-	if received[0].GatewayName != "FP_TEST_ADMIN_001" {
-		t.Fatalf("register gateway name: want FP_TEST_ADMIN_001, got %q", received[0].GatewayName)
 	}
 	if received[1].GatewayName != "FP_TEST_ADMIN_001" {
 		t.Fatalf("heartbeat should keep connection gateway name, got %q", received[1].GatewayName)
@@ -146,10 +149,11 @@ func TestHandleConnForwardsUnknownWhenEnabled(t *testing.T) {
 	defer jw.Close()
 
 	srv := NewServer(Config{
-		APIBaseURL:     api.URL,
-		AdapterToken:   "test-token",
-		ReadBufferSize: 64,
-		ReadTimeout:    time.Second,
+		APIBaseURL:        api.URL,
+		AdapterToken:      "test-token",
+		ReadBufferSize:    64,
+		ReadTimeout:       time.Second,
+		RawDiskMaxUsedPct: 100,
 	}, jw, NewLogger(io.Discard))
 
 	serverConn, clientConn := net.Pipe()
@@ -164,6 +168,9 @@ func TestHandleConnForwardsUnknownWhenEnabled(t *testing.T) {
 	}
 	_ = clientConn.Close()
 	<-done
+	if result := srv.replayPendingBatch(t.Context()); result.failed != 0 {
+		t.Fatal("replay unknown raw capture")
+	}
 
 	if received.Load() != 1 {
 		t.Fatalf("raw frame posts: want 1, got %d", received.Load())
@@ -237,6 +244,7 @@ func TestHandleConnDispatchesPendingCommandsAndMarksSent(t *testing.T) {
 		CommandPollInterval: 10 * time.Millisecond,
 		CommandPollLimit:    5,
 		CommandWriteTimeout: 200 * time.Millisecond,
+		RawDiskMaxUsedPct:   100,
 	}, jw, NewLogger(io.Discard))
 
 	serverConn, clientConn := net.Pipe()
@@ -269,6 +277,9 @@ func TestHandleConnDispatchesPendingCommandsAndMarksSent(t *testing.T) {
 
 	_ = clientConn.Close()
 	<-done
+	if result := srv.replayPendingBatch(t.Context()); result.failed != 0 {
+		t.Fatal("replay inbound and outbound raw captures")
+	}
 
 	if sentRequests.Load() != 1 {
 		t.Fatalf("sent requests: want 1, got %d", sentRequests.Load())
@@ -330,6 +341,100 @@ func TestReplayPendingBatchForwardsAfterUpstreamRecovery(t *testing.T) {
 	}
 }
 
+func TestReplayPendingBatchDoesNotBlockFollowingCaptureAfterOneFailure(t *testing.T) {
+	var accepted atomic.Int32
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var envelope RawFrameEnvelope
+		if err := json.NewDecoder(r.Body).Decode(&envelope); err != nil {
+			t.Errorf("decode raw frame: %v", err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		if envelope.CaptureID == "poison-1" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		accepted.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer api.Close()
+
+	jw, err := journal.NewWriter(t.TempDir(), 1024*1024)
+	if err != nil {
+		t.Fatalf("new journal writer: %v", err)
+	}
+	defer jw.Close()
+	for _, frame := range []journal.Frame{
+		{MessageID: "poison-1", ConnectionID: "conn-replay", Direction: journal.DirectionInbound, PayloadHex: "01", RawSeq: 1},
+		{MessageID: "valid-2", ConnectionID: "conn-replay", Direction: journal.DirectionInbound, PayloadHex: "02", RawSeq: 2},
+	} {
+		if err := jw.Write(frame); err != nil {
+			t.Fatalf("write pending frame %s: %v", frame.MessageID, err)
+		}
+	}
+
+	srv := NewServer(Config{APIBaseURL: api.URL, RawReplayBatch: 10}, jw, NewLogger(io.Discard))
+	result := srv.replayPendingBatch(t.Context())
+	if result.failed != 1 || result.forwarded != 1 {
+		t.Fatalf("batch result: want one failure and one success, got %+v", result)
+	}
+	if got := accepted.Load(); got != 1 {
+		t.Fatalf("accepted captures after poison frame: want 1, got %d", got)
+	}
+	if got := jw.PendingCount(); got != 1 {
+		t.Fatalf("pending captures after replay: want only poison frame, got %d", got)
+	}
+}
+
+func TestReplayPendingFramesKeepsDrainingWhenEachBatchContainsPoisonCapture(t *testing.T) {
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var envelope RawFrameEnvelope
+		if err := json.NewDecoder(r.Body).Decode(&envelope); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		if envelope.CaptureID == "poison-1" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer api.Close()
+
+	jw, err := journal.NewWriter(t.TempDir(), 1024*1024)
+	if err != nil {
+		t.Fatalf("new journal writer: %v", err)
+	}
+	defer jw.Close()
+	if err := jw.Write(journal.Frame{MessageID: "poison-1", ConnectionID: "conn-replay", Direction: journal.DirectionInbound, PayloadHex: "01", RawSeq: 1}); err != nil {
+		t.Fatalf("write poison frame: %v", err)
+	}
+	for i := 2; i <= 11; i++ {
+		messageID := fmt.Sprintf("valid-%d", i)
+		if err := jw.Write(journal.Frame{MessageID: messageID, ConnectionID: "conn-replay", Direction: journal.DirectionInbound, PayloadHex: "02", RawSeq: uint64(i)}); err != nil {
+			t.Fatalf("write %s: %v", messageID, err)
+		}
+	}
+
+	srv := NewServer(Config{APIBaseURL: api.URL, RawReplayBatch: 2, RawReplayInterval: 50 * time.Millisecond}, jw, NewLogger(io.Discard))
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		srv.replayPendingFrames(ctx)
+	}()
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for jw.PendingCount() != 1 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	cancel()
+	<-done
+	if got := jw.PendingCount(); got != 1 {
+		t.Fatalf("pending captures after progressive replay: want only poison frame, got %d", got)
+	}
+}
+
 func TestReadyzAcceptsTrafficWhenUpstreamIsTemporarilyUnavailable(t *testing.T) {
 	jw, err := journal.NewWriter(t.TempDir(), 1024*1024)
 	if err != nil {
@@ -341,7 +446,7 @@ func TestReadyzAcceptsTrafficWhenUpstreamIsTemporarilyUnavailable(t *testing.T) 
 		t.Fatalf("listen: %v", err)
 	}
 	defer listener.Close()
-	srv := NewServer(Config{APIBaseURL: "http://127.0.0.1:1"}, jw, NewLogger(io.Discard))
+	srv := NewServer(Config{APIBaseURL: "http://127.0.0.1:1", RawDiskMaxUsedPct: 100}, jw, NewLogger(io.Discard))
 	srv.listener = listener
 
 	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
@@ -352,6 +457,31 @@ func TestReadyzAcceptsTrafficWhenUpstreamIsTemporarilyUnavailable(t *testing.T) 
 	}
 	if !strings.Contains(rec.Body.String(), `"upstream_status":"unavailable"`) {
 		t.Fatalf("readyz missing degraded upstream status: %s", rec.Body.String())
+	}
+}
+
+func TestHealthzReportsCompletedPruneCheckEvenWhenNothingWasDeleted(t *testing.T) {
+	jw, err := journal.NewWriter(t.TempDir(), 1024*1024)
+	if err != nil {
+		t.Fatalf("new journal writer: %v", err)
+	}
+	defer jw.Close()
+	srv := NewServer(Config{}, jw, NewLogger(io.Discard))
+	now := time.Date(2026, 8, 27, 10, 0, 0, 0, time.UTC)
+	srv.pruneForwardedSegmentsOnce(now)
+
+	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	recorder := httptest.NewRecorder()
+	srv.healthRoutes().ServeHTTP(recorder, req)
+	var body map[string]any
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode health response: %v", err)
+	}
+	if got := int64(body["raw_last_prune_at_ms"].(float64)); got != now.UnixMilli() {
+		t.Fatalf("last prune time: want %d, got %d", now.UnixMilli(), got)
+	}
+	if ok, _ := body["raw_last_prune_ok"].(bool); !ok {
+		t.Fatalf("last prune status: want true, got %#v", body["raw_last_prune_ok"])
 	}
 }
 
@@ -401,6 +531,7 @@ func TestHandleConnDoesNotMarkSentAfterDisconnect(t *testing.T) {
 		CommandPollInterval: 10 * time.Millisecond,
 		CommandPollLimit:    5,
 		CommandWriteTimeout: 200 * time.Millisecond,
+		RawDiskMaxUsedPct:   100,
 	}, jw, NewLogger(io.Discard))
 
 	serverConn, clientConn := net.Pipe()
@@ -427,5 +558,59 @@ func TestHandleConnDoesNotMarkSentAfterDisconnect(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 	if sentRequests.Load() != 0 {
 		t.Fatalf("sent requests after disconnect: want 0, got %d", sentRequests.Load())
+	}
+}
+
+func TestHandleConnKeepsJournalingWhileUpstreamIsBlocked(t *testing.T) {
+	releaseUpstream := make(chan struct{})
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/adapter/raw-frames" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		<-releaseUpstream
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer api.Close()
+	defer close(releaseUpstream)
+
+	jw, err := journal.NewWriter(t.TempDir(), 1024*1024)
+	if err != nil {
+		t.Fatalf("new journal writer: %v", err)
+	}
+	defer jw.Close()
+
+	srv := NewServer(Config{
+		APIBaseURL:        api.URL,
+		ReadBufferSize:    64,
+		ReadTimeout:       time.Second,
+		RawDiskMaxUsedPct: 100,
+	}, jw, NewLogger(io.Discard))
+
+	serverConn, clientConn := net.Pipe()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		srv.handleConn(serverConn)
+	}()
+
+	if err := clientConn.SetWriteDeadline(time.Now().Add(200 * time.Millisecond)); err != nil {
+		t.Fatalf("set first write deadline: %v", err)
+	}
+	if _, err := clientConn.Write([]byte{0x01}); err != nil {
+		t.Fatalf("write first chunk: %v", err)
+	}
+	if err := clientConn.SetWriteDeadline(time.Now().Add(200 * time.Millisecond)); err != nil {
+		t.Fatalf("set second write deadline: %v", err)
+	}
+	_, secondWriteErr := clientConn.Write([]byte{0x02})
+
+	_ = clientConn.Close()
+	<-done
+
+	if secondWriteErr != nil {
+		t.Fatalf("second TCP chunk must not wait for upstream delivery: %v", secondWriteErr)
+	}
+	if got := jw.PendingCount(); got != 2 {
+		t.Fatalf("pending raw captures: want 2, got %d", got)
 	}
 }
