@@ -85,6 +85,18 @@ func (m *mockAdminRepo) ListBindings(ctx context.Context) ([]domain.BindRelation
 func (m *mockAdminRepo) ListBindingsByUserID(ctx context.Context, userID uint64) ([]domain.BindRelation, error) {
 	return nil, nil
 }
+func (m *mockAdminRepo) ListMiniDevices(ctx context.Context, userID uint64) ([]domain.MiniDevice, error) {
+	return nil, nil
+}
+func (m *mockAdminRepo) GetMiniDeviceDetail(ctx context.Context, pointID uint64) (*domain.MiniDeviceDetail, error) {
+	return nil, nil
+}
+func (m *mockAdminRepo) CheckBindRelation(ctx context.Context, userID uint64, pointID uint64) (bool, error) {
+	return false, nil
+}
+func (m *mockAdminRepo) GetMiniDeviceHistory(ctx context.Context, pointID uint64, rangeType string) ([]domain.MiniHistoryPoint, error) {
+	return nil, nil
+}
 func (m *mockAdminRepo) CreateBinding(ctx context.Context, b *domain.BindRelation) error {
 	if b.BindID == 0 {
 		b.BindID = 999

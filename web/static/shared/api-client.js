@@ -197,6 +197,12 @@
     getFarmerBindings: function (userID) {
       return request('GET', '/api/v1/admin/farmers/' + encodeURIComponent(userID) + '/bindings');
     },
+    getFarmerDevices: function (userID) {
+      return request('GET', '/api/v1/admin/farmers/' + encodeURIComponent(userID) + '/devices');
+    },
+    getFarmerDeviceHistory: function (userID, pointID, range) {
+      return request('GET', '/api/v1/admin/farmers/' + encodeURIComponent(userID) + '/devices/' + encodeURIComponent(pointID) + '/history?range=' + encodeURIComponent(range || '1d'));
+    },
     getDeviceTree: function () {
       return request('GET', '/api/v1/admin/device-tree');
     },

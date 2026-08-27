@@ -593,8 +593,9 @@ type MiniDeviceDetail struct {
 
 // MiniHistoryPoint 历史曲线数据点。
 type MiniHistoryPoint struct {
-	Time     string  `json:"time"`
-	RealTemp float64 `json:"real_temp"`
+	Time     string   `json:"time"`
+	RealTemp float64  `json:"real_temp"`
+	Value    *float64 `json:"value,omitempty"`
 }
 
 // MiniDeviceHistory C 端历史数据响应。

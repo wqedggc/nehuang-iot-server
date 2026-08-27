@@ -86,18 +86,6 @@
 <!-- ===== Toast ===== -->
 <div class="toast" id="toast" aria-live="polite"></div>
 
-<!-- ===== 版本号浮标（所有页面可见，含登录页） ===== -->
-<div id="version-badge" style="position:fixed;right:12px;bottom:12px;font-size:10px;color:#aaa;z-index:9999;pointer-events:none;font-family:monospace">v?</div>
-
-<script src="../version.js"></script>
-<script>
-  // 页面加载后立即更新版本号浮标
-  (function () {
-    var el = document.getElementById('version-badge');
-    if (el && window.APP_VERSION) el.textContent = 'v' + window.APP_VERSION;
-  })();
-</script>
-
 <script src="../shared/api-client.js"></script>
 <script src="app.js"></script>
 </body>

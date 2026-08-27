@@ -122,6 +122,8 @@ API 与展示口径（当前）：
 | GET | `/api/v1/admin/farmers/{user_id}` | 正式 |
 | PATCH | `/api/v1/admin/farmers/{user_id}` | 正式 |
 | GET | `/api/v1/admin/farmers/{user_id}/bindings` | 正式 |
+| GET | `/api/v1/admin/farmers/{user_id}/devices` | 正式；按 point/collector/exclusive-gateway 绑定投影可见功能点，shared 网关不扩大范围 |
+| GET | `/api/v1/admin/farmers/{user_id}/devices/{point_id}/history?range=1d` | 正式；先校验功能点属于目标农户，支持 `1h/6h/1d/24h/3d/7d/30d` |
 | GET | `/api/v1/admin/collectors` | 正式 |
 | GET | `/api/v1/admin/bindings` | 正式 |
 | POST | `/api/v1/admin/bindings` | 正式；支持 `binding_type=gateway/point/collector` |
@@ -147,6 +149,8 @@ API 与展示口径（当前）：
 - `control-logs` 支持分页+筛选：`page`、`size`、`start`、`end`、`keyword`、`cmd_status`、`source`；不带 `page/size` 时兼容旧数组响应。每条命令的 `protocol_summary` 按下行方向解释 MCU1/Modbus 字段；旧 `F0/0F/00` 会标识为非完整 MCU1 联调控制字。
 - `operation-logs` 支持分页+筛选：`page`、`size`、`start`、`end`、`keyword`、`op_type`；不带 `page/size` 时兼容旧数组响应。
 - `raw-events` 当前保留 `limit` 模式。
+
+农户数据工作台接口不复用 Mini HTTP token。设备摘要复用同一套绑定权限 SQL；历史点同时保留兼容字段 `real_temp` 和通用字段 `value`，管理端优先读取 `value`。历史查询按范围使用固定时间桶，每桶保留最后一条样本并按时间升序返回，最多 500 点，避免长区间只显示最早一段数据。停用、删除或不在目标农户范围内的功能点统一返回 404，避免共享设备网关造成横向数据展开。
 
 ### POST `/api/v1/admin/bindings`
 

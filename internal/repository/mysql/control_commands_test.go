@@ -30,6 +30,7 @@ func TestCheckBindRelationQueryCoversMiniDevicePermissions(t *testing.T) {
 		"br.gateway_id = dp.gateway_id",
 		"cg.access_mode = 'exclusive'",
 		"br.bind_status = 1",
+		"dp.point_status = 1",
 	} {
 		if !strings.Contains(checkBindRelationQuery, clause) {
 			t.Fatalf("mini device permission query must contain %q", clause)
@@ -37,5 +38,17 @@ func TestCheckBindRelationQueryCoversMiniDevicePermissions(t *testing.T) {
 	}
 	if got := strings.Count(checkBindRelationQuery, "br.user_id = ?"); got != 3 {
 		t.Fatalf("mini device permission query must scope all binding types by user, got %d clauses", got)
+	}
+}
+
+func TestMiniDeviceHistoryQuerySamplesAcrossRequestedRange(t *testing.T) {
+	for _, clause := range []string{
+		"MAX(sampled_at_ms)",
+		"GROUP BY FLOOR(UNIX_TIMESTAMP(sampled_at_ms) / ?)",
+		"ORDER BY sd.sampled_at_ms ASC",
+	} {
+		if !strings.Contains(getMiniDeviceHistoryQuery, clause) {
+			t.Fatalf("mini history query must contain %q", clause)
+		}
 	}
 }

@@ -38,6 +38,12 @@ type adminRepository interface {
 	ListBindings(ctx context.Context) ([]domain.BindRelation, error)
 	// 按用户 ID 查询绑定关系。
 	ListBindingsByUserID(ctx context.Context, userID uint64) ([]domain.BindRelation, error)
+	// 管理端农户数据工作台：按现有绑定权限投影功能点摘要。
+	ListMiniDevices(ctx context.Context, userID uint64) ([]domain.MiniDevice, error)
+	// 管理端功能点数据工作台：复用现有实时详情与历史时序查询。
+	CheckBindRelation(ctx context.Context, userID uint64, pointID uint64) (bool, error)
+	GetMiniDeviceDetail(ctx context.Context, pointID uint64) (*domain.MiniDeviceDetail, error)
+	GetMiniDeviceHistory(ctx context.Context, pointID uint64, rangeType string) ([]domain.MiniHistoryPoint, error)
 	// 创建绑定关系。
 	CreateBinding(ctx context.Context, b *domain.BindRelation) error
 	// 按 gateway_id 查询 gateway 记录。
@@ -1576,6 +1582,125 @@ func (h *adminHandler) handleFarmerBindings(w http.ResponseWriter, r *http.Reque
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"data": bindings})
+}
+
+// handleFarmerDevices 处理 GET /api/v1/admin/farmers/{user_id}/devices。
+// 返回该农户按 active point/collector/exclusive-gateway 绑定可见的功能点摘要。
+func (h *adminHandler) handleFarmerDevices(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeCode(w, http.StatusMethodNotAllowed, 405, "method not allowed")
+		return
+	}
+
+	path := strings.TrimPrefix(r.URL.Path, "/api/v1/admin/farmers/")
+	path = strings.TrimSuffix(path, "/devices")
+	userID, err := strconv.ParseUint(strings.TrimSpace(path), 10, 64)
+	if err != nil || userID == 0 {
+		writeCode(w, http.StatusBadRequest, 400, "invalid user id")
+		return
+	}
+
+	farmer, _, err := h.repo.GetFarmerByID(r.Context(), userID)
+	if err != nil {
+		writeCode(w, http.StatusInternalServerError, 500, "internal error")
+		return
+	}
+	if farmer == nil {
+		writeCode(w, http.StatusNotFound, 404, "farmer not found")
+		return
+	}
+
+	devices, err := h.repo.ListMiniDevices(r.Context(), userID)
+	if err != nil {
+		writeCode(w, http.StatusInternalServerError, 500, "internal error")
+		return
+	}
+	if devices == nil {
+		devices = make([]domain.MiniDevice, 0)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"data": devices})
+}
+
+var validAdminHistoryRanges = map[string]struct{}{
+	"1h": {}, "6h": {}, "24h": {}, "1d": {}, "3d": {}, "7d": {}, "30d": {},
+}
+
+// handleFarmerDeviceHistory 处理
+// GET /api/v1/admin/farmers/{user_id}/devices/{point_id}/history。
+// 历史查询必须同时满足目标农户的现有绑定权限，避免共享网关扩大数据可见范围。
+func (h *adminHandler) handleFarmerDeviceHistory(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeCode(w, http.StatusMethodNotAllowed, 405, "method not allowed")
+		return
+	}
+
+	path := strings.TrimPrefix(r.URL.Path, "/api/v1/admin/farmers/")
+	parts := strings.Split(strings.Trim(path, "/"), "/")
+	if len(parts) != 4 || parts[1] != "devices" || parts[3] != "history" {
+		writeCode(w, http.StatusBadRequest, 400, "invalid farmer device history path")
+		return
+	}
+	userID, userErr := strconv.ParseUint(parts[0], 10, 64)
+	pointID, pointErr := strconv.ParseUint(parts[2], 10, 64)
+	if userErr != nil || pointErr != nil || userID == 0 || pointID == 0 {
+		writeCode(w, http.StatusBadRequest, 400, "invalid user or point id")
+		return
+	}
+	rangeType := strings.TrimSpace(r.URL.Query().Get("range"))
+	if rangeType == "" {
+		rangeType = "1d"
+	}
+	if _, ok := validAdminHistoryRanges[rangeType]; !ok {
+		writeCode(w, http.StatusBadRequest, 400, "invalid range")
+		return
+	}
+
+	farmer, _, err := h.repo.GetFarmerByID(r.Context(), userID)
+	if err != nil {
+		writeCode(w, http.StatusInternalServerError, 500, "internal error")
+		return
+	}
+	if farmer == nil {
+		writeCode(w, http.StatusNotFound, 404, "farmer not found")
+		return
+	}
+
+	visible, err := h.repo.CheckBindRelation(r.Context(), userID, pointID)
+	if err != nil {
+		writeCode(w, http.StatusInternalServerError, 500, "internal error")
+		return
+	}
+	if !visible {
+		writeCode(w, http.StatusNotFound, 404, "device not found in farmer scope")
+		return
+	}
+
+	detail, err := h.repo.GetMiniDeviceDetail(r.Context(), pointID)
+	if err != nil {
+		writeCode(w, http.StatusInternalServerError, 500, "internal error")
+		return
+	}
+	if detail == nil {
+		writeCode(w, http.StatusNotFound, 404, "device not found")
+		return
+	}
+
+	points, err := h.repo.GetMiniDeviceHistory(r.Context(), pointID, rangeType)
+	if err != nil {
+		writeCode(w, http.StatusInternalServerError, 500, "internal error")
+		return
+	}
+	if points == nil {
+		points = make([]domain.MiniHistoryPoint, 0)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"data": domain.MiniDeviceHistory{
+		PointID:  detail.PointID,
+		FuncName: detail.FunctionName,
+		Unit:     detail.Unit,
+		BestMin:  detail.BestMin,
+		BestMax:  detail.BestMax,
+		Points:   points,
+	}})
 }
 
 // handleFarmerDetail 处理 GET /api/v1/admin/farmers/{user_id}。

@@ -11,6 +11,13 @@
   // ============================================================
   var currentPage = '';
   var bindingDialogState = null;
+  var farmerWorkbenchState = {
+    userId: '',
+    selectedPointId: '',
+    range: '1d',
+    requestVersion: 0,
+    devices: []
+  };
 
   // ============================================================
   // 工具
@@ -43,6 +50,27 @@
       var pad = function (n) { return n.toString().padStart(2, '0'); };
       return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
     } catch (e) { return iso; }
+  }
+
+  function formatBeijingTime(iso, includeDate) {
+    if (!iso) return '--';
+    var date = new Date(iso);
+    if (isNaN(date.getTime())) return toText(iso);
+    try {
+      var options = {
+        timeZone: 'Asia/Shanghai',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: includeDate === false ? undefined : '2-digit',
+        hour12: false
+      };
+      if (includeDate !== false) options.year = 'numeric';
+      return new Intl.DateTimeFormat('zh-CN', options).format(date).replace(/\//g, '-');
+    } catch (e) {
+      return formatFullTime(iso);
+    }
   }
 
   function escHtml(str) {
@@ -1176,11 +1204,15 @@
   // ---------- Dashboard ----------
   var currentDashboardRange = '1d';
   var currentDashboardData = null;
+  var dashboardRequestVersion = 0;
 
   async function renderDashboard(container) {
+    var requestedRange = currentDashboardRange;
+    var requestVersion = ++dashboardRequestVersion;
     container.innerHTML = '<div class="loading-state"><div class="loading-spinner"></div><p>加载仪表盘...</p></div>';
     try {
-      var res = await NHApi.getDashboard(currentDashboardRange);
+      var res = await NHApi.getDashboard(requestedRange);
+      if (requestVersion !== dashboardRequestVersion || requestedRange !== currentDashboardRange) return;
       if (!res.data) { container.innerHTML = '<div class="error-state"><p>加载失败</p><button class="btn btn-outline btn-sm" onclick="renderPage()">重试</button></div>'; return; }
       var d = res.data;
       currentDashboardData = d;
@@ -1202,35 +1234,37 @@
         var active = r === (d.range || '1d') ? ' btn-primary' : ' btn-outline';
         return '<button class="btn btn-sm' + active + '" onclick="switchDashboardRange(\'' + r + '\')">' + (rangeLabels[r] || r) + '</button>';
       }).join('');
-      var ingestTotal = (toNum(ingest.raw_event_count) || 0) + (toNum(ingest.telemetry_count) || 0);
+      var commandCount = toNum(control.control_command_count) || 0;
+      var controlSuccessCount = toNum(control.control_success_count) || 0;
+      var controlFailedCount = toNum(control.control_failed_count) || 0;
+      var controlTimeoutCount = toNum(control.control_timeout_count) || 0;
+      var controlInProgressCount = Math.max(0, commandCount - controlSuccessCount - controlFailedCount - controlTimeoutCount);
+      var controlRiskCount = controlFailedCount + controlTimeoutCount + controlInProgressCount;
 
-      var html = '<div class="page-header" style="display:flex;align-items:center;justify-content:flex-end">' +
-        '<div style="display:flex;gap:6px">' + rangeBtns + '</div>' +
+      var html = '<div class="dashboard-toolbar">' +
+        '<p>资产和设备状态为当前快照；报文、心跳和控制命令按所选区间统计。</p>' +
+        '<div class="dashboard-range-tabs">' + rangeBtns + '</div>' +
       '</div>' +
-      '<div class="stat-grid">' +
-        '<div class="stat-card"><div class="stat-card-label">在线设备网关</div><div class="stat-card-value">' + countText(devices.gateway_online) + '<span style="font-size:16px;font-weight:400;color:var(--color-text-muted)"> / ' + countText(devices.gateway_total) + '</span></div></div>' +
-        '<div class="stat-card"><div class="stat-card-label">采集执行器</div><div class="stat-card-value">' + countText(devices.collector_node_total) + '</div><div class="stat-card-sub">功能点数 ' + countText(devices.device_point_total) + '</div></div>' +
-        '<div class="stat-card"><div class="stat-card-label">农户数量</div><div class="stat-card-value">' + countText(users.active_farmer_count) + '</div><div class="stat-card-sub">管理员 ' + countText(users.admin_count) + '</div></div>' +
-        '<div class="stat-card"><div class="stat-card-label">数据上报</div><div class="stat-card-value">' + toText(ingestTotal.toLocaleString()) + '</div><div class="stat-card-sub">最近上报：' + formatTime(devices.latest_report_time) + '</div></div>' +
+      '<div class="dashboard-health-strip">' +
+        '<div><span>网关在线</span><strong>' + countText(devices.gateway_online) + ' / ' + countText(devices.gateway_total) + '</strong></div>' +
+        '<div class="' + ((toNum(devices.abnormal_point_count) || 0) > 0 ? 'is-risk' : '') + '"><span>异常功能点</span><strong>' + countText(devices.abnormal_point_count) + '</strong></div>' +
+        '<div class="' + ((toNum(devices.offline_point_count) || 0) > 0 ? 'is-risk' : '') + '"><span>离线功能点</span><strong>' + countText(devices.offline_point_count) + '</strong></div>' +
+        '<div class="' + (controlRiskCount > 0 ? 'is-risk' : '') + '"><span>控制需跟进</span><strong>' + controlRiskCount + '</strong></div>' +
+        '<div class="' + ((toNum(ingest.heartbeat_failed) || 0) > 0 ? 'is-warning' : '') + '"><span>心跳解析失败</span><strong>' + countText(ingest.heartbeat_failed) + '</strong></div>' +
+        '<div><span>最近上报（北京时间）</span><strong>' + escHtml(formatBeijingTime(devices.latest_report_time)) + '</strong></div>' +
+      '</div>' +
+      renderDashboardCharts(d) +
+      '<div class="dashboard-asset-strip" aria-label="资产规模">' +
+        '<span>活跃农户 <strong>' + countText(users.active_farmer_count) + '</strong></span>' +
+        '<span>管理员 <strong>' + countText(users.admin_count) + '</strong></span>' +
+        '<span>采集执行器 <strong>' + countText(devices.collector_node_total) + '</strong></span>' +
+        '<span>功能点 <strong>' + countText(devices.device_point_total) + '</strong></span>' +
+        '<span>设备网关 <strong>' + countText(devices.gateway_total) + '</strong></span>' +
       '</div>';
-
-      // 第二行：设备状态 + 控制统计
-      html += '<div class="stat-grid" style="margin-top:16px">' +
-        '<div class="stat-card"><div class="stat-card-label">设备状态</div><div class="stat-card-value">' +
-          '<span style="color:var(--color-success)">正常 ' + countText(devices.normal_point_count) + '</span>' +
-          ' / <span style="color:var(--color-danger)">异常 ' + countText(devices.abnormal_point_count) + '</span>' +
-          ' / <span style="color:var(--color-text-muted)">离线 ' + countText(devices.offline_point_count) + '</span>' +
-        '</div><div class="stat-card-sub">已绑定 ' + countText(devices.bound_point_count) + ' / 未绑定 ' + countText(devices.unbound_point_count) + '</div></div>' +
-        '<div class="stat-card"><div class="stat-card-label">心跳成功率</div><div class="stat-card-value">' + (ingest.heartbeat_success_rate != null ? toText(ingest.heartbeat_success_rate) + '%' : '--') + '</div><div class="stat-card-sub">成功 ' + countText(ingest.heartbeat_success) + ' / 失败 ' + countText(ingest.heartbeat_failed) + '</div></div>' +
-        '<div class="stat-card"><div class="stat-card-label">控制命令</div><div class="stat-card-value">' + countText(control.control_command_count) + '</div><div class="stat-card-sub">成功 ' + countText(control.control_success_count) + ' / 失败 ' + countText(control.control_failed_count) + '</div></div>' +
-        '<div class="stat-card"><div class="stat-card-label">注册 / 遥测</div><div class="stat-card-value">' + countText(ingest.register_count) + ' / ' + countText(ingest.telemetry_count) + '</div><div class="stat-card-sub">原始报文 ' + countText(ingest.raw_event_count) + '</div></div>' +
-      '</div>';
-
-      // 图表区域
-      html += renderDashboardCharts(d);
 
       container.innerHTML = html;
     } catch (e) {
+      if (requestVersion !== dashboardRequestVersion || requestedRange !== currentDashboardRange) return;
       container.innerHTML = '<div class="error-state"><p>加载失败</p><button class="btn btn-outline btn-sm" onclick="renderPage()">重试</button></div>';
     }
   }
@@ -1257,48 +1291,57 @@
     var deviceTotal = normalCount + abnormalCount + offlineCount;
 
     // 数据接入
-    var registerCount = toNum(ingest.register_count) || 0;
-    var heartbeatCount = toNum(ingest.heartbeat_count) || toNum(ingest.heartbeat_success) || 0;
+    var rawEventCount = toNum(ingest.raw_event_count) || 0;
     var telemetryCount = toNum(ingest.telemetry_count) || toNum(ingest.work_data_count) || 0;
-    var ingestTotal = registerCount + heartbeatCount + telemetryCount;
 
     // 控制命令
-    var pendingCount = toNum(control.control_pending_count) || 0;
-    var sentCount = toNum(control.control_sent_count) || 0;
-    var succeededCount = toNum(control.control_succeeded_count) || 0;
-    var failedCount = (toNum(control.control_failed_count) || 0) + (toNum(control.control_timeout_count) || 0);
-    var controlTotal = pendingCount + sentCount + succeededCount + failedCount;
+    var controlTotal = toNum(control.control_command_count) || 0;
+    var succeededCount = toNum(control.control_success_count) || 0;
+    var failedCount = toNum(control.control_failed_count) || 0;
+    var timeoutCount = toNum(control.control_timeout_count) || 0;
+    var inProgressCount = Math.max(0, controlTotal - succeededCount - failedCount - timeoutCount);
 
-    var html = '<div class="chart-section">' +
-      '<h3>数据概览</h3>' +
-      '<p class="chart-section-note">统计以当前接口返回为准</p>' +
-      '<div class="chart-row">' +
-        '<div class="chart-card">' +
-          '<h4>设备状态</h4>' +
+    function priorityItem(level, title, value, detail, page) {
+      return '<button type="button" class="dashboard-priority-item ' + level + '" onclick="navigate(\'' + page + '\')">' +
+        '<span class="dashboard-priority-marker"></span><span><strong>' + escHtml(title) + '</strong><small>' + escHtml(detail) + '</small></span><b>' + value + '</b>' +
+      '</button>';
+    }
+
+    var priorities = '';
+    if (offlineCount > 0) priorities += priorityItem('danger', '离线功能点', offlineCount, '进入设备管理定位最后上报', 'gateways');
+    if (abnormalCount > 0) priorities += priorityItem('danger', '异常功能点', abnormalCount, '优先核对阈值、限位与设备状态', 'gateways');
+    if (failedCount + timeoutCount > 0) priorities += priorityItem('danger', '控制失败或超时', failedCount + timeoutCount, '进入控制日志查看最终状态', 'logs');
+    if (inProgressCount > 0) priorities += priorityItem('warning', '控制未终态', inProgressCount, '包含待发送、已下发或等待结果', 'logs');
+    if ((toNum(ingest.heartbeat_failed) || 0) > 0) priorities += priorityItem('warning', '心跳解析失败', toNum(ingest.heartbeat_failed) || 0, '进入原始报文排查协议和来源', 'payload-events');
+    if (!priorities) priorities = '<div class="dashboard-priority-empty"><strong>当前没有高优先级事项</strong><span>继续关注设备状态和数据链路变化。</span></div>';
+
+    var html = '<div class="dashboard-overview-grid">' +
+      '<section class="dashboard-visual-panel">' +
+        '<div class="dashboard-section-head"><div><h3>健康与数据链路</h3><p>状态分布为当前快照，接入与控制为所选区间</p></div></div>' +
+        '<div class="dashboard-chart-pair">' +
+          '<div class="dashboard-chart-card"><h4>设备健康分布</h4>' +
           '<div class="bar-chart" id="chart-device-status">' +
             barRow('正常', normalCount, deviceTotal, 'bar-fill-success') +
             barRow('异常', abnormalCount, deviceTotal, 'bar-fill-danger') +
             barRow('离线', offlineCount, deviceTotal, 'bar-fill-muted') +
-          '</div>' +
-        '</div>' +
-        '<div class="chart-card">' +
-          '<h4>数据接入</h4>' +
-          '<div class="bar-chart" id="chart-data-ingest">' +
-            barRow('注册', registerCount, ingestTotal, 'bar-fill-info') +
-            barRow('心跳', heartbeatCount, ingestTotal, 'bar-fill-success') +
-            barRow('工作数据', telemetryCount, ingestTotal, 'bar-fill-warning') +
-          '</div>' +
-        '</div>' +
-        '<div class="chart-card">' +
-          '<h4>控制命令</h4>' +
+          '</div></div>' +
+          '<div class="dashboard-chart-card"><h4>控制结果分布</h4>' +
           '<div class="bar-chart" id="chart-control-cmd">' +
-            barRow('pending', pendingCount, controlTotal, 'bar-fill-warning') +
-            barRow('sent', sentCount, controlTotal, 'bar-fill-info') +
-            barRow('succeeded', succeededCount, controlTotal, 'bar-fill-success') +
-            barRow('failed/timeout', failedCount, controlTotal, 'bar-fill-danger') +
-          '</div>' +
+            barRow('成功', succeededCount, controlTotal, 'bar-fill-success') +
+            barRow('失败', failedCount, controlTotal, 'bar-fill-danger') +
+            barRow('超时', timeoutCount, controlTotal, 'bar-fill-warning') +
+            barRow('未终态', inProgressCount, controlTotal, 'bar-fill-muted') +
+          '</div></div>' +
         '</div>' +
-      '</div>' +
+        '<div class="dashboard-pipeline" id="chart-data-ingest" aria-label="数据链路计数">' +
+          '<div><span>Raw 接收事实</span><strong>' + rawEventCount + '</strong><small>原始报文，不与投影相加</small></div>' +
+          '<span class="dashboard-pipeline-arrow">→</span>' +
+          '<div><span>业务投影</span><strong>' + telemetryCount + '</strong><small>成功写入的 telemetry 行</small></div>' +
+          '<span class="dashboard-pipeline-arrow">·</span>' +
+          '<div><span>心跳解析率</span><strong>' + (ingest.heartbeat_success_rate != null ? escHtml(toText(ingest.heartbeat_success_rate)) + '%' : '--') + '</strong><small>成功 ' + countText(ingest.heartbeat_success) + ' / 失败 ' + countText(ingest.heartbeat_failed) + '</small></div>' +
+        '</div>' +
+      '</section>' +
+      '<aside class="dashboard-priority-list"><div class="dashboard-section-head"><div><h3>优先处理</h3><p>按风险聚合，可直接下钻</p></div></div>' + priorities + '</aside>' +
     '</div>';
 
     return html;
@@ -1413,89 +1456,328 @@
   }
 
   // ---------- 农户详情页 ----------
-  async function renderFarmerDetail(container) {
-    var userId = getHashParam('user_id');
-    if (!userId) { container.innerHTML = '<div class="error-state"><p>参数错误</p></div>'; return; }
+  function normalizeFarmerDevice(device) {
+    device = device || {};
+    return {
+      pointId: toText(device.point_id),
+      nodeId: toText(device.node_id),
+      nodeName: toText(device.node_name || '采集执行器'),
+      gatewayId: toText(device.gateway_id),
+      gatewayName: toText(device.gateway_name || '设备网关'),
+      accessModeLabel: toText(device.gateway_access_mode_label),
+      shedNo: toText(device.shed_no),
+      frequency: toText(device.freq),
+      deviceExternalId: toText(device.devid),
+      functionName: toText(device.func_name || getFunctionTypeName(device.func)),
+      realValue: toFloat(device.real_value),
+      unit: toText(device.unit),
+      valueStatus: toNum(device.value_status),
+      valueStatusLabel: toText(device.value_status_label || '状态未知'),
+      runModeLabel: toText(device.run_mode_label || '--'),
+      updatedAt: toText(device.updated_at)
+    };
+  }
 
-    container.innerHTML = '<div class="loading-state"><div class="loading-spinner"></div><p>加载中...</p></div>';
+  function farmerDeviceStatusClass(device) {
+    if (device.valueStatus === 1) return 'badge-success';
+    if (device.valueStatus === 2) return 'badge-warning';
+    if (device.valueStatus === 3) return 'badge-danger';
+    if (device.valueStatus === 6) return 'badge-muted';
+    return 'badge-info';
+  }
+
+  function farmerDeviceValue(device) {
+    if (device.realValue === null) return '--';
+    return toText(device.realValue) + (device.unit ? ' ' + device.unit : '');
+  }
+
+  function farmerShedLabel(shedNo) {
+    var label = toText(shedNo).trim();
+    if (!label) return '';
+    if (/棚$/.test(label)) return label;
+    if (/号$/.test(label)) return label + '棚';
+    return label + '号棚';
+  }
+
+  function renderFarmerDeviceOption(device) {
+    return '<button type="button" class="farmer-device-option" data-point-id="' + escHtml(device.pointId) + '" aria-pressed="false">' +
+      '<span class="farmer-device-option-head"><strong>' + escHtml(device.functionName) + '</strong><span class="badge ' + farmerDeviceStatusClass(device) + '">' + escHtml(device.valueStatusLabel) + '</span></span>' +
+      '<span class="farmer-device-option-value">' + escHtml(farmerDeviceValue(device)) + '</span>' +
+      '<span class="farmer-device-option-meta">' + escHtml(device.shedNo ? farmerShedLabel(device.shedNo) + ' · ' : '') + escHtml(device.nodeName) + '</span>' +
+      '<span class="farmer-device-option-time">' + escHtml(formatBeijingTime(device.updatedAt)) + '</span>' +
+    '</button>';
+  }
+
+  function renderFarmerPointPanel(device) {
+    var ranges = [
+      { value: '1h', label: '1h' },
+      { value: '6h', label: '6h' },
+      { value: '1d', label: '1d' },
+      { value: '7d', label: '7d' },
+      { value: '30d', label: '30d' }
+    ];
+    return '<div class="farmer-current-head">' +
+        '<div><span class="farmer-eyebrow">当前功能点</span><h3>' + escHtml(device.functionName) + '</h3></div>' +
+        '<span class="badge ' + farmerDeviceStatusClass(device) + '">' + escHtml(device.valueStatusLabel) + '</span>' +
+      '</div>' +
+      '<div class="farmer-current-grid">' +
+        '<div class="farmer-current-value"><span>当前值</span><strong>' + escHtml(farmerDeviceValue(device)) + '</strong></div>' +
+        '<div><span>运行模式</span><strong>' + escHtml(device.runModeLabel) + '</strong></div>' +
+        '<div><span>更新时间（北京时间）</span><strong>' + escHtml(formatBeijingTime(device.updatedAt)) + '</strong></div>' +
+        '<div><span>设备位置</span><strong>' + escHtml((device.shedNo ? farmerShedLabel(device.shedNo) + ' · ' : '') + device.gatewayName + ' / ' + device.nodeName) + '</strong></div>' +
+      '</div>' +
+      '<div class="farmer-point-identifiers">' +
+        '<span>Point ' + escHtml(device.pointId || '--') + '</span>' +
+        '<span>Node ' + escHtml(device.nodeId || '--') + '</span>' +
+        '<span>Gateway ' + escHtml(device.gatewayId || '--') + '</span>' +
+        (device.frequency ? '<span>频点 ' + escHtml(device.frequency) + '</span>' : '') +
+        (device.deviceExternalId ? '<span>DevID ' + escHtml(device.deviceExternalId) + '</span>' : '') +
+      '</div>' +
+      '<div class="farmer-history-head">' +
+        '<div><h4>历史曲线</h4><p>采样时间统一按北京时间展示</p></div>' +
+        '<div class="farmer-range-tabs" role="group" aria-label="历史时间范围">' +
+          ranges.map(function (range) {
+            var active = range.value === farmerWorkbenchState.range;
+            return '<button type="button" class="farmer-range-button' + (active ? ' is-active' : '') + '" data-range="' + range.value + '" aria-pressed="' + (active ? 'true' : 'false') + '">' + range.label + '</button>';
+          }).join('') +
+        '</div>' +
+      '</div>' +
+      '<div id="farmer-history-panel" class="farmer-history-panel"><div class="farmer-inline-state"><div class="loading-spinner"></div><span>加载历史数据...</span></div></div>';
+  }
+
+  function renderFarmerHistoryChart(history, device, range) {
+    history = history || {};
+    var samples = (history.points || []).map(function (point) {
+      var value = toFloat(point.value != null ? point.value : point.real_temp);
+      var time = new Date(point.time).getTime();
+      if (value === null || isNaN(time)) return null;
+      return { value: value, time: time, rawTime: point.time };
+    }).filter(function (point) { return point !== null; }).sort(function (a, b) { return a.time - b.time; });
+
+    function formatChartNumber(value) {
+      if (!Number.isFinite(value)) return '--';
+      return value.toFixed(1).replace(/\.0$/, '');
+    }
+
+    if (!samples.length) {
+      return '<div class="farmer-history-empty"><strong>所选范围暂无历史数据</strong><span>当前值仍可用；有新采样后曲线会自动出现。</span></div>';
+    }
+
+    var width = 760;
+    var height = 260;
+    var left = 52;
+    var right = 18;
+    var top = 18;
+    var bottom = 42;
+    var plotWidth = width - left - right;
+    var plotHeight = height - top - bottom;
+    var values = samples.map(function (sample) { return sample.value; });
+    var bestMin = toFloat(history.best_min);
+    var bestMax = toFloat(history.best_max);
+    if (bestMin !== null) values.push(bestMin);
+    if (bestMax !== null) values.push(bestMax);
+    var minValue = Math.min.apply(Math, values);
+    var maxValue = Math.max.apply(Math, values);
+    if (minValue === maxValue) {
+      minValue -= 1;
+      maxValue += 1;
+    }
+    var padding = (maxValue - minValue) * 0.1;
+    minValue -= padding;
+    maxValue += padding;
+    var startTime = samples[0].time;
+    var endTime = samples[samples.length - 1].time;
+    var timeSpan = Math.max(1, endTime - startTime);
+    function xFor(sample) { return left + ((sample.time - startTime) / timeSpan) * plotWidth; }
+    function yFor(value) { return top + ((maxValue - value) / (maxValue - minValue)) * plotHeight; }
+    var path = samples.map(function (sample, index) {
+      return (index === 0 ? 'M' : 'L') + xFor(sample).toFixed(1) + ' ' + yFor(sample.value).toFixed(1);
+    }).join(' ');
+    var grid = '';
+    for (var i = 0; i <= 4; i += 1) {
+      var y = top + (plotHeight / 4) * i;
+      var labelValue = maxValue - ((maxValue - minValue) / 4) * i;
+      grid += '<line x1="' + left + '" y1="' + y.toFixed(1) + '" x2="' + (width - right) + '" y2="' + y.toFixed(1) + '" class="farmer-chart-grid" />' +
+        '<text x="' + (left - 8) + '" y="' + (y + 4).toFixed(1) + '" text-anchor="end" class="farmer-chart-label">' + escHtml(labelValue.toFixed(1)) + '</text>';
+    }
+    function thresholdLine(value, label) {
+      if (value === null) return '';
+      var y = yFor(value);
+      return '<line x1="' + left + '" y1="' + y.toFixed(1) + '" x2="' + (width - right) + '" y2="' + y.toFixed(1) + '" class="farmer-chart-threshold" />' +
+        '<text x="' + (width - right - 4) + '" y="' + (y - 5).toFixed(1) + '" text-anchor="end" class="farmer-chart-threshold-label">' + escHtml(label + ' ' + toText(value)) + '</text>';
+    }
+    var dots = samples.length <= 48 ? samples.map(function (sample) {
+      return '<circle cx="' + xFor(sample).toFixed(1) + '" cy="' + yFor(sample.value).toFixed(1) + '" r="2.5"><title>' + escHtml(formatBeijingTime(sample.rawTime) + ' · ' + formatChartNumber(sample.value) + (device.unit || '')) + '</title></circle>';
+    }).join('') : '';
+    var summary = '共 ' + samples.length + ' 个采样 · 最低 ' + formatChartNumber(Math.min.apply(Math, samples.map(function (sample) { return sample.value; }))) + (device.unit || '') + ' · 最高 ' + formatChartNumber(Math.max.apply(Math, samples.map(function (sample) { return sample.value; }))) + (device.unit || '');
+
+    return '<div class="farmer-chart-summary"><span>' + escHtml(summary) + '</span><span>范围 ' + escHtml(range) + '</span></div>' +
+      '<svg class="farmer-history-chart" viewBox="0 0 ' + width + ' ' + height + '" role="img" aria-label="' + escHtml(device.functionName + '历史曲线，' + summary) + '">' +
+        grid + thresholdLine(bestMin, '适宜下限') + thresholdLine(bestMax, '适宜上限') +
+        '<path d="' + path + '" class="farmer-chart-line" />' +
+        '<g class="farmer-chart-dots">' + dots + '</g>' +
+        '<text x="' + left + '" y="' + (height - 13) + '" text-anchor="start" class="farmer-chart-label">' + escHtml(formatBeijingTime(samples[0].rawTime, false)) + '</text>' +
+        '<text x="' + (width - right) + '" y="' + (height - 13) + '" text-anchor="end" class="farmer-chart-label">' + escHtml(formatBeijingTime(samples[samples.length - 1].rawTime, false)) + '</text>' +
+      '</svg>';
+  }
+
+  function bindFarmerHistoryRanges(container, device) {
+    Array.prototype.forEach.call(container.querySelectorAll('.farmer-range-button'), function (button) {
+      button.addEventListener('click', function () {
+        farmerWorkbenchState.range = toText(button.getAttribute('data-range')) || '1d';
+        Array.prototype.forEach.call(container.querySelectorAll('.farmer-range-button'), function (candidate) {
+          var active = candidate === button;
+          candidate.classList.toggle('is-active', active);
+          candidate.setAttribute('aria-pressed', active ? 'true' : 'false');
+        });
+        loadFarmerDeviceHistory(container, device);
+      });
+    });
+  }
+
+  async function loadFarmerDeviceHistory(container, device) {
+    var panel = container.querySelector('#farmer-history-panel');
+    if (!panel) return;
+    var userId = farmerWorkbenchState.userId;
+    var pointId = device.pointId;
+    var range = farmerWorkbenchState.range;
+    var requestVersion = ++farmerWorkbenchState.requestVersion;
+    panel.innerHTML = '<div class="farmer-inline-state"><div class="loading-spinner"></div><span>加载历史数据...</span></div>';
+    try {
+      var response = await NHApi.getFarmerDeviceHistory(userId, pointId, range);
+      if (requestVersion !== farmerWorkbenchState.requestVersion || userId !== farmerWorkbenchState.userId || pointId !== farmerWorkbenchState.selectedPointId || range !== farmerWorkbenchState.range) return;
+      panel.innerHTML = renderFarmerHistoryChart(response.data, device, range);
+    } catch (e) {
+      if (requestVersion !== farmerWorkbenchState.requestVersion || userId !== farmerWorkbenchState.userId || pointId !== farmerWorkbenchState.selectedPointId || range !== farmerWorkbenchState.range) return;
+      panel.innerHTML = '<div class="farmer-history-error"><strong>历史数据加载失败</strong><span>' + escHtml(e.message || '网络异常') + '</span><button type="button" class="btn btn-outline btn-sm js-history-retry">重试</button></div>';
+      var retryButton = panel.querySelector('.js-history-retry');
+      if (retryButton) retryButton.addEventListener('click', function () { loadFarmerDeviceHistory(container, device); });
+    }
+  }
+
+  function activateFarmerDevice(container, pointId) {
+    var device = farmerWorkbenchState.devices.filter(function (candidate) { return candidate.pointId === pointId; })[0];
+    if (!device) return;
+    farmerWorkbenchState.selectedPointId = pointId;
+    Array.prototype.forEach.call(container.querySelectorAll('.farmer-device-option'), function (button) {
+      var active = toText(button.getAttribute('data-point-id')) === pointId;
+      button.classList.toggle('is-active', active);
+      button.setAttribute('aria-pressed', active ? 'true' : 'false');
+    });
+    var workspace = container.querySelector('#farmer-point-workspace');
+    if (!workspace) return;
+    workspace.innerHTML = renderFarmerPointPanel(device);
+    bindFarmerHistoryRanges(container, device);
+    loadFarmerDeviceHistory(container, device);
+  }
+
+  function renderFarmerBindings(bindings) {
+    var rows = bindings.map(function (b) {
+      var target = '--';
+      var pointInfo = '--';
+      if (b.bindingType === 'gateway') {
+        target = escHtml(b.gatewayName || '--') + ' <span class="badge ' + gatewayAccessModeBadgeClass(b.gatewayAccessMode) + '">' + escHtml(b.gatewayAccessModeLabel || gatewayAccessModeLabel(b.gatewayAccessMode)) + '</span>';
+      } else if (b.bindingType === 'collector') {
+        target = escHtml(b.gatewayName || '--');
+        pointInfo = escHtml((b.nodeName || '采集执行器') + (b.nodeId ? ' (' + b.nodeId + ')' : '') + (b.frequency ? ' · 频点' + b.frequency : '') + (b.deviceExternalId ? ' · DevID ' + b.deviceExternalId : ''));
+      } else {
+        target = escHtml(b.gatewayName || '--');
+        pointInfo = escHtml((b.pointName || '--') + (b.pointId ? ' (' + b.pointId + ')' : '') + (b.frequency ? ' · 频点' + b.frequency : ''));
+      }
+      return '<tr>' +
+        '<td><span class="badge ' + (b.bindingType === 'gateway' ? 'badge-info' : b.bindingType === 'collector' ? 'badge-warning' : 'badge-muted') + '">' + escHtml(b.bindingTypeLabel) + '</span></td>' +
+        '<td>' + target + '</td><td>' + pointInfo + '</td><td>' + escHtml(b.gatewayId || '--') + '</td>' +
+        '<td>' + formatTime(b.createdAt || b.created_at) + '</td>' +
+        '<td><button type="button" class="btn btn-danger btn-sm js-remove-binding" data-bind-id="' + escHtml(b.bindId || b.bind_id || '') + '">解绑</button></td>' +
+      '</tr>';
+    }).join('');
+    if (!rows) rows = '<tr><td colspan="6" class="table-empty">暂无绑定关系，可点击“新增绑定”添加设备网关、采集执行器或功能点。</td></tr>';
+    return rows;
+  }
+
+  async function renderFarmerDetail(container) {
+    var userId = toText(getHashParam('user_id'));
+    if (!userId) { container.innerHTML = '<div class="error-state"><p>参数错误</p></div>'; return; }
+    farmerWorkbenchState.userId = userId;
+    farmerWorkbenchState.selectedPointId = '';
+    farmerWorkbenchState.range = '1d';
+    farmerWorkbenchState.devices = [];
+    var requestVersion = ++farmerWorkbenchState.requestVersion;
+    container.innerHTML = '<div class="loading-state"><div class="loading-spinner"></div><p>加载农户数据工作台...</p></div>';
 
     try {
-      var farmerRes, bindingsRes;
-      await Promise.all([
+      var results = await Promise.all([
         NHApi.getFarmerDetail(userId),
+        NHApi.getFarmerDevices(userId).then(function (response) {
+          return { response: response, error: null };
+        }).catch(function (error) {
+          return { response: { data: [] }, error: error };
+        }),
         NHApi.getFarmerBindings(userId)
-      ]).then(function (results) {
-        farmerRes = results[0];
-        bindingsRes = results[1];
-      });
-
-      var farmer = farmerRes.data;
-      var bindings = (bindingsRes.data || []).map(normalizeBindingRecord);
-
+      ]);
+      if (requestVersion !== farmerWorkbenchState.requestVersion || userId !== farmerWorkbenchState.userId) return;
+      var farmer = results[0].data;
+      var deviceLoadError = results[1].error;
+      var devices = (results[1].response.data || []).map(normalizeFarmerDevice);
+      var bindings = (results[2].data || []).map(normalizeBindingRecord);
       if (!farmer) {
         container.innerHTML = '<div class="error-state"><p>农户不存在</p></div>';
         return;
       }
+      farmerWorkbenchState.devices = devices;
+      var preferred = devices.filter(function (device) { return device.valueStatus === 6; })[0] ||
+        devices.filter(function (device) { return device.valueStatus >= 2 && device.valueStatus <= 5; })[0] ||
+        devices.filter(function (device) { return device.valueStatus === 0 || device.valueStatus === null; })[0] || devices[0] || null;
+      farmerWorkbenchState.selectedPointId = preferred ? preferred.pointId : '';
+      var normalCount = devices.filter(function (device) { return device.valueStatus === 1; }).length;
+      var offlineCount = devices.filter(function (device) { return device.valueStatus === 6; }).length;
+      var abnormalCount = devices.filter(function (device) { return device.valueStatus >= 2 && device.valueStatus <= 5; }).length;
+      var unknownCount = devices.filter(function (device) { return device.valueStatus === 0 || device.valueStatus === null; }).length;
+      var latestTime = devices.reduce(function (latest, device) {
+        var time = new Date(device.updatedAt).getTime();
+        return isNaN(time) || time <= latest ? latest : time;
+      }, 0);
+      var farmerStatusClass = toNum(farmer.status) === 1 ? 'badge-success' : toNum(farmer.status) === 2 ? 'badge-warning' : 'badge-muted';
 
-      var html = '<div class="page-header">' +
-        '<button class="btn btn-outline btn-sm" onclick="navigate(\'users\')">← 返回用户列表</button>' +
+      var html = '<div class="farmer-profile-bar">' +
+        '<button type="button" class="btn btn-outline btn-sm" onclick="navigate(\'users\')">← 返回农户列表</button>' +
+        '<div class="farmer-profile-main"><div><span class="farmer-eyebrow">农户数据工作台</span><h2>' + escHtml(farmer.display_name || '未命名农户') + '</h2></div>' +
+        '<span class="badge ' + farmerStatusClass + '">' + escHtml(farmer.status_label || '状态未知') + '</span></div>' +
+        '<div class="farmer-profile-contact"><span>' + escHtml(farmer.mobile || '未填写手机号') + '</span><span>' + escHtml(farmer.address || '未填写地址') + '</span></div>' +
       '</div>' +
-      '<div class="info-card">' +
-        '<h3>基本信息</h3>' +
-        '<div class="info-grid">' +
-          '<div class="info-item"><label>姓名</label><span>' + escHtml(farmer.display_name) + '</span></div>' +
-          '<div class="info-item"><label>手机号</label><span>' + escHtml(farmer.mobile || '--') + '</span></div>' +
-          '<div class="info-item"><label>地址</label><span>' + escHtml(farmer.address || '--') + '</span></div>' +
-          '<div class="info-item"><label>微信OpenID</label><span>' + escHtml(farmer.wechat_openid || '--') + '</span></div>' +
-          '<div class="info-item"><label>备注</label><span>' + escHtml(farmer.remark || '--') + '</span></div>' +
-          '<div class="info-item"><label>状态</label><span class="badge badge-success">' + escHtml(farmer.status_label || '正常') + '</span></div>' +
-          '<div class="info-item"><label>创建时间</label><span>' + formatTime(farmer.created_at) + '</span></div>' +
+      '<section class="farmer-workbench" aria-label="农户设备数据工作台">' +
+        '<div class="farmer-summary-strip">' +
+          '<div><span>功能点</span><strong>' + devices.length + '</strong></div>' +
+          '<div><span>正常</span><strong class="text-success">' + normalCount + '</strong></div>' +
+          '<div><span>异常</span><strong class="text-danger">' + abnormalCount + '</strong></div>' +
+          '<div><span>离线</span><strong class="text-muted">' + offlineCount + '</strong></div>' +
+          '<div><span>未知</span><strong class="text-muted">' + unknownCount + '</strong></div>' +
+          '<div><span>最近采样（北京时间）</span><strong>' + escHtml(latestTime ? formatBeijingTime(new Date(latestTime).toISOString()) : '--') + '</strong></div>' +
         '</div>' +
-      '</div>';
-
-      // 已绑定设备列表
-      html += '<div class="table-section">' +
-        '<div class="table-header">' +
-          '<h3>已绑定设备 (' + bindings.length + ')</h3>' +
-          '<button class="btn btn-primary btn-sm" id="btn-bind-device" onclick="openBindDeviceModal(\'' + userId + '\')">+ 新增绑定</button>' +
-        '</div>' +
-        '<div class="table-wrap"><table><thead><tr>' +
-          '<th>绑定类型</th><th>绑定对象</th><th>关联功能点</th><th>网关ID</th><th>绑定时间</th><th>操作</th>' +
-        '</tr></thead><tbody>';
-
-      bindings.forEach(function (b) {
-        var target = '--';
-        var pointInfo = '--';
-        if (b.bindingType === 'gateway') {
-          target = escHtml(b.gatewayName || '--') + ' <span class="badge ' + gatewayAccessModeBadgeClass(b.gatewayAccessMode) + '">' + escHtml(b.gatewayAccessModeLabel || gatewayAccessModeLabel(b.gatewayAccessMode)) + '</span>';
-        } else if (b.bindingType === 'collector') {
-          target = escHtml(b.gatewayName || '--');
-          pointInfo = escHtml((b.nodeName || '采集执行器') + (b.nodeId ? ' (' + b.nodeId + ')' : '')) + (b.frequency ? ' · 频点' + b.frequency : '') + (b.deviceExternalId ? ' · DevID ' + escHtml(b.deviceExternalId) : '');
-        } else {
-          target = escHtml(b.gatewayName || '--');
-          pointInfo = escHtml((b.pointName || '--') + (b.pointId ? ' (' + b.pointId + ')' : '')) + (b.frequency ? ' · 频点' + b.frequency : '');
-        }
-
-        html += '<tr>' +
-          '<td><span class="badge ' + (b.bindingType === 'gateway' ? 'badge-info' : b.bindingType === 'collector' ? 'badge-warning' : 'badge-muted') + '">' + escHtml(b.bindingTypeLabel) + '</span></td>' +
-          '<td>' + target + '</td>' +
-          '<td>' + pointInfo + '</td>' +
-          '<td>' + escHtml((b.gatewayId || '--')) + '</td>' +
-          '<td>' + formatTime(b.createdAt || b.created_at) + '</td>' +
-          '<td><button class="btn btn-danger btn-sm js-remove-binding" data-bind-id="' + escHtml(b.bindId || b.bind_id || '') + '">解绑</button></td>' +
-        '</tr>';
-      });
-
-      html += '</tbody></table></div></div>';
-
-      if (bindings.length === 0) {
-        html += '<div class="empty-state"><p>暂无绑定关系</p><p style="font-size:12px;color:var(--color-text-muted)">点击“新增绑定”为该农户添加设备网关、采集执行器或功能点。</p></div>';
-      }
+        (deviceLoadError ? '<div class="farmer-device-empty farmer-device-load-error"><strong>设备数据暂时加载失败</strong><span>' + escHtml(deviceLoadError.message || '网络异常') + '；农户资料和绑定管理仍可使用。</span><button type="button" class="btn btn-outline btn-sm" onclick="renderPage()">重试设备数据</button></div>' :
+          devices.length ? '<div class="farmer-workbench-grid"><aside class="farmer-device-rail" aria-label="功能点列表">' + devices.map(renderFarmerDeviceOption).join('') + '</aside><div id="farmer-point-workspace" class="farmer-point-workspace"></div></div>' : '<div class="farmer-device-empty"><strong>该农户暂无可查看的设备点</strong><span>可在下方新增绑定；设备完成上报后会展示实时值与历史曲线。</span></div>') +
+      '</section>' +
+      '<div class="info-card farmer-profile-details"><div class="table-header"><h3>账户资料</h3></div><div class="info-grid">' +
+        '<div class="info-item"><label>用户 ID</label><span>' + escHtml(toText(farmer.user_id) || userId) + '</span></div>' +
+        '<div class="info-item"><label>微信 OpenID</label><span class="farmer-break-all">' + escHtml(farmer.wechat_openid || '--') + '</span></div>' +
+        '<div class="info-item"><label>备注</label><span>' + escHtml(farmer.remark || '--') + '</span></div>' +
+        '<div class="info-item"><label>创建时间</label><span>' + formatTime(farmer.created_at) + '</span></div>' +
+      '</div></div>' +
+      '<div class="table-section farmer-bindings-section"><div class="table-header"><h3>绑定关系 <span class="table-count">' + bindings.length + ' 条</span></h3>' +
+        '<button type="button" class="btn btn-primary btn-sm" id="btn-bind-device">+ 新增绑定</button></div>' +
+        '<div class="table-wrap"><table><thead><tr><th>绑定类型</th><th>绑定对象</th><th>关联功能点</th><th>网关 ID</th><th>绑定时间</th><th>操作</th></tr></thead><tbody>' + renderFarmerBindings(bindings) + '</tbody></table></div></div>';
 
       container.innerHTML = html;
+      var bindButton = container.querySelector('#btn-bind-device');
+      if (bindButton) bindButton.addEventListener('click', function () { openBindDeviceModal(userId); });
       bindRemoveButtons(container);
+      Array.prototype.forEach.call(container.querySelectorAll('.farmer-device-option'), function (button) {
+        button.addEventListener('click', function () { activateFarmerDevice(container, toText(button.getAttribute('data-point-id'))); });
+      });
+      if (preferred) activateFarmerDevice(container, preferred.pointId);
     } catch (e) {
-      container.innerHTML = '<div class="error-state"><p>加载失败</p><button class="btn btn-outline btn-sm" onclick="renderPage()">重试</button></div>';
+      if (requestVersion !== farmerWorkbenchState.requestVersion || userId !== farmerWorkbenchState.userId) return;
+      container.innerHTML = '<div class="error-state"><p>农户数据工作台加载失败：' + escHtml(e.message || '网络异常') + '</p><button class="btn btn-outline btn-sm" onclick="renderPage()">重试</button></div>';
     }
   }
 
@@ -3805,14 +4087,10 @@
   setInterval(updateClock, 1000);
   updateClock();
 
-  // 版本号（控制台 + 页脚 + 右下角浮标）
+  // 版本号（控制台 + 侧边栏页脚）
   console.info('%c涅凰智农 IoT v' + (window.APP_VERSION_STRING || '?'), 'color:#2ecc71;font-weight:bold');
-  // 侧边栏页脚
   var versionEl = document.getElementById('app-version');
-  if (versionEl) versionEl.textContent = 'v' + (window.APP_VERSION || '?');
-  // 登录页也能看到的右下角浮标
-  var badge = document.getElementById('version-badge');
-  if (badge && window.APP_VERSION) badge.textContent = 'v' + window.APP_VERSION;
+  if (versionEl) versionEl.textContent = window.APP_VERSION || '?';
 
   window.addEventListener('hashchange', renderPage);
   window.addEventListener('load', function () {

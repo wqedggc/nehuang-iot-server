@@ -830,6 +830,7 @@ ORDER BY cn.node_id ASC, dp.updated_at DESC`, userID, userID, userID)
 const checkBindRelationQuery = `SELECT COUNT(*)
  FROM device_points dp
  WHERE dp.point_id = ?
+   AND dp.point_status = 1
    AND (
      EXISTS (
        SELECT 1 FROM bind_relations br
@@ -855,33 +856,51 @@ func (r *Repository) CheckBindRelation(ctx context.Context, userID uint64, point
 	return count > 0, err
 }
 
+const getMiniDeviceHistoryQuery = `
+SELECT sd.sampled_at_ms, sd.real_temp, COALESCE(sd.real_value, sd.real_temp)
+FROM sensor_data sd
+JOIN (
+  SELECT MAX(sampled_at_ms) AS sampled_at_ms
+  FROM sensor_data
+  WHERE point_id = ? AND sampled_at_ms >= ?
+  GROUP BY FLOOR(UNIX_TIMESTAMP(sampled_at_ms) / ?)
+) buckets ON buckets.sampled_at_ms = sd.sampled_at_ms
+WHERE sd.point_id = ?
+ORDER BY sd.sampled_at_ms ASC
+LIMIT 500`
+
 // GetMiniDeviceHistory 获取功能点历史曲线数据。
+// 每个时间桶保留最后一条样本，在 MySQL 5.7/8.0 下都能覆盖完整查询范围，
+// 同时把响应上限控制在 500 点以内；离散状态不会被平均成不存在的中间值。
 func (r *Repository) GetMiniDeviceHistory(ctx context.Context, pointID uint64, rangeType string) ([]domain.MiniHistoryPoint, error) {
 	// 根据 range 计算时间范围。
 	var since time.Time
+	var bucketSeconds int
 	switch rangeType {
 	case "1h":
 		since = time.Now().Add(-1 * time.Hour)
+		bucketSeconds = 60
 	case "6h":
 		since = time.Now().Add(-6 * time.Hour)
+		bucketSeconds = 60
 	case "1d", "24h":
 		since = time.Now().Add(-24 * time.Hour)
+		bucketSeconds = 300
 	case "3d":
 		since = time.Now().Add(-3 * 24 * time.Hour)
+		bucketSeconds = 900
 	case "7d":
 		since = time.Now().Add(-7 * 24 * time.Hour)
+		bucketSeconds = 1800
 	case "30d":
 		since = time.Now().Add(-30 * 24 * time.Hour)
+		bucketSeconds = 7200
 	default:
 		since = time.Now().Add(-24 * time.Hour)
+		bucketSeconds = 300
 	}
 
-	rows, err := r.db.QueryContext(ctx, `
-SELECT sampled_at_ms, real_temp
-FROM sensor_data
-WHERE point_id = ? AND sampled_at_ms >= ?
-ORDER BY sampled_at_ms ASC
-LIMIT 500`, pointID, since)
+	rows, err := r.db.QueryContext(ctx, getMiniDeviceHistoryQuery, pointID, since, bucketSeconds, pointID)
 	if err != nil {
 		return nil, err
 	}
@@ -891,7 +910,7 @@ LIMIT 500`, pointID, since)
 	for rows.Next() {
 		var p domain.MiniHistoryPoint
 		var t time.Time
-		if err := rows.Scan(&t, &p.RealTemp); err != nil {
+		if err := rows.Scan(&t, &p.RealTemp, &p.Value); err != nil {
 			return nil, err
 		}
 		p.Time = t.UTC().Format("2006-01-02T15:04:05.000Z")

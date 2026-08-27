@@ -177,12 +177,18 @@ func (s *Server) Routes() http.Handler {
 		authMiddleware(secret, adminRoles(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// 路由分发：
 			// GET  /api/v1/admin/farmers/{user_id}/bindings → 农户绑定列表
+			// GET  /api/v1/admin/farmers/{user_id}/devices  → 农户设备数据摘要
+			// GET  /api/v1/admin/farmers/{user_id}/devices/{point_id}/history → 农户作用域历史
 			// GET  /api/v1/admin/farmers/{user_id}          → 农户详情
 			// PATCH /api/v1/admin/farmers/{user_id}         → 编辑农户资料
 			path := r.URL.Path
 			if r.Method == http.MethodGet {
-				if hasSuffix(path, "/bindings") {
+				if hasSuffix(path, "/history") {
+					ah.handleFarmerDeviceHistory(w, r)
+				} else if hasSuffix(path, "/bindings") {
 					ah.handleFarmerBindings(w, r)
+				} else if hasSuffix(path, "/devices") {
+					ah.handleFarmerDevices(w, r)
 				} else {
 					ah.handleFarmerDetail(w, r)
 				}
