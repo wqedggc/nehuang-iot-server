@@ -1078,14 +1078,15 @@
       sections[i].style.display = sections[i].id === 'help-' + activeSection ? '' : 'none';
     }
 
-    var target = document.getElementById('help-' + activeSection);
-    if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
   function renderPage() {
     var route = parseHash();
     currentPage = route.page;
     var container = $('#main-content');
+    window.scrollTo(0, 0);
+    container.scrollTop = 0;
+    document.body.classList.toggle('is-login-page', route.page === 'login');
 
     if (route.page !== 'login' && !localStorage.getItem('nh_admin_token')) {
       // 检测是否有 mini token 但没有 admin token → 提示权限不足
@@ -1117,22 +1118,31 @@
   function renderLogin(container) {
     $('#sidebar').style.display = 'none';
     container.innerHTML =
-      '<div style="display:flex;align-items:center;justify-content:center;min-height:80vh">' +
-        '<div style="width:360px;background:var(--color-surface);border-radius:var(--radius-lg);box-shadow:var(--shadow-md);padding:36px 28px">' +
-          '<div style="text-align:center;margin-bottom:24px">' +
-            '<h2 style="font-size:22px;font-weight:700;color:var(--color-primary-dark)">涅凰智农</h2>' +
-            '<p style="font-size:13px;color:var(--color-text-muted);margin-top:4px">管理后台</p>' +
+      '<div class="admin-login-page">' +
+        '<section class="admin-login-brand" aria-labelledby="admin-login-brand-title">' +
+          '<span class="admin-login-kicker">NEHUANG FIELD OPERATIONS</span>' +
+          '<h2 id="admin-login-brand-title">让每一个田间状态<br>都有清晰上下文</h2>' +
+          '<p>统一查看设备健康、农户授权、原始报文与控制闭环。</p>' +
+          '<div class="admin-login-capabilities" aria-label="控制台能力">' +
+            '<span>设备运行</span><span>接入诊断</span><span>权限治理</span>' +
+          '</div>' +
+        '</section>' +
+        '<section class="admin-login-panel" aria-labelledby="admin-login-title">' +
+          '<div class="admin-login-mark" aria-hidden="true">N</div>' +
+          '<span class="admin-login-panel-kicker">SECURE CONSOLE</span>' +
+          '<h1 id="admin-login-title">登录田间控制台</h1>' +
+          '<p class="admin-login-copy">使用管理员账号进入涅凰智农运营工作台。</p>' +
+          '<div class="form-group">' +
+            '<label class="form-label" for="login-username">用户名</label>' +
+            '<input class="form-input" id="login-username" type="text" autocomplete="username" placeholder="请输入用户名">' +
           '</div>' +
           '<div class="form-group">' +
-            '<label class="form-label">用户名</label>' +
-            '<input class="form-input" id="login-username" type="text" placeholder="请输入用户名">' +
+            '<label class="form-label" for="login-password">密码</label>' +
+            '<input class="form-input" id="login-password" type="password" autocomplete="current-password" placeholder="请输入密码">' +
           '</div>' +
-          '<div class="form-group">' +
-            '<label class="form-label">密码</label>' +
-            '<input class="form-input" id="login-password" type="password" placeholder="请输入密码">' +
-          '</div>' +
-          '<button class="btn btn-primary btn-block" id="login-submit" style="margin-top:8px">登录</button>' +
-        '</div>' +
+          '<button class="btn btn-primary btn-block admin-login-submit" id="login-submit">登录控制台</button>' +
+          '<p class="admin-login-security">身份信息只用于本次安全认证。</p>' +
+        '</section>' +
       '</div>';
 
     // Safari 安全策略：innerHTML 动态插入的 password input 会丢失 value
@@ -1148,7 +1158,6 @@
       var password = ($('#login-password') || {}).value || '';
       username = (username || '').trim();
       password = (password || '').trim();
-      console.debug('[Login] username=', username, 'password_len=', password.length);
       if (!username || !password) { showToast('请输入用户名和密码', 'error'); return; }
       doAdminLogin(username, password);
     };
@@ -1182,7 +1191,7 @@
       showToast(msg, 'error');
     } finally {
       btn.disabled = false;
-      btn.textContent = '登录';
+      btn.textContent = '登录控制台';
     }
   }
 
@@ -1317,15 +1326,15 @@
 
     var html = '<div class="dashboard-overview-grid">' +
       '<section class="dashboard-visual-panel">' +
-        '<div class="dashboard-section-head"><div><h3>健康与数据链路</h3><p>状态分布为当前快照，接入与控制为所选区间</p></div></div>' +
+        '<div class="dashboard-section-head"><div><h2>健康与数据链路</h2><p>状态分布为当前快照，接入与控制为所选区间</p></div></div>' +
         '<div class="dashboard-chart-pair">' +
-          '<div class="dashboard-chart-card"><h4>设备健康分布</h4>' +
+          '<div class="dashboard-chart-card"><h3>设备健康分布</h3>' +
           '<div class="bar-chart" id="chart-device-status">' +
             barRow('正常', normalCount, deviceTotal, 'bar-fill-success') +
             barRow('异常', abnormalCount, deviceTotal, 'bar-fill-danger') +
             barRow('离线', offlineCount, deviceTotal, 'bar-fill-muted') +
           '</div></div>' +
-          '<div class="dashboard-chart-card"><h4>控制结果分布</h4>' +
+          '<div class="dashboard-chart-card"><h3>控制结果分布</h3>' +
           '<div class="bar-chart" id="chart-control-cmd">' +
             barRow('成功', succeededCount, controlTotal, 'bar-fill-success') +
             barRow('失败', failedCount, controlTotal, 'bar-fill-danger') +
@@ -1341,7 +1350,7 @@
           '<div><span>心跳解析率</span><strong>' + (ingest.heartbeat_success_rate != null ? escHtml(toText(ingest.heartbeat_success_rate)) + '%' : '--') + '</strong><small>成功 ' + countText(ingest.heartbeat_success) + ' / 失败 ' + countText(ingest.heartbeat_failed) + '</small></div>' +
         '</div>' +
       '</section>' +
-      '<aside class="dashboard-priority-list"><div class="dashboard-section-head"><div><h3>优先处理</h3><p>按风险聚合，可直接下钻</p></div></div>' + priorities + '</aside>' +
+      '<aside class="dashboard-priority-list"><div class="dashboard-section-head"><div><h2>优先处理</h2><p>按风险聚合，可直接下钻</p></div></div>' + priorities + '</aside>' +
     '</div>';
 
     return html;

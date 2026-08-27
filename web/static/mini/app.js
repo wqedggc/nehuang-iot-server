@@ -97,8 +97,9 @@
 
   function updateTopbar(title, showBack) {
     $('#topbar-title').textContent = title;
-    $('#topbar-back').style.display = showBack ? '' : 'none';
-    $('#btn-settings').style.display = (currentPage === 'devices' || currentPage === 'settings') ? '' : 'none';
+    $('#topbar-back').style.visibility = showBack ? 'visible' : 'hidden';
+    $('#topbar-back').style.pointerEvents = showBack ? '' : 'none';
+    $('#btn-settings').style.display = currentPage === 'devices' ? '' : 'none';
   }
 
   function parseHash() {
@@ -215,6 +216,7 @@
     var route = parseHash();
     currentPage = route.page;
     var container = $('#main-content');
+    window.scrollTo(0, 0);
 
     // 未登录则跳转登录
     if (route.page !== 'login' && !localStorage.getItem('nh_mini_token')) {
@@ -238,20 +240,21 @@
     container.innerHTML = '<div class="login-page">' +
       '<div class="login-card">' +
         '<div class="login-logo">' +
-          '<h2>涅凰智农</h2>' +
-          '<p>智慧农业物联网云平台</p>' +
+          '<div class="login-mark" aria-hidden="true">N</div>' +
+          '<span class="login-kicker">FIELD OPERATIONS</span>' +
+          '<h2>连接田间工作台</h2>' +
+          '<p>查看设备状态、实时数据与控制结果</p>' +
         '</div>' +
-        '<div class="empty-state" style="padding:8px 0 18px">' +
-          '<p style="font-size:14px;color:var(--color-text-secondary);line-height:1.7">' +
-            '浏览器 H5 不支持微信 wx.login，请在微信小程序内完成真实登录。' +
-          '</p>' +
+        '<div class="login-notice" role="note">' +
+          '<strong>浏览器调试入口</strong>' +
+          '<p>微信真实登录请在小程序内完成；这里仅校验已有的 Mini Token。</p>' +
         '</div>' +
         '<div class="form-group">' +
-          '<label class="form-label">H5 调试 Token</label>' +
-          '<input class="form-input" id="login-token" type="text" placeholder="粘贴真实 nh_mini_token">' +
-          '<p class="form-hint" style="text-align:left">仅用于浏览器调试真实接口；不会调用开发登录接口，也不会生成本地模拟用户。</p>' +
+          '<label class="form-label" for="login-token">H5 调试 Token</label>' +
+          '<input class="form-input" id="login-token" type="password" autocomplete="off" spellcheck="false" aria-describedby="login-token-hint" placeholder="粘贴真实 nh_mini_token">' +
+          '<p class="form-hint form-hint-left" id="login-token-hint">仅用于本次浏览器调试，不会调用开发登录接口。</p>' +
         '</div>' +
-        '<button class="btn btn-primary btn-block" id="login-submit">使用 Token 调试</button>' +
+        '<button class="btn btn-primary btn-block" id="login-submit">校验并进入</button>' +
       '</div>' +
     '</div>';
 
@@ -286,7 +289,7 @@
       showToast(e.message || 'Token 无效', 'error');
     } finally {
       btn.disabled = false;
-      btn.textContent = '使用 Token 调试';
+      btn.textContent = '校验并进入';
     }
   }
 
@@ -318,21 +321,41 @@
 
       var devices = res.data;
       var groups = groupDevicesByCollector(devices);
-      var html = '<div class="page-header"><h2>我的设备</h2><span class="device-count">共 ' + devices.length + ' 个功能点</span></div>';
-      html += '<div class="device-list">';
+      var attentionCount = 0;
+      var offlineCount = 0;
+      devices.forEach(function (device) {
+        var status = valueStatusClass(device.value_status);
+        if (status === 'offline') offlineCount++;
+        else if (status === 'low' || status === 'high') attentionCount++;
+      });
+      var healthyCount = devices.length - attentionCount - offlineCount;
+
+      var html = '<section class="overview-card" aria-labelledby="device-overview-title">' +
+        '<span class="overview-kicker">DEVICE OVERVIEW</span>' +
+        '<h2 id="device-overview-title">田间运行概览</h2>' +
+        '<p class="overview-copy">按采集执行器查看功能点状态，异常与离线设备会优先显示明确状态。</p>' +
+        '<div class="overview-metrics">' +
+          '<div class="overview-metric"><strong class="overview-metric-value">' + healthyCount + '</strong><span class="overview-metric-label">状态正常</span></div>' +
+          '<div class="overview-metric"><strong class="overview-metric-value">' + attentionCount + '</strong><span class="overview-metric-label">需要关注</span></div>' +
+          '<div class="overview-metric"><strong class="overview-metric-value">' + offlineCount + '</strong><span class="overview-metric-label">当前离线</span></div>' +
+        '</div>' +
+      '</section>';
+      html += '<div class="device-groups">';
       groups.forEach(function (group) {
-        html += '<div style="margin-bottom:14px">' +
-          '<div style="display:flex;justify-content:space-between;align-items:flex-end;margin:6px 0 8px;padding:0 2px">' +
+        html += '<section class="device-group">' +
+          '<header class="device-group-header">' +
             '<div>' +
-              '<div style="font-size:15px;font-weight:700;color:var(--color-text)">' + escHtml(group.nodeName || '采集执行器') + '</div>' +
-              '<div style="font-size:11px;color:var(--color-text-muted);margin-top:3px">' +
+              '<span class="group-kicker">COLLECTOR NODE</span>' +
+              '<h3 class="device-group-title">' + escHtml(group.nodeName || '采集执行器') + '</h3>' +
+              '<p class="device-group-meta">' +
                 '接入网关：' + escHtml(group.gatewayName || '--') +
                 (group.gatewayAccessModeLabel ? ' · ' + escHtml(group.gatewayAccessModeLabel) : '') +
                 (group.nodeId ? ' · ID ' + escHtml(group.nodeId) : '') +
-              '</div>' +
+              '</p>' +
             '</div>' +
-            '<span style="font-size:12px;color:var(--color-text-muted)">功能点 ' + group.items.length + '</span>' +
-          '</div>';
+            '<span class="device-group-count">' + group.items.length + ' 个功能点</span>' +
+          '</header>' +
+          '<div class="device-list">';
         group.items.forEach(function (d) {
           var pointID = devicePointID(d);
           var status = valueStatusClass(d.value_status);
@@ -340,30 +363,29 @@
           var statusTextClass = 'status-text-' + status;
           var title = escHtml(d.shed_no || '未设置棚号') + ' · 频点' + escHtml(d.freq);
           var deviceNo = 'DevID ' + escHtml(d.devid || '--');
-          html += '<div class="device-card ' + statusClass + '" onclick="navigate(\'device/' + pointID + '\')">' +
+          var statusLabel = escHtml(d.value_status_label || '--');
+          var valueText = d.real_value != null ? String(d.real_value) : '--';
+          var valueLabel = escHtml(valueText);
+          var ariaLabel = escHtml((d.func_name || '设备') + '，' + (d.shed_no || '未设置棚号') + '，当前值 ' + valueText + (d.unit || '') + '，状态 ' + (d.value_status_label || '未知'));
+          html += '<button type="button" class="device-card ' + statusClass + '" onclick="navigate(\'device/' + pointID + '\')" aria-label="' + ariaLabel + '">' +
             '<div class="device-card-header">' +
               '<span class="device-card-title">' + title + '</span>' +
               '<span class="device-card-func">' + escHtml(d.func_name) + '</span>' +
             '</div>' +
-            '<div class="device-card-body">' +
-              '<span class="device-card-value">' + (d.real_value != null ? escHtml(d.real_value) : '--') + '</span>' +
-              '<span class="device-card-unit">' + escHtml(d.unit) + '</span>' +
+            '<div class="device-card-main">' +
+              '<span class="device-card-reading"><span class="device-card-value">' + valueLabel + '</span><span class="device-card-unit">' + escHtml(d.unit) + '</span></span>' +
+              '<span class="status-badge ' + statusClass + '"><span class="status-dot"></span><span class="' + statusTextClass + '">' + statusLabel + '</span></span>' +
             '</div>' +
             '<div class="device-card-meta">' +
-              '<span class="device-card-status">' +
-                '<span class="status-dot"></span>' +
-                '<span class="' + statusTextClass + '">' + escHtml(d.value_status_label || '--') + '</span>' +
-              '</span>' +
-              '<span>' + deviceNo + ' · ' + formatTime(d.updated_at) + '</span>' +
+              '<span>' + deviceNo + '</span>' +
+              '<span>更新于 ' + formatTime(d.updated_at) + '</span>' +
             '</div>' +
-          '</div>';
+            '<svg class="device-card-chevron" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="9 18 15 12 9 6"/></svg>' +
+          '</button>';
         });
-        html += '</div>';
+        html += '</div></section>';
       });
       html += '</div>';
-
-      // 添加底部提示
-      html += '<p style="text-align:center;margin-top:16px;font-size:11px;color:var(--color-text-muted)">下拉刷新可获取最新数据</p>';
 
       container.innerHTML = html;
     } catch (e) {
@@ -420,19 +442,29 @@
       var offline = isDeviceOffline(d);
       var offlineHtml = offline ? offlineBanner() : '';
 
-      // ── Tab Bar: 5 tabs ──
-      var html = '<div class="tab-bar">' +
-        '<button class="tab-btn active" data-tab="info">基本信息</button>' +
-        '<button class="tab-btn" data-tab="realtime">实时数据</button>' +
-        '<button class="tab-btn" data-tab="history-table">历史数据</button>' +
-        '<button class="tab-btn" data-tab="chart">数据曲线</button>' +
-        '<button class="tab-btn" data-tab="control">控制</button>' +
+      // ── 设备上下文 + Tab Bar ──
+      var heroValue = d.real_value != null ? escHtml(d.real_value) : '--';
+      var heroContext = escHtml(d.shed_no || '未设置棚号') + ' · ' + escHtml(d.gateway_name || '未识别网关');
+      var html = '<section class="device-hero ' + statusClass + '">' +
+        '<div class="device-hero-top">' +
+          '<div><span class="device-hero-kicker">DEVICE POINT</span><h2>' + escHtml(d.func_name || '设备') + '</h2><p class="device-hero-context">' + heroContext + '</p></div>' +
+          '<span class="status-badge ' + statusClass + '"><span class="status-dot"></span><span class="' + statusTextClass + '">' + escHtml(d.value_status_label || '--') + '</span></span>' +
+        '</div>' +
+        '<div class="device-hero-reading"><strong class="device-hero-value">' + heroValue + '</strong><span class="device-hero-unit">' + escHtml(d.unit) + '</span></div>' +
+        '<div class="device-hero-meta"><span>采集执行器 ' + escHtml(d.devid || '--') + '</span><span>频点 ' + escHtml(d.freq) + '</span><span>更新于 ' + formatTime(d.updated_at) + '</span></div>' +
+      '</section>' +
+      '<div class="tab-shell"><div class="tab-bar" role="tablist" aria-label="设备详情视图">' +
+        '<button id="tab-btn-info" class="tab-btn active" data-tab="info" role="tab" aria-selected="true" aria-controls="tab-info">基本信息</button>' +
+        '<button id="tab-btn-realtime" class="tab-btn" data-tab="realtime" role="tab" aria-selected="false" aria-controls="tab-realtime" tabindex="-1">实时数据</button>' +
+        '<button id="tab-btn-history-table" class="tab-btn" data-tab="history-table" role="tab" aria-selected="false" aria-controls="tab-history-table" tabindex="-1">历史数据</button>' +
+        '<button id="tab-btn-chart" class="tab-btn" data-tab="chart" role="tab" aria-selected="false" aria-controls="tab-chart" tabindex="-1">数据曲线</button>' +
+        '<button id="tab-btn-control" class="tab-btn" data-tab="control" role="tab" aria-selected="false" aria-controls="tab-control" tabindex="-1">控制</button>' +
       '</div>';
 
       // ════════════════════════════════════════
       // Tab 1: 基本信息
       // ════════════════════════════════════════
-      html += '<div class="tab-panel active" id="tab-info">' +
+      html += '<div class="tab-panel active" id="tab-info" role="tabpanel" aria-labelledby="tab-btn-info">' +
         offlineHtml +
         '<div class="detail-section">' +
           '<h3>基本信息</h3>' +
@@ -454,10 +486,10 @@
       // ════════════════════════════════════════
       var rangeHint = '';
       if (d.best_min != null && d.best_max != null) {
-        rangeHint = '适宜范围：' + d.best_min + ' ~ ' + d.best_max + ' ' + escHtml(d.unit);
+        rangeHint = '适宜范围：' + escHtml(d.best_min) + ' ~ ' + escHtml(d.best_max) + ' ' + escHtml(d.unit);
       }
 
-      html += '<div class="tab-panel" id="tab-realtime">' +
+      html += '<div class="tab-panel" id="tab-realtime" role="tabpanel" aria-labelledby="tab-btn-realtime" hidden>' +
         offlineHtml +
         '<div class="detail-section">' +
           '<h3>实时数据</h3>';
@@ -471,7 +503,7 @@
         '</div>';
       } else {
         html += '<div class="detail-real-value">' +
-            '<span class="big-value">' + d.real_value + '</span>' +
+            '<span class="big-value">' + heroValue + '</span>' +
             '<span class="big-unit">' + escHtml(d.unit) + '</span>' +
             '<p class="range-hint">' + rangeHint + '</p>' +
             '<p style="margin-top:4px"><span class="device-card-status ' + statusClass + '"><span class="status-dot"></span><span class="' + statusTextClass + '">' + escHtml(d.value_status_label || '--') + '</span></span></p>' +
@@ -483,7 +515,7 @@
       // ════════════════════════════════════════
       // Tab 3: 历史数据 (table)
       // ════════════════════════════════════════
-      html += '<div class="tab-panel" id="tab-history-table">' +
+      html += '<div class="tab-panel" id="tab-history-table" role="tabpanel" aria-labelledby="tab-btn-history-table" hidden>' +
         offlineHtml +
         '<div class="loading-state"><div class="loading-spinner"></div><p>点击标签加载历史数据...</p></div>' +
       '</div>';
@@ -491,7 +523,7 @@
       // ════════════════════════════════════════
       // Tab 4: 数据曲线 (chart)
       // ════════════════════════════════════════
-      html += '<div class="tab-panel" id="tab-chart">' +
+      html += '<div class="tab-panel" id="tab-chart" role="tabpanel" aria-labelledby="tab-btn-chart" hidden>' +
         offlineHtml +
         '<div class="loading-state"><div class="loading-spinner"></div><p>点击标签加载数据曲线...</p></div>' +
       '</div>';
@@ -499,7 +531,7 @@
       // ════════════════════════════════════════
       // Tab 5: 控制
       // ════════════════════════════════════════
-      html += '<div class="tab-panel" id="tab-control">' +
+      html += '<div class="tab-panel" id="tab-control" role="tabpanel" aria-labelledby="tab-btn-control" hidden>' +
         offlineHtml;
 
       // 判断是否有控制功能 (func 1/2 是传感器, 4/5/6 是控制器)
@@ -530,7 +562,7 @@
           '</div>' +
         '</div>';
       }
-      html += '</div>';
+      html += '</div></div>';
 
       container.innerHTML = html;
 
@@ -539,6 +571,19 @@
         btn.onclick = function () {
           var tab = this.dataset.tab;
           switchTab(tab);
+        };
+        btn.onkeydown = function (event) {
+          var tabs = Array.from($$('.tab-btn'));
+          var currentIndex = tabs.indexOf(this);
+          var nextIndex = currentIndex;
+          if (event.key === 'ArrowRight') nextIndex = (currentIndex + 1) % tabs.length;
+          else if (event.key === 'ArrowLeft') nextIndex = (currentIndex - 1 + tabs.length) % tabs.length;
+          else if (event.key === 'Home') nextIndex = 0;
+          else if (event.key === 'End') nextIndex = tabs.length - 1;
+          else return;
+          event.preventDefault();
+          switchTab(tabs[nextIndex].dataset.tab);
+          tabs[nextIndex].focus();
         };
       });
     } catch (e) {
@@ -550,11 +595,16 @@
     deviceDetailActiveTab = tab;
     // Update tab buttons
     $$('.tab-btn').forEach(function (btn) {
-      btn.classList.toggle('active', btn.dataset.tab === tab);
+      var active = btn.dataset.tab === tab;
+      btn.classList.toggle('active', active);
+      btn.setAttribute('aria-selected', active ? 'true' : 'false');
+      btn.tabIndex = active ? 0 : -1;
     });
     // Update tab panels
     $$('.tab-panel').forEach(function (panel) {
-      panel.classList.toggle('active', panel.id === 'tab-' + tab);
+      var active = panel.id === 'tab-' + tab;
+      panel.classList.toggle('active', active);
+      panel.hidden = !active;
     });
 
     // Lazy load: 历史数据 tab (table)
@@ -679,7 +729,7 @@
       var activeRange = '1d';
       var rangeText = '';
       if (d.best_min != null && d.best_max != null) {
-        rangeText = ' · 适宜范围：' + d.best_min + ' ~ ' + d.best_max + ' ' + escHtml(d.unit);
+        rangeText = ' · 适宜范围：' + escHtml(d.best_min) + ' ~ ' + escHtml(d.best_max) + ' ' + escHtml(d.unit);
       }
 
       if (points.length === 0) {
@@ -884,7 +934,12 @@
   function renderHelpCenter(container) {
     var activeSection = normalizeHelpSection(getHashParam('section'));
 
-    container.innerHTML = '<div class="page-header"><h2>使用说明</h2><span class="table-count">管理员 / C 端 / 硬件联调</span></div>' +
+    container.innerHTML = '<section class="help-intro" aria-labelledby="help-intro-title">' +
+      '<span class="section-kicker">FIELD GUIDE</span>' +
+      '<h2 id="help-intro-title">从设备接入到现场排障</h2>' +
+      '<p>按角色查阅操作路径、报文流向和上线验证标准。</p>' +
+      '<span class="help-intro-meta">管理员 · C 端 · 硬件联调</span>' +
+    '</section>' +
       '<div class="help-tabs">' +
         helpTab('mini', 'C 端', activeSection) +
         helpTab('flow', '流程图', activeSection) +
@@ -959,8 +1014,6 @@
       sections[i].style.display = sections[i].id === 'help-' + activeSection ? '' : 'none';
     }
 
-    var target = document.getElementById('help-' + activeSection);
-    if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
   // ---------- 设置 ----------
@@ -976,7 +1029,11 @@
       var u = res.data;
       currentUser = u;
 
-      var html = '';
+      var html = '<section class="settings-intro" aria-labelledby="settings-intro-title">' +
+        '<span class="section-kicker">ACCOUNT & ACCESS</span>' +
+        '<h2 id="settings-intro-title">账户与服务</h2>' +
+        '<p>维护个人资料，并进入现场使用说明。</p>' +
+      '</section>';
 
       // ── 我的资料卡片 ──
       var nameChar = (u.display_name || '?').charAt(0);
@@ -987,7 +1044,7 @@
             '<div class="profile-card-name">' + escHtml(u.display_name) + '</div>' +
             '<div class="profile-card-bindings">已绑定 ' + u.binding_count + ' 台设备</div>' +
           '</div>' +
-          '<button class="btn-pill-edit" id="btn-edit-profile">编辑资料</button>' +
+          '<button class="btn-pill-edit" id="btn-edit-profile" type="button">编辑资料</button>' +
         '</div>' +
         '<div class="profile-card-divider"></div>' +
         '<div class="profile-card-fields">' +
@@ -1000,44 +1057,48 @@
       // ── 编辑表单（默认隐藏）──
       html += '<div class="settings-section" id="profile-edit-form" style="display:none">' +
         '<div class="edit-form-header">' +
-          '<button class="btn-icon" id="btn-cancel-edit"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>' +
-          '<h3 style="font-size:17px;font-weight:600">编辑资料</h3>' +
-          '<div style="width:36px"></div>' +
+          '<button class="btn-icon" id="btn-cancel-edit" type="button" aria-label="取消编辑"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>' +
+          '<h3>编辑资料</h3>' +
+          '<div class="edit-form-spacer" aria-hidden="true"></div>' +
         '</div>' +
         '<div class="edit-form-body">' +
           '<div class="form-group">' +
-            '<label class="form-label">名称</label>' +
+            '<label class="form-label" for="edit-display-name">名称</label>' +
             '<input class="form-input" id="edit-display-name" type="text" placeholder="请输入名称" maxlength="64" value="' + escHtml(u.display_name) + '">' +
-            '<p class="form-hint" style="text-align:left">1-64 个字符</p>' +
+            '<p class="form-hint form-hint-left">1-64 个字符</p>' +
           '</div>' +
           '<div class="form-group">' +
-            '<label class="form-label">手机号</label>' +
+            '<label class="form-label" for="edit-mobile">手机号</label>' +
             '<input class="form-input" id="edit-mobile" type="text" placeholder="请输入手机号" maxlength="512" value="' + escHtml(u.mobile) + '">' +
           '</div>' +
           '<div class="form-group">' +
-            '<label class="form-label">地址</label>' +
+            '<label class="form-label" for="edit-address">地址</label>' +
             '<input class="form-input" id="edit-address" type="text" placeholder="请输入地址" maxlength="512" value="' + escHtml(u.address) + '">' +
           '</div>' +
           '<div class="form-group">' +
-            '<label class="form-label">备注</label>' +
+            '<label class="form-label" for="edit-remark">备注</label>' +
             '<input class="form-input" id="edit-remark" type="text" placeholder="请输入备注" maxlength="512" value="' + escHtml(u.remark) + '">' +
           '</div>' +
-          '<button class="btn btn-primary btn-block" id="btn-save-profile">保存</button>' +
-          '<p class="form-hint" id="profile-edit-error" style="color:var(--color-danger);display:none;margin-top:12px"></p>' +
+          '<button class="btn btn-primary btn-block" id="btn-save-profile" type="button">保存修改</button>' +
+          '<p class="form-hint form-error" id="profile-edit-error" role="alert"></p>' +
         '</div>' +
       '</div>';
 
       // ── 快速入口：使用说明 ──
-      html += '<div class="settings-section">' +
-        '<div class="settings-item" id="btn-open-help-center" style="justify-content:space-between;">' +
-          '<span class="settings-item-label">查看使用说明</span>' +
-          '<span style="font-size:13px;color:var(--color-text-muted)">打开帮助中心</span>' +
-        '</div>' +
+      html += '<div class="settings-section settings-actions">' +
+        '<button class="settings-action" id="btn-open-help-center" type="button">' +
+          '<span class="settings-action-icon" aria-hidden="true">?</span>' +
+          '<span class="settings-action-copy"><strong>现场使用说明</strong><small>操作路径、硬件联调与验证清单</small></span>' +
+          '<span class="settings-action-chevron" aria-hidden="true">›</span>' +
+        '</button>' +
       '</div>';
 
       // ── 退出登录 ──
-      html += '<div class="settings-section">' +
-        '<div class="settings-item"><span class="settings-item-danger" onclick="doLogout()">退出登录</span></div>' +
+      html += '<div class="settings-section settings-actions">' +
+        '<button class="settings-action settings-action-danger" type="button" onclick="doLogout()">' +
+          '<span class="settings-action-icon" aria-hidden="true">↪</span>' +
+          '<span class="settings-action-copy"><strong>退出登录</strong><small>清除当前浏览器的登录状态</small></span>' +
+        '</button>' +
       '</div>';
 
       container.innerHTML = html;
@@ -1046,6 +1107,7 @@
       $('#btn-edit-profile').onclick = function () {
         $('#profile-edit-form').style.display = '';
         this.style.display = 'none';
+        $('#edit-display-name').focus();
       };
 
       $('#btn-open-help-center').onclick = function () {
@@ -1055,6 +1117,7 @@
       $('#btn-cancel-edit').onclick = function () {
         $('#profile-edit-form').style.display = 'none';
         $('#btn-edit-profile').style.display = '';
+        $('#btn-edit-profile').focus();
         var errEl = $('#profile-edit-error');
         errEl.style.display = 'none';
         errEl.textContent = '';
@@ -1132,7 +1195,7 @@
           showToast('网络异常，请重试', 'error');
         } finally {
           btn.disabled = false;
-          btn.textContent = '保存';
+          btn.textContent = '保存修改';
         }
       };
     } catch (e) {
