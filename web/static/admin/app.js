@@ -393,6 +393,7 @@
     if (n === 4) return 'succeeded';
     if (n === 5) return 'failed';
     if (n === 6) return 'timeout';
+    if (n === 7) return 'unknown';
     if (raw === 'succeeded' || raw === 'failed' || raw === 'timeout' || raw === 'pending' || raw === 'sent' || raw === 'ack') return raw;
     return raw || '--';
   }
