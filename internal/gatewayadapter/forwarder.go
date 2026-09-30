@@ -53,6 +53,7 @@ type RawFrameEnvelope struct {
 type PendingCommand struct {
 	CommandID  uint64 `json:"command_id,string"`
 	CommandHex string `json:"command_hex"`
+	SendOnce   bool   `json:"send_once"`
 }
 
 type Forwarder struct {
@@ -148,6 +149,7 @@ func (f *Forwarder) ListPendingCommands(ctx context.Context, gatewayExternalID s
 	query := url.Values{}
 	query.Set("gateway_external_id", gatewayExternalID)
 	query.Set("limit", strconv.Itoa(limit))
+	query.Set("send_once", "1")
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, f.baseURL+"/api/v1/adapter/commands/pending?"+query.Encode(), nil)
 	if err != nil {
 		return nil, err
@@ -189,6 +191,26 @@ func (f *Forwarder) MarkCommandSent(ctx context.Context, commandID uint64) error
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("mark command sent returned %s", resp.Status)
+	}
+	return nil
+}
+
+// ClaimRawDebugCommand must succeed before the single physical write attempt.
+func (f *Forwarder) ClaimRawDebugCommand(ctx context.Context, commandID uint64, gatewayExternalID string) error {
+	body, _ := json.Marshal(map[string]string{"gateway_external_id": gatewayExternalID})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, f.baseURL+"/api/v1/adapter/commands/"+strconv.FormatUint(commandID, 10)+"/claim", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Adapter-Token", f.token)
+	resp, err := f.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("single-attempt claim rejected: %s", resp.Status)
 	}
 	return nil
 }

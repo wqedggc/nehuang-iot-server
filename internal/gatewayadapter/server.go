@@ -323,6 +323,8 @@ func (s *Server) startPendingCommandLoop(ctx context.Context, conn net.Conn, con
 }
 
 func (s *Server) pollPendingCommands(ctx context.Context, conn net.Conn, connectionID, gatewayName, gatewayExternalID, remoteAddr, remoteIP string, remotePort int, rawSeq *atomic.Uint64) {
+	// Remember completed TCP writes while their sent status is awaiting confirmation.
+	writtenCommands := make(map[uint64]bool)
 	timer := time.NewTimer(0)
 	defer timer.Stop()
 	for {
@@ -344,74 +346,93 @@ func (s *Server) pollPendingCommands(ctx context.Context, conn net.Conn, connect
 				"error":               err.Error(),
 			})
 		} else {
-			s.dispatchPendingCommands(ctx, conn, connectionID, gatewayName, gatewayExternalID, remoteAddr, remoteIP, remotePort, rawSeq, commands)
+			s.dispatchPendingCommands(ctx, conn, connectionID, gatewayName, gatewayExternalID, remoteAddr, remoteIP, remotePort, rawSeq, commands, writtenCommands)
 		}
 
 		timer.Reset(s.cfg.CommandPollInterval)
 	}
 }
 
-func (s *Server) dispatchPendingCommands(ctx context.Context, conn net.Conn, connectionID, gatewayName, gatewayExternalID, remoteAddr, remoteIP string, remotePort int, rawSeq *atomic.Uint64, commands []PendingCommand) {
+func (s *Server) dispatchPendingCommands(ctx context.Context, conn net.Conn, connectionID, gatewayName, gatewayExternalID, remoteAddr, remoteIP string, remotePort int, rawSeq *atomic.Uint64, commands []PendingCommand, writtenCommands map[uint64]bool) {
+	// Bound connection-local memory to commands still returned as pending.
+	pendingIDs := make(map[uint64]bool, len(commands))
+	for _, command := range commands {
+		pendingIDs[command.CommandID] = true
+	}
+	for commandID := range writtenCommands {
+		if !pendingIDs[commandID] {
+			delete(writtenCommands, commandID)
+		}
+	}
 	for _, command := range commands {
 		if ctx.Err() != nil {
 			return
 		}
-		payload, err := decodeCommandHex(command.CommandHex)
-		if err != nil {
-			s.logger.Error("gateway_pending_command_decode_failed", map[string]any{
+		if !writtenCommands[command.CommandID] {
+			payload, err := decodeCommandHex(command.CommandHex)
+			if err != nil {
+				s.logger.Error("gateway_pending_command_decode_failed", map[string]any{
+					"connection_id":       connectionID,
+					"gateway_name":        gatewayName,
+					"gateway_external_id": gatewayExternalID,
+					"command_id":          command.CommandID,
+					"error":               err.Error(),
+				})
+				continue
+			}
+			if command.SendOnce {
+				if err := s.forwarder.ClaimRawDebugCommand(ctx, command.CommandID, gatewayExternalID); err != nil {
+					s.logger.Warn("gateway_raw_debug_claim_failed_no_send", map[string]any{"command_id": command.CommandID, "error": err.Error()})
+					continue
+				}
+			}
+			if s.cfg.CommandWriteTimeout > 0 {
+				_ = conn.SetWriteDeadline(time.Now().Add(s.cfg.CommandWriteTimeout))
+			}
+			seq := rawSeq.Add(1)
+			frame := journal.Frame{
+				MessageID:    connectionID + "-" + strconv.FormatUint(seq, 10),
+				CaptureKind:  "tcp_write_attempt",
+				ConnectionID: connectionID,
+				GatewayName:  gatewayName,
+				RemoteAddr:   remoteAddr,
+				Direction:    journal.DirectionOutbound,
+				PayloadHex:   strings.ToUpper(hex.EncodeToString(payload)),
+				ReceivedAt:   time.Now().UTC(),
+				RawSeq:       seq,
+			}
+			if err := s.journal.Write(frame); err != nil {
+				s.rawWriteFailures.Add(1)
+				s.logger.Error("gateway_outbound_journal_write_failed", map[string]any{
+					"connection_id": connectionID,
+					"command_id":    command.CommandID,
+					"error":         err.Error(),
+				})
+				return
+			}
+			s.rawFrames.Add(1)
+			if _, err := conn.Write(payload); err != nil {
+				s.logger.Warn("gateway_pending_command_write_failed", map[string]any{
+					"connection_id":       connectionID,
+					"gateway_name":        gatewayName,
+					"gateway_external_id": gatewayExternalID,
+					"command_id":          command.CommandID,
+					"error":               err.Error(),
+				})
+				return
+			}
+			if s.cfg.CommandWriteTimeout > 0 {
+				_ = conn.SetWriteDeadline(time.Time{})
+			}
+			s.logger.Info("gateway_pending_command_written", map[string]any{
 				"connection_id":       connectionID,
 				"gateway_name":        gatewayName,
 				"gateway_external_id": gatewayExternalID,
 				"command_id":          command.CommandID,
-				"error":               err.Error(),
+				"bytes":               len(payload),
 			})
-			continue
+			writtenCommands[command.CommandID] = true
 		}
-		if s.cfg.CommandWriteTimeout > 0 {
-			_ = conn.SetWriteDeadline(time.Now().Add(s.cfg.CommandWriteTimeout))
-		}
-		seq := rawSeq.Add(1)
-		frame := journal.Frame{
-			MessageID:    connectionID + "-" + strconv.FormatUint(seq, 10),
-			CaptureKind:  "tcp_write_attempt",
-			ConnectionID: connectionID,
-			GatewayName:  gatewayName,
-			RemoteAddr:   remoteAddr,
-			Direction:    journal.DirectionOutbound,
-			PayloadHex:   strings.ToUpper(hex.EncodeToString(payload)),
-			ReceivedAt:   time.Now().UTC(),
-			RawSeq:       seq,
-		}
-		if err := s.journal.Write(frame); err != nil {
-			s.rawWriteFailures.Add(1)
-			s.logger.Error("gateway_outbound_journal_write_failed", map[string]any{
-				"connection_id": connectionID,
-				"command_id":    command.CommandID,
-				"error":         err.Error(),
-			})
-			return
-		}
-		s.rawFrames.Add(1)
-		if _, err := conn.Write(payload); err != nil {
-			s.logger.Warn("gateway_pending_command_write_failed", map[string]any{
-				"connection_id":       connectionID,
-				"gateway_name":        gatewayName,
-				"gateway_external_id": gatewayExternalID,
-				"command_id":          command.CommandID,
-				"error":               err.Error(),
-			})
-			return
-		}
-		if s.cfg.CommandWriteTimeout > 0 {
-			_ = conn.SetWriteDeadline(time.Time{})
-		}
-		s.logger.Info("gateway_pending_command_written", map[string]any{
-			"connection_id":       connectionID,
-			"gateway_name":        gatewayName,
-			"gateway_external_id": gatewayExternalID,
-			"command_id":          command.CommandID,
-			"bytes":               len(payload),
-		})
 		if err := s.forwarder.MarkCommandSent(ctx, command.CommandID); err != nil {
 			if ctx.Err() != nil {
 				return

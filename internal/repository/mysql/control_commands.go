@@ -156,9 +156,9 @@ func (r *Repository) MarkControlCommandSent(ctx context.Context, commandID uint6
 	res, err := r.db.ExecContext(ctx, `
 UPDATE control_commands
 SET command_status = ?, sent_at_ms = COALESCE(sent_at_ms, ?), gateway_response = ?, updated_at = ?
-WHERE command_id = ? AND command_status = ?`,
+WHERE command_id = ? AND (command_status = ? OR (command_status = ? AND extra LIKE ?))`,
 		uint8(domain.CommandStatusSent), now, nullableString(gatewayResponse), now,
-		commandID, uint8(domain.CommandStatusCreated),
+		commandID, uint8(domain.CommandStatusCreated), uint8(domain.CommandStatusUnknown), `{"source":"admin_raw_debug"%`,
 	)
 	if err != nil {
 		return err
@@ -179,12 +179,12 @@ SET command_status = ?, finished_at_ms = COALESCE(finished_at_ms, ?),
 WHERE (
     command_status = ? AND requested_at_ms < ?
   ) OR (
-    command_status = ? AND COALESCE(sent_at_ms, requested_at_ms) < ?
+    command_status IN (?, ?) AND COALESCE(sent_at_ms, requested_at_ms) < ? AND (extra IS NULL OR extra NOT LIKE '{"source":"admin_raw_debug"%')
   )`,
 		uint8(domain.CommandStatusTimeout), now,
-		"control command timed out before hardware acknowledgement", now,
+		"control command timed out before final hardware result", now,
 		uint8(domain.CommandStatusCreated), cutoff,
-		uint8(domain.CommandStatusSent), cutoff,
+		uint8(domain.CommandStatusSent), uint8(domain.CommandStatusAck), cutoff,
 	)
 	if err != nil {
 		return 0, err
@@ -237,14 +237,20 @@ FROM control_commands WHERE command_id = ? FOR UPDATE`, input.CommandID).Scan(
 		cmd.PointID = &v
 	}
 
-	_, err = tx.ExecContext(ctx, `
+	if cmd.CommandStatus.CanAdvanceResult(input.Status) {
+		var finishedAt any
+		if input.Status.IsTerminal() {
+			finishedAt = now
+		}
+		_, err = tx.ExecContext(ctx, `
 UPDATE control_commands
 SET command_status = ?, finished_at_ms = ?, gateway_response = ?, error_message = ?, updated_at = ?
 WHERE command_id = ?`,
-		uint8(input.Status), now, nullableString(input.GatewayResponse), nullableString(input.ErrorMessage), now, input.CommandID,
-	)
-	if err != nil {
-		return err
+			uint8(input.Status), finishedAt, nullableString(input.GatewayResponse), nullableString(input.ErrorMessage), now, input.CommandID,
+		)
+		if err != nil {
+			return err
+		}
 	}
 
 	resultStatus := uint8(4)

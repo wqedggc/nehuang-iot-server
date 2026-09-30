@@ -37,7 +37,15 @@ func (h *adapterHandler) handlePendingCommands(w http.ResponseWriter, r *http.Re
 		writeCode(w, http.StatusInternalServerError, 500, "failed to list pending commands")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{"items": commands}})
+	filtered := make([]domain.ControlCommand, 0, len(commands))
+	for _, command := range commands {
+		command.SendOnce = command.Extra != nil && domain.IsRawDebugExtra(*command.Extra)
+		if command.SendOnce && r.URL.Query().Get("send_once") != "1" {
+			continue
+		}
+		filtered = append(filtered, command)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{"items": filtered}})
 }
 
 func (h *adapterHandler) handleCommandSent(w http.ResponseWriter, r *http.Request) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"log"
 	"strconv"
 	"strings"
@@ -234,6 +235,15 @@ func (r *Repository) ListPayloadEvents(ctx context.Context, params domain.Payloa
 		item.ReceivedAtMS = receivedAt.Format("2006-01-02 15:04:05")
 		item.PayloadLen = hexPayloadByteLen(payloadHex)
 		item.PayloadHex = payloadHex
+		var capture struct {
+			Direction   string `json:"direction"`
+			CaptureKind string `json:"capture_kind"`
+		}
+		if item.SourceType == uint8(domain.SourceTypeGateway) && json.Unmarshal([]byte(payloadSnapshot), &capture) == nil {
+			item.Direction = capture.Direction
+			item.CaptureKind = capture.CaptureKind
+		}
+
 		items = append(items, item)
 	}
 	return items, total, rows.Err()

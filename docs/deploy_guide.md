@@ -1,3 +1,8 @@
+> 2026-09-30 更新部署以本节为准：用户已确认该服务器归个人涅凰。旧文中的管理员初始化、单独 pkill、先停再构建不再用于更新。
+> 流程仍为本地测试 → commit/push CNB master → 服务器 `git pull --ff-only origin master` → `bash deploy.sh`。
+> 更新脚本仅读校验迁移齐全，不执行 DDL、不创建或更新管理员、不生成配置、不打印凭据。双二进制先构建后切换，按完整 executable 路径识别真实服务，保留 mock；已有 NEHUANG 环境只在内存中继承。
+> `.deploy-backups/<时间戳>/` 保留旧双二进制；启动/就绪失败自动恢复旧服务。双服务 healthz/readyz 都通过才成功。本次数据库和配置不变；新增迁移须独立审查。首次安装须另行初始化，不能使用此更新脚本。
+
 # 涅凰智农 IoT — 部署流程文档
 
 > 最后更新：2026-07-06（腾讯云双进程部署：Go HTTP Server + Go TCP Gateway Adapter）

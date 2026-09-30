@@ -829,7 +829,7 @@ func (h *adminHandler) handleControlLogs(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	for i := range logs {
-		logs[i].ProtocolSummary = protocolsummary.BuildDownlink(logs[i].CommandHex)
+		logs[i].ProtocolSummary = protocolsummary.BuildCurrentDownlink(logs[i].CommandHex)
 	}
 	if !params.Paginated {
 		if logs == nil {
@@ -1930,16 +1930,21 @@ func (h *adminHandler) handlePayloadEvents(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	for i := range items {
-		summary := protocolsummary.Build(items[i].PayloadHex)
-		if summary == nil {
-			continue
+		summary := protocolsummary.BuildCurrentUplink(items[i].PayloadHex)
+		if items[i].Direction == "outbound" {
+			summary = protocolsummary.BuildCurrentDownlink(items[i].PayloadHex)
 		}
-		items[i].ProtocolLabel = summary.Label
-		for _, field := range summary.Fields {
-			if field.Name == "device_id" {
-				items[i].DeviceIdentity = field.Value
-				break
+		if summary != nil {
+			items[i].ProtocolLabel = summary.Label
+			for _, field := range summary.Fields {
+				if field.Name == "device_id" {
+					items[i].DeviceIdentity = field.Value
+					break
+				}
 			}
+		}
+		if q.Get("include_payload") != "1" {
+			items[i].PayloadHex = ""
 		}
 	}
 
@@ -1975,7 +1980,7 @@ func (h *adminHandler) handlePayloadEventDetail(w http.ResponseWriter, r *http.R
 		return
 	}
 	if detail.PayloadHex != "" {
-		detail.ProtocolSummary = protocolsummary.Build(detail.PayloadHex)
+		detail.ProtocolSummary = protocolsummary.BuildCurrentUplink(detail.PayloadHex)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"data": detail})

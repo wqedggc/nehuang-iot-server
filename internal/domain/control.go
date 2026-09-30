@@ -46,6 +46,7 @@ const (
 	CommandStatusSucceeded CommandStatus = 4
 	CommandStatusFailed    CommandStatus = 5
 	CommandStatusTimeout   CommandStatus = 6
+	CommandStatusUnknown   CommandStatus = 7 // attempt claimed; outcome unknown, never auto-requeued
 )
 
 func (s CommandStatus) Label() string {
@@ -62,6 +63,8 @@ func (s CommandStatus) Label() string {
 		return "failed"
 	case CommandStatusTimeout:
 		return "timeout"
+	case CommandStatusUnknown:
+		return "unknown"
 	default:
 		return "unknown"
 	}
@@ -82,6 +85,7 @@ type ControlCommand struct {
 	Rel2TargetStatus *uint8        `json:"rel2_target_status,omitempty"`
 	CommandHex       string        `json:"command_hex"`
 	CommandStatus    CommandStatus `json:"command_status"`
+	SendOnce         bool          `json:"send_once,omitempty"`
 	RequestedBy      *uint64       `json:"requested_by,string,omitempty"`
 	RequestedAtMS    time.Time     `json:"requested_at_ms"`
 	SentAtMS         *time.Time    `json:"sent_at_ms,omitempty"`
@@ -111,4 +115,21 @@ type AdapterCommandResultInput struct {
 	ErrorMessage    *string
 	ResultHex       *string
 	ResultSnapshot  *string
+}
+
+// IsTerminal reports whether automatic result processing has completed.
+func (s CommandStatus) IsTerminal() bool {
+	return s == CommandStatusSucceeded || s == CommandStatusFailed || s == CommandStatusTimeout
+}
+
+// CanAdvanceResult keeps duplicate and late responses from rewriting command state.
+// Responses remain audit records even when they do not advance this state.
+func (s CommandStatus) CanAdvanceResult(next CommandStatus) bool {
+	if s.IsTerminal() || s == next {
+		return false
+	}
+	if s != CommandStatusCreated && s != CommandStatusSent && s != CommandStatusAck && s != CommandStatusUnknown {
+		return false
+	}
+	return next == CommandStatusAck || next.IsTerminal()
 }

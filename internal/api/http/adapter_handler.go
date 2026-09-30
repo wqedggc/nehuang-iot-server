@@ -382,6 +382,9 @@ func (h *adapterHandler) handleDeviceEvents(w http.ResponseWriter, r *http.Reque
 }
 
 func (h *adapterHandler) parseRawFrame(ctx context.Context, rawEventID uint64, envelope rawFrameEnvelope, payload []byte) (domain.ParseStatus, error) {
+	if envelope.Direction == "outbound" {
+		return domain.ParseStatusPending, nil
+	}
 	trimmed := bytes.TrimSpace(payload)
 	msg := protocol.ClassifyPayload(payload)
 	if msg.Kind == protocol.MessageRegister {

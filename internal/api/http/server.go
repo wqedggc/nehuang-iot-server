@@ -83,7 +83,9 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/v1/adapter/device-events", adh.handleDeviceEvents)
 	mux.HandleFunc("/api/v1/adapter/commands/pending", adh.handlePendingCommands)
 	mux.HandleFunc("/api/v1/adapter/commands/", func(w http.ResponseWriter, r *http.Request) {
-		if hasSuffix(r.URL.Path, "/sent") {
+		if hasSuffix(r.URL.Path, "/claim") {
+			adh.handleCommandClaim(w, r)
+		} else if hasSuffix(r.URL.Path, "/sent") {
 			adh.handleCommandSent(w, r)
 		} else if hasSuffix(r.URL.Path, "/result") {
 			adh.handleCommandResult(w, r)
@@ -131,6 +133,8 @@ func (s *Server) Routes() http.Handler {
 		}))))
 	mux.Handle("/api/v1/admin/raw-events",
 		authMiddleware(secret, adminRoles(http.HandlerFunc(ah.handleRawEvents))))
+	mux.Handle("/api/v1/admin/raw-debug/commands",
+		authMiddleware(secret, adminRoles(http.HandlerFunc(ah.handleRawDebugCommand))))
 	mux.Handle("/api/v1/admin/control-logs",
 		authMiddleware(secret, adminRoles(http.HandlerFunc(ah.handleControlLogs))))
 	mux.Handle("/api/v1/admin/operation-logs",

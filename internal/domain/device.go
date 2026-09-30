@@ -707,7 +707,9 @@ type PayloadEventListItem struct {
 	PayloadLen      int    `json:"payload_len"`
 	ProtocolLabel   string `json:"protocol_label,omitempty"`
 	DeviceIdentity  string `json:"device_identity,omitempty"`
-	PayloadHex      string `json:"-"`
+	PayloadHex      string `json:"payload_hex,omitempty"`
+	Direction       string `json:"direction,omitempty"`
+	CaptureKind     string `json:"capture_kind,omitempty"`
 }
 
 // ProtocolSummary is a display-only interpretation of raw bytes for debugging.

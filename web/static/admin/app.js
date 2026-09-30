@@ -2628,6 +2628,7 @@
             '<div class="info-item"><label>采集执行器</label><span>' + escHtml(point.collectorName || '--') + '</span></div>' +
           '</div>' +
         '</div>' +
+        '<p class="form-hint">手动开关无即时返回，等待约4分钟周期回显。TCP已发送不代表动作完成；超时表示结果未确认，请先核对设备状态，勿重复发送。</p>' +
         '<div class="form-group"><label class="form-label">command_hex</label><input class="form-input" id="point-control-command-hex" type="text" placeholder="请输入十六进制指令，例如 F0 或 01020304"></div>' +
         '<div class="form-group"><label class="form-label">用途备注</label><textarea class="form-input form-textarea" id="point-control-note" placeholder="联调用途备注，可留空"></textarea></div>' +
       '</div>' +
@@ -2818,6 +2819,8 @@
   }
 
   function closeModal() {
+    rawDebugSession++;
+    rawDebugTargets = []; rawDebugRequest = null;
     var overlay = $('#modal-overlay');
     var returnFocus = overlay._returnFocus;
     overlay.style.display = 'none';
@@ -3378,7 +3381,7 @@
     try {
       var params = buildPagedLogParams(operationLogFilter);
       var res = await NHApi.getOperationLogs(params);
-      if (!res.data) { container.innerHTML = '<div class="error-state"><p>加载失败</p><button class="btn btn-outline btn-sm" onclick="renderPage()">重试</button></div>'; return; }
+      if (!res || !res.data) throw new Error('操作日志响应缺少数据，请检查接口返回。');
       var pg = normalizePagedResponse(res.data, normalizeOperationLogRecord, operationLogFilter.page, operationLogFilter.size);
       operationLogFilter.page = pg.page;
       operationLogFilter.size = pg.size;
@@ -3426,7 +3429,7 @@
       container.innerHTML = html;
       bindFilterBarEvents(operationLogFilter, 'operation-log-search', renderPage, 'resetOperationLogFilters');
     } catch (e) {
-      container.innerHTML = '<div class="error-state"><p>加载失败</p><button class="btn btn-outline btn-sm" onclick="renderPage()">重试</button></div>';
+      container.innerHTML = '<div class="error-state"><p>加载失败：' + escHtml(e.message || '网络异常') + '</p><button class="btn btn-outline btn-sm" onclick="renderPage()">重试</button></div>';
     }
   }
 
@@ -3507,7 +3510,7 @@
                   '<td>' + escHtml(l.opType || '--') + '</td>' +
                   '<td><code class="code-pill">' + escHtml(formatHexDisplay(l.commandHex) || '--') + '</code>' +
                     (protocolHint ? '<div style="font-size:11px;color:var(--color-text-muted);margin-top:4px">' + escHtml(protocolHint) + '</div>' : '') + '</td>' +
-                  '<td><span class="badge ' + statusClass + '">' + escHtml(l.cmdStatusLabel || '--') + '</span></td>' +
+                  '<td><span class="badge ' + statusClass + '">' + escHtml(l.cmdStatusLabel === 'sent' ? '已发送，等待状态' : l.cmdStatusLabel === 'timeout' ? '等待超时，结果未确认' : (l.cmdStatusLabel || '--')) + '</span></td>' +
                   '<td class="log-result-cell">' + escHtml(resultParts.join('；') || '--') + '</td>' +
                   '<td>' + timeHtml + '</td>' +
                 '</tr>';
@@ -3628,6 +3631,109 @@
 
   var payloadState = createDefaultPayloadState();
 
+  // Raw transport is separate from business control; explicit administrator confirmation only.
+  var rawDebugSession = 0;
+  var rawDebugTargets = [], rawDebugRequest = null;
+  function openRawDebugConsole() {
+    rawDebugSession++;
+    rawDebugTargets = []; rawDebugRequest = null;
+    var overlay = $('#modal-overlay');
+    overlay.style.display = 'flex';
+    overlay.innerHTML = '<div class="modal" style="max-width:840px">' +
+      '<div class="modal-header"><h3>报文调试窗口</h3><button class="modal-close" onclick="closeModal()">×</button></div>' +
+      '<div class="modal-body">' +
+      '<p>先核对完整字节，再联调。发送原样字节，不自动添加包头、包长或CRC。清缓存指令禁用；没有即时回应不能证明失败，请勿重复发送。</p>' +
+      '<div class="form-group"><label class="form-label" for="raw-debug-hex">下行Hex草稿（最多512字节）</label><textarea id="raw-debug-hex" class="form-input form-textarea" placeholder="例如 01 03 00 00 00 0A"></textarea></div>' +
+      '<label><input id="raw-debug-crc" type="checkbox">计算选区CRC-16/Modbus（FFFF/A001，结果低字节先，仅预览）</label>' +
+      '<div style="display:flex;gap:12px;margin:12px 0"><label>起始字节（从0开始）<input id="raw-debug-crc-start" type="number" min="0" class="form-input"></label><label>结束字节（包含）<input id="raw-debug-crc-end" type="number" min="0" class="form-input"></label></div>' +
+      '<button class="btn btn-primary" onclick="previewRawDebugHex()">校验并预览</button>' +
+      '<pre id="raw-debug-preview" class="code-panel" aria-live="polite">尚未预览</pre>' +
+      '<p class="form-hint">包长字段含义、转义与CRC覆盖边界未定，请勿把预览值直接当作硬件协议。清缓存指令预留，当前不发送。</p>' +
+      '<div class="form-group"><label class="form-label" for="raw-debug-gateway">设备网关接入名称（精确匹配）</label><input id="raw-debug-gateway" class="form-input" placeholder="填写实际网关名称"></div>' +
+      '<div class="form-group"><label>发送目标（从现有网关选择）</label><select id="raw-debug-target" class="form-input"><option value="">加载中</option></select></div>' +
+      '<label><input id="raw-debug-no-clear" type="checkbox">我确认报文不含清缓存指令，已核对设备与完整字节</label>' +
+      '<div><button id="raw-debug-send" class="btn btn-primary" onclick="sendRawDebugHex()">确认并提交一次发送</button></div>' +
+      '<pre id="raw-debug-send-result" class="code-panel" aria-live="polite">尚未提交</pre>' +
+      '<button id="raw-debug-refresh" class="btn btn-outline" onclick="refreshRawDebugLog()">读取最近采集记录</button>' +
+      '<p class="form-hint">只读查询最近100条候选，再精确匹配网关。完整收发方向及write-attempt请查看原始快照；写入尝试不等于发送成功。</p>' +
+      '<pre id="raw-debug-log" class="code-panel" style="max-height:240px;overflow:auto" aria-live="polite">尚未读取</pre>' +
+      '</div><div class="modal-actions"><button class="btn btn-outline" onclick="closeModal()">关闭</button></div></div>';
+    loadRawDebugTargets(rawDebugSession);
+  }
+  function previewRawDebugHex() {
+    var output = $('#raw-debug-preview');
+    if (!output || !window.NHRawDebug) return;
+    try {
+      var option = null;
+      if ($('#raw-debug-crc').checked) {
+        var start = $('#raw-debug-crc-start').value, end = $('#raw-debug-crc-end').value;
+        if (start === '' || end === '') throw new Error('请明确填写CRC起止字节，不能猜测覆盖范围。');
+        option = { crcStart: Number(start), crcEnd: Number(end) };
+      }
+      var result = NHRawDebug.inspectHex($('#raw-debug-hex').value, option);
+      output.textContent = result.byteCount + ' 字节\n' + result.formattedHex + (result.crcHex ? '\n选区CRC：' + result.crcHex + '（未附加到草稿）' : '\nCRC未计算') + '\n仅预览，未发送';
+    } catch (e) { output.textContent = '校验失败：' + (e.message || '输入无效'); }
+  }
+  async function loadRawDebugTargets(session) {
+    try {
+      var response = await NHApi.getGateways();
+      var items = response && response.data;
+      if (items && Array.isArray(items.items)) items = items.items;
+      if (!Array.isArray(items)) throw new Error('网关列表响应无效');
+      if (session !== rawDebugSession || !$('#raw-debug-target')) return;
+      rawDebugTargets = items.map(function (g) { return { id: getGatewayId(g), name: getGatewayName(g) }; }).filter(function (g) { return g.id && g.name; });
+      $('#raw-debug-target').innerHTML = '<option value="">请选择精确目标</option>' + rawDebugTargets.map(function (g, i) { return '<option value="' + i + '">' + escHtml(g.name + ' [ID ' + g.id + ']') + '</option>'; }).join('');
+    } catch (e) { if (session === rawDebugSession && $('#raw-debug-target')) { $('#raw-debug-target').innerHTML = '<option value="">网关列表加载失败，不能发送</option>'; } }
+  }
+  async function sendRawDebugHex() {
+    var button = $('#raw-debug-send'), output = $('#raw-debug-send-result');
+    if (!button || !output || button.disabled) return;
+    var session = rawDebugSession;
+    try {
+      var selection = $('#raw-debug-target').value;
+      var target = selection === '' ? null : rawDebugTargets[Number(selection)];
+      if (!target) throw new Error('请选择现有网关');
+      if (!$('#raw-debug-no-clear').checked) throw new Error('请先确认设备、字节及不清缓存');
+      var preview = NHRawDebug.inspectHex($('#raw-debug-hex').value);
+      var hex = preview.formattedHex.replace(/\s/g, '');
+      if (hex.length >= 16 && hex.slice(hex.length - 12, hex.length - 10) === '02') throw new Error('BB02清缓存指令当前禁用');
+      var fingerprint = target.id + ':' + target.name + ':' + hex;
+      if (rawDebugRequest && rawDebugRequest.fingerprint !== fingerprint) throw new Error('本窗口已提交另一份报文，请关闭重开后明确发起新请求');
+      if (!window.confirm('向 ' + target.name + ' [ID ' + target.id + '] 提交 ' + preview.byteCount + ' 字节？\n' + preview.formattedHex + '\n仅发送一次，不自动重试。设备可能不即时回应。')) return;
+      if (!rawDebugRequest) {
+        var bytes = new Uint8Array(16); window.crypto.getRandomValues(bytes);
+        rawDebugRequest = { fingerprint: fingerprint, id: Array.from(bytes).map(function (b) { return b.toString(16).padStart(2, '0'); }).join('') };
+      }
+      button.disabled = true;
+      output.textContent = '正在提交一次发送请求';
+      var res = await NHApi.post('/api/v1/admin/raw-debug/commands', { gateway_id: String(target.id), gateway_name: target.name, command_hex: hex, request_id: rawDebugRequest.id, confirmed: true, confirm_no_cache_clear: true, remark: '管理员报文调试窗口' });
+      if (!res || !res.data || !res.data.command_id) throw new Error('响应缺少命令编号，结果待确认');
+      if (session !== rawDebugSession || !$('#raw-debug-send-result')) return;
+      output.textContent = '请求编号：' + res.data.command_id + '\n状态：' + res.data.status + '\n已入队不等于已发送或设备已执行。请查看收发记录和操作日志；不自动重试。';
+    } catch (e) {
+      if (session === rawDebugSession && $('#raw-debug-send-result')) output.textContent = '提交未确认：' + (e.message || '网络异常') + '\n先核对操作日志；再次提交将复用请求编号，不重复创建命令。';
+    } finally { if (session === rawDebugSession && $('#raw-debug-send')) $('#raw-debug-send').disabled = false; }
+  }
+  async function refreshRawDebugLog() {
+    var output = $('#raw-debug-log'), button = $('#raw-debug-refresh');
+    if (!output || !button || button.disabled) return;
+    var gateway = toText($('#raw-debug-gateway').value).trim(), session = rawDebugSession;
+    if (!gateway || gateway.length > 128) { output.textContent = '请填写有效网关名称（最多128字符）。'; return; }
+    button.disabled = true;
+    output.textContent = '正在读取';
+    try {
+      var response = await NHApi.getPayloadEvents({ source_type: 1, page: 1, size: 100, keyword: gateway, include_payload: 1 });
+      if (!response || !response.data || !Array.isArray(response.data.items)) throw new Error('原始报文响应格式无效');
+      if (session !== rawDebugSession || !$('#raw-debug-log') || toText($('#raw-debug-gateway').value).trim() !== gateway) return;
+      var rows = response.data.items.map(normalizePayloadEventFromResponse).filter(function (item) { return item.sourceType === 1 && item.gatewayName === gateway; });
+      output.textContent = rows.length ? rows.map(function (item) { return formatBeijingTime(item.receivedAt) + ' | ' + item.messageId + ' | ' + toText(item.raw.direction || '方向未标注') + ' / ' + toText(item.raw.capture_kind || '采集') + ' | ' + (item.payloadHex || '无原始字节'); }).join('\n') : '最近100条候选中无精确匹配记录；请在原始报文页扩大时间范围。';
+    } catch (e) {
+      if (session === rawDebugSession && $('#raw-debug-log')) output.textContent = '读取失败：' + (e.message || '网络异常');
+    } finally {
+      if (session === rawDebugSession && $('#raw-debug-refresh')) $('#raw-debug-refresh').disabled = false;
+    }
+  }
+
   async function renderPayloadEvents(container) {
     container.innerHTML = '<div class="loading-state"><div class="loading-spinner"></div><p>加载原始报文...</p></div>';
 
@@ -3641,7 +3747,8 @@
 	  if (payloadState.source_type != null) params.source_type = payloadState.source_type;
       if (payloadState.parse_status != null) params.parse_status = payloadState.parse_status;
       var res = await NHApi.getPayloadEvents(params);
-      var data = res.data || {};
+      if (!res || !res.data) throw new Error('原始报文响应缺少数据，请检查接口返回。');
+      var data = res.data;
       var items = (data.items || []).map(normalizePayloadEventFromResponse);
       if (payloadState.event_type) {
         items = items.filter(function (item) { return item.eventCategory === payloadState.event_type; });
@@ -3691,6 +3798,7 @@
       var html = '<div class="table-section">' +
         '<div class="table-header">' +
           '<span class="table-count">共 ' + toText(total) + ' 条</span>' +
+          '<button class="btn btn-outline btn-sm" onclick="openRawDebugConsole()">报文调试窗口</button>' +
         '</div>' +
         renderFilterBar(payloadState, 'pe-filter-keyword', '搜索设备网关 / 消息 ID / Hex', 'payloadResetFilters') +
         '<div class="filter-bar" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding-top:0">' +
@@ -3761,7 +3869,7 @@
       bindFilterBarEvents(payloadState, 'pe-filter-keyword', renderPage, 'payloadResetFilters');
 
     } catch (e) {
-      container.innerHTML = '<div class="error-state"><p>加载失败</p><button class="btn btn-outline btn-sm" onclick="renderPage()">重试</button></div>';
+      container.innerHTML = '<div class="error-state"><p>加载失败：' + escHtml(e.message || '网络异常') + '</p><button class="btn btn-outline btn-sm" onclick="renderPage()">重试</button></div>';
     }
   }
 
@@ -4160,6 +4268,10 @@
   window.openBindingAddModal = openBindingAddModal;
   window.doBindFromAddModal = doBindFromAddModal;
   window.switchDashboardRange = switchDashboardRange;
+  window.openRawDebugConsole = openRawDebugConsole;
+  window.previewRawDebugHex = previewRawDebugHex;
+  window.refreshRawDebugLog = refreshRawDebugLog;
+  window.sendRawDebugHex = sendRawDebugHex;
   window.payloadResetFilters = payloadResetFilters;
   window.payloadGoPage = payloadGoPage;
   window.resetOperationLogFilters = resetOperationLogFilters;

@@ -1,0 +1,48 @@
+{
+  "filename": "涅凰智农小程序硬件侧MCU0说明书0910.pptx",
+  "library_file_id": "libfile_32d976a86e9c819189ac20754c38c2c9",
+  "file_id": "file_000000004ee881f686f94d4a71581918",
+  "library_version": 0,
+  "size_bytes": 136911,
+  "sha256": "6e6193e9e8e55cfbf91cc656499512e9cf5f8d5f7eb4d06c312a24986bb728b2",
+  "source_version_date": "文件名0910；年份及甲方正式版本号未提供",
+  "checked_date": "2026-09-30",
+  "pages": 12,
+  "visual_checked_pages": [
+    3,
+    4,
+    7,
+    8,
+    9
+  ],
+  "visual_review_method": "在Keynote打开并检查截图；其余页面文本提取，不宣称全文视觉验收",
+  "followup_confirmations": [
+    {
+      "date": "2026-09-30",
+      "timezone": "Asia/Shanghai",
+      "reference": "Sentinel_b09f83f402b081919f9a6beb1a415765",
+      "document": "confirmation-20260930.md"
+    },
+    {
+      "date": "2026-09-30",
+      "reference": "Sentinel_4f802a404d6c819184ef54192ad5fff7",
+      "document": "confirmation-20260930.md"
+    },
+    {
+      "date": "2026-09-30",
+      "timezone": "Asia/Shanghai",
+      "reference": "Sentinel_ba6822e926e881919cb59011effe3859",
+      "document": "confirmation-20260930-followup.md"
+    },
+    {
+      "date": "2026-09-30",
+      "document": "confirmation-chat-image-20260930.md",
+      "library_file_id": "libfile_aec436ad82d08191800daa6eb76836d5",
+      "file_id": "file_000000006c8881f5912f04f903bf2d5a",
+      "version": 0,
+      "size_bytes": 330865,
+      "sha256": "b1b16d3ca0a0846577611a365dbbefdc4453947aaf8a270c39f105412f5c9de6",
+      "pixels_verified": true
+    }
+  ]
+}

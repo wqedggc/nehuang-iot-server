@@ -49,3 +49,9 @@ server.log
 # ============================================================================
 .DS_Store
 Thumbs.db
+
+# Runtime deployment state
+*.pid
+/.deploy-build/
+/.deploy-backups/
+__pycache__/
