@@ -288,7 +288,29 @@ func (h *adminHandler) handleCollectors(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{"data": collectors})
+	items := make([]map[string]any, 0, len(collectors))
+	for _, item := range collectors {
+		items = append(items, map[string]any{
+			"node_id":            idStr(item.NodeID),
+			"gateway_id":         idStr(item.GatewayID),
+			"frequency":          item.Frequency,
+			"device_external_id": item.DeviceExternalID,
+			"node_name":          item.NodeName,
+			"shed_no":            item.ShedNo,
+			"base_name":          item.BaseName,
+			"area_name":          item.AreaName,
+			"collector_no":       item.CollectorNo,
+			"node_status":        item.NodeStatus,
+			"online_status":      item.OnlineStatus,
+			"last_report_at_ms":  item.LastReportAtMS,
+			"last_raw_event_id":  optionalIDString(item.LastRawEventID),
+			"remark":             item.Remark,
+			"extra":              item.Extra,
+			"created_at":         item.CreatedAt,
+			"updated_at":         item.UpdatedAt,
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"data": items})
 }
 
 // handleBindings 处理 GET /api/v1/admin/bindings。
@@ -816,7 +838,32 @@ func (h *adminHandler) handleRawEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{"data": events})
+	items := make([]map[string]any, 0, len(events))
+	for _, item := range events {
+		items = append(items, map[string]any{
+			"raw_event_id":     idStr(item.RawEventID),
+			"gateway_id":       optionalIDString(item.GatewayID),
+			"node_id":          optionalIDString(item.NodeID),
+			"point_id":         optionalIDString(item.PointID),
+			"gateway_name":     item.GatewayName,
+			"event_type":       item.EventType,
+			"source_type":      item.SourceType,
+			"remote_ip":        item.RemoteIP,
+			"remote_port":      item.RemotePort,
+			"payload_hex":      item.PayloadHex,
+			"payload_snapshot": item.PayloadSnapshot,
+			"parse_status":     item.ParseStatus,
+			"parse_error":      item.ParseError,
+			"message_id":       item.MessageID,
+			"capture_id":       item.CaptureID,
+			"event_count":      item.EventCount,
+			"parsed_count":     item.ParsedCount,
+			"received_at_ms":   item.ReceivedAtMS,
+			"created_at":       item.CreatedAt,
+			"updated_at":       item.UpdatedAt,
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"data": items})
 }
 
 // handleControlLogs 处理 GET /api/v1/admin/control-logs。
@@ -1790,6 +1837,10 @@ func (h *adminHandler) handleFarmerUpdate(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	if req.Status != nil && *req.Status != domain.UserStatusActive && *req.Status != domain.UserStatusDisabled && *req.Status != domain.UserStatusDeleted {
+		writeCode(w, http.StatusBadRequest, 400, "invalid farmer status")
+		return
+	}
 	updates := map[string]any{
 		"display_name": nil,
 		"mobile":       nil,
@@ -1986,4 +2037,11 @@ func (h *adminHandler) handlePayloadEventDetail(w http.ResponseWriter, r *http.R
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"data": detail})
+}
+
+func optionalIDString(id *uint64) any {
+	if id == nil {
+		return nil
+	}
+	return idStr(*id)
 }

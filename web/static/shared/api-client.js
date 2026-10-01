@@ -77,8 +77,8 @@
     if (body != null && method !== 'GET') opts.body = JSON.stringify(body);
 
     return fetch(buildURL(path), opts).then(function (res) {
-      clearTimeout(timeoutID);
       return res.text().then(function (text) {
+        clearTimeout(timeoutID);
         var payload = {};
         if (text) {
           try { payload = JSON.parse(text); }
