@@ -208,7 +208,7 @@ func TestHandleConnDispatchesPendingCommandsAndMarksSent(t *testing.T) {
 				_ = json.NewEncoder(w).Encode(map[string]any{
 					"data": map[string]any{
 						"items": []map[string]any{
-							{"command_id": "9001", "command_hex": "AABBCC"},
+							{"command_id": "9001", "command_hex": "7E09000103122501818B92"},
 						},
 					},
 				})
@@ -258,15 +258,15 @@ func TestHandleConnDispatchesPendingCommandsAndMarksSent(t *testing.T) {
 		t.Fatalf("write coalesced register: %v", err)
 	}
 
-	received := make([]byte, 3)
+	received := make([]byte, 11)
 	if err := clientConn.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
 		t.Fatalf("set read deadline: %v", err)
 	}
 	if _, err := io.ReadFull(clientConn, received); err != nil {
 		t.Fatalf("read pending command payload: %v", err)
 	}
-	if got := strings.ToUpper(hex.EncodeToString(received)); got != "AABBCC" {
-		t.Fatalf("pending command bytes: want AABBCC, got %s", got)
+	if got := strings.ToUpper(hex.EncodeToString(received)); got != "7E09000103122501818B92" {
+		t.Fatalf("pending command bytes: want complete verified frame, got %s", got)
 	}
 
 	select {
@@ -504,7 +504,7 @@ func TestHandleConnDoesNotMarkSentAfterDisconnect(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"data": map[string]any{
 					"items": []map[string]any{
-						{"command_id": "9002", "command_hex": "AABBCC"},
+						{"command_id": "9002", "command_hex": "7E09000103122501818B92"},
 					},
 				},
 			})

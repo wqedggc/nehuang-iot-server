@@ -27,7 +27,7 @@ func TestRawDebugRequiresAdminConfirmationAndSafeHex(t *testing.T) {
 		role           domain.Role
 		confirmed      bool
 		want           int
-	}{{"admin", "01 03", "admin", domain.RoleAdmin, true, 202}, {"no confirmation", "0103", "admin", domain.RoleAdmin, false, 400}, {"cache clear", "0102020000000000", "admin", domain.RoleAdmin, true, 400}, {"farmer", "0103", "mini", domain.RoleFarmer, true, 403}, {"bad hex", "01ZZ", "admin", domain.RoleAdmin, true, 400}} {
+	}{{"admin", "7E 09 00 01 03 12 25 01 81 8B 92", "admin", domain.RoleAdmin, true, 202}, {"no confirmation", "0103", "admin", domain.RoleAdmin, false, 400}, {"cache clear", "0102020000000000", "admin", domain.RoleAdmin, true, 400}, {"farmer", "0103", "mini", domain.RoleFarmer, true, 403}, {"bad hex", "01ZZ", "admin", domain.RoleAdmin, true, 400}} {
 		t.Run(tc.name, func(t *testing.T) {
 			repo := &mockRawDebugAdminRepo{}
 			h := &adminHandler{repo: repo}
@@ -42,7 +42,7 @@ func TestRawDebugRequiresAdminConfirmationAndSafeHex(t *testing.T) {
 			if tc.want != 202 && repo.calls != 0 {
 				t.Fatal("rejected input queued")
 			}
-			if tc.want == 202 && repo.input.CommandHex != "0103" {
+			if tc.want == 202 && repo.input.CommandHex != "7E09000103122501818B92" {
 				t.Fatal("bytes changed")
 			}
 		})

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"nehuang-iot-server/internal/controlpolicy"
 	"strings"
 	"unicode"
 )
@@ -20,7 +21,11 @@ type RawDebugCommandInput struct {
 	CommandHex, RequestID, Remark string
 }
 
-func ValidateRawDebugHex(input string) (string, error) {
+func ValidateRawDebugHex(input string) (string, error) { return validateDownlinkHex(input, false) }
+
+// ValidateControlHex preserves only the existing F0/0F/00 custom control contract.
+func ValidateControlHex(input string) (string, error) { return validateDownlinkHex(input, true) }
+func validateDownlinkHex(input string, allowLegacy bool) (string, error) {
 	var b strings.Builder
 	for _, c := range input {
 		if unicode.IsSpace(c) {
@@ -36,10 +41,8 @@ func ValidateRawDebugHex(input string) (string, error) {
 		return "", fmt.Errorf("command must contain 1..512 complete bytes")
 	}
 	raw, _ := hex.DecodeString(text)
-	// Known 8-byte BB02 clear-cache body is blocked, including a possible prefix.
-	// Unknown opaque protocols still require the operator's no-clear confirmation.
-	if len(raw) >= 8 && raw[len(raw)-6] == 2 {
-		return "", fmt.Errorf("BB02 cache-clear command is disabled")
+	if err := controlpolicy.ValidateDownlink(raw, allowLegacy); err != nil {
+		return "", err
 	}
 	return text, nil
 }

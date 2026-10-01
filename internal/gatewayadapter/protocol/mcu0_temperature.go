@@ -9,7 +9,7 @@ import (
 type MCU0TemperatureFrame struct {
 	DeviceID [2]byte
 	Clock    [3]byte
-	Mode     string
+	Mode     string // history identifies a report kind, not current automatic control mode.
 	Tag      MCU1Tag
 	Samples  []MCU0TemperatureSample
 }
@@ -56,12 +56,12 @@ func DecodeMCU0TemperatureFrame(raw []byte, boundaryConfirmed bool) (MCU0Tempera
 	f.Tag = tag
 	switch raw[2] {
 	case 1:
-		f.Mode = "automatic"
+		f.Mode = "history"
 		if len(raw) == 10 && raw[6] == 0 {
 			return f, nil
 		}
 		if len(raw) < 12 || (len(raw)-9)%3 != 0 {
-			return f, fmt.Errorf("automatic history requires 1..15 complete records")
+			return f, fmt.Errorf("history report requires 1..15 complete records")
 		}
 		count := (len(raw) - 9) / 3
 		for i := 0; i < count; i++ {

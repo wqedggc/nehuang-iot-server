@@ -6,8 +6,8 @@ import (
 )
 
 func TestRawDebugHexIsExactAndBounded(t *testing.T) {
-	v, err := ValidateRawDebugHex("01 03\n00 00 00 0A")
-	if err != nil || v != "01030000000A" {
+	v, err := ValidateRawDebugHex("7E 09\n00 01 03 12 25 01 81 8B 92")
+	if err != nil || v != "7E09000103122501818B92" {
 		t.Fatal(v, err)
 	}
 	for _, v := range []string{"", "0x01", "01ZZ", "0", "01,02", strings.Repeat("AA", 513), "0102020000000000"} {
@@ -15,7 +15,7 @@ func TestRawDebugHexIsExactAndBounded(t *testing.T) {
 			t.Fatalf("unsafe input accepted %q", v)
 		}
 	}
-	if _, err := ValidateRawDebugHex(strings.Repeat("AA", 512)); err != nil {
+	if _, err := ValidateRawDebugHex(strings.Repeat("AA", 512)); err == nil {
 		t.Fatal(err)
 	}
 }

@@ -1254,9 +1254,11 @@ func buildAdminControlCommandInput(pointID uint64, userID uint64, action string,
 	}
 	trimmedHex := normalizeHexCommand(commandHex)
 	if trimmedHex != "" {
-		if !isHexCommand(trimmedHex) {
-			return input, "", fmt.Errorf("command_hex must be hex")
+		validated, err := domain.ValidateControlHex(commandHex)
+		if err != nil {
+			return input, "", err
 		}
+		trimmedHex = validated
 		input.CommandType = domain.CommandTypeCustomHex
 		input.CommandHex = trimmedHex
 		return input, "自定义", nil

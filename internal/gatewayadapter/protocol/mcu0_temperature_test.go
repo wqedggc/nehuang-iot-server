@@ -41,7 +41,7 @@ func TestMCU0TemperatureFrameValidationAndMode(t *testing.T) {
 	}
 	history = AppendCRC16Modbus(append(history, 0xC0))
 	f, err = DecodeMCU0TemperatureFrame(history, true)
-	if err != nil || f.Mode != "automatic" || len(f.Samples) != 12 {
+	if err != nil || f.Mode != "history" || len(f.Samples) != 12 {
 		t.Fatalf("%+v %v", f, err)
 	}
 	if _, err := DecodeMCU0TemperatureFrame(append(history, real...), true); err == nil {

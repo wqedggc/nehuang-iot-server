@@ -55,7 +55,7 @@ func (c *rawTestConn) QueryContext(_ context.Context, q string, _ []driver.Named
 		return &rawTestRows{values: []driver.Value{"TEST", "external", int64(1)}}, nil
 	case strings.Contains(q, "command_id, command_hex"):
 		if c.s.duplicate {
-			return &rawTestRows{values: []driver.Value{int64(123), "0103", int64(2)}}, nil
+			return &rawTestRows{values: []driver.Value{int64(123), "7E09000103122501818B92", int64(2)}}, nil
 		}
 		return &rawTestRows{}, nil
 	case strings.Contains(q, "COUNT(*)"):
@@ -99,7 +99,7 @@ func rawTestRepo(t *testing.T, s *rawTestState) *Repository {
 	return &Repository{db: db}
 }
 func rawTestInput() domain.RawDebugCommandInput {
-	return domain.RawDebugCommandInput{GatewayID: 1, GatewayName: "TEST", UserID: 2, Role: domain.RoleAdmin, CommandHex: "01 03", RequestID: strings.Repeat("a", 32)}
+	return domain.RawDebugCommandInput{GatewayID: 1, GatewayName: "TEST", UserID: 2, Role: domain.RoleAdmin, CommandHex: "7E09000103122501818B92", RequestID: strings.Repeat("a", 32)}
 }
 func TestRawDebugRepositoryAtomicAuditAndIdempotency(t *testing.T) {
 	for _, tc := range []struct {

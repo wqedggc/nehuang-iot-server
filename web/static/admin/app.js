@@ -3643,7 +3643,7 @@
     overlay.innerHTML = '<div class="modal" style="max-width:840px">' +
       '<div class="modal-header"><h3>报文调试窗口</h3><button class="modal-close" onclick="closeModal()">×</button></div>' +
       '<div class="modal-body">' +
-      '<p>先核对完整字节，再联调。发送原样字节，不自动添加包头、包长或CRC。清缓存指令禁用；没有即时回应不能证明失败，请勿重复发送。</p>' +
+      '<p>先核对完整字节，再联调。发送原样字节，不自动添加包头、包长或CRC；当前仅放行已核单帧校时、手动与阈值报文，未知格式、多帧和尾随字节禁止发送。清缓存指令禁用；没有即时回应不能证明失败，请勿重复发送。</p>' +
       '<div class="form-group"><label class="form-label" for="raw-debug-hex">下行Hex草稿（最多512字节）</label><textarea id="raw-debug-hex" class="form-input form-textarea" placeholder="例如 01 03 00 00 00 0A"></textarea></div>' +
       '<label><input id="raw-debug-crc" type="checkbox">计算选区CRC-16/Modbus（FFFF/A001，结果低字节先，仅预览）</label>' +
       '<div style="display:flex;gap:12px;margin:12px 0"><label>起始字节（从0开始）<input id="raw-debug-crc-start" type="number" min="0" class="form-input"></label><label>结束字节（包含）<input id="raw-debug-crc-end" type="number" min="0" class="form-input"></label></div>' +
@@ -3695,9 +3695,8 @@
       var target = selection === '' ? null : rawDebugTargets[Number(selection)];
       if (!target) throw new Error('请选择现有网关');
       if (!$('#raw-debug-no-clear').checked) throw new Error('请先确认设备、字节及不清缓存');
-      var preview = NHRawDebug.inspectHex($('#raw-debug-hex').value);
+      var preview = NHRawDebug.validateDownlink($('#raw-debug-hex').value);
       var hex = preview.formattedHex.replace(/\s/g, '');
-      if (hex.length >= 16 && hex.slice(hex.length - 12, hex.length - 10) === '02') throw new Error('BB02清缓存指令当前禁用');
       var fingerprint = target.id + ':' + target.name + ':' + hex;
       if (rawDebugRequest && rawDebugRequest.fingerprint !== fingerprint) throw new Error('本窗口已提交另一份报文，请关闭重开后明确发起新请求');
       if (!window.confirm('向 ' + target.name + ' [ID ' + target.id + '] 提交 ' + preview.byteCount + ' 字节？\n' + preview.formattedHex + '\n仅发送一次，不自动重试。设备可能不即时回应。')) return;

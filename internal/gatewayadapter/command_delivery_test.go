@@ -21,7 +21,7 @@ func TestPendingCommandRetriesSentWithoutRepeatingTCPWrite(t *testing.T) {
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/v1/adapter/commands/pending":
-			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"items": []map[string]any{{"command_id": "9002", "command_hex": "010203"}}}})
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"items": []map[string]any{{"command_id": "9002", "command_hex": "7E09000103122501818B92"}}}})
 		case "/api/v1/adapter/commands/9002/sent":
 			attempt := sentAttempts.Add(1)
 			if attempt < 3 {
@@ -51,7 +51,7 @@ func TestPendingCommandRetriesSentWithoutRepeatingTCPWrite(t *testing.T) {
 	go func() {
 		defer close(readerDone)
 		for {
-			var payload [3]byte
+			var payload [11]byte
 			if _, err := io.ReadFull(clientConn, payload[:]); err != nil {
 				return
 			}

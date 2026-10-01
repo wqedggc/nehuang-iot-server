@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"nehuang-iot-server/internal/controlpolicy"
 	"net"
 	"net/http"
 	"strconv"
@@ -43,10 +44,12 @@ type Server struct {
 	logger    *Logger
 	forwarder *Forwarder
 
-	listener net.Listener
-	wg       sync.WaitGroup
-	closing  atomic.Bool
-	pruneNow chan struct{}
+	listener    net.Listener
+	connMu      sync.Mutex
+	connections map[net.Conn]context.CancelFunc
+	wg          sync.WaitGroup
+	closing     atomic.Bool
+	pruneNow    chan struct{}
 
 	activeConnections atomic.Int64
 	rawFrames         atomic.Uint64
@@ -105,11 +108,12 @@ func NewServer(cfg Config, jw *journal.Writer, logger *Logger) *Server {
 		logger = NewLogger(nil)
 	}
 	return &Server{
-		cfg:       cfg,
-		journal:   jw,
-		logger:    logger,
-		forwarder: NewForwarder(cfg.APIBaseURL, cfg.AdapterToken),
-		pruneNow:  make(chan struct{}, 1),
+		cfg:         cfg,
+		journal:     jw,
+		logger:      logger,
+		forwarder:   NewForwarder(cfg.APIBaseURL, cfg.AdapterToken),
+		pruneNow:    make(chan struct{}, 1),
+		connections: make(map[net.Conn]context.CancelFunc),
 	}
 }
 
@@ -169,6 +173,7 @@ func (s *Server) Run(ctx context.Context) error {
 		s.closing.Store(true)
 		replayCancel()
 		_ = ln.Close()
+		s.closeConnections()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
 		_ = healthSrv.Shutdown(shutdownCtx)
@@ -177,6 +182,8 @@ func (s *Server) Run(ctx context.Context) error {
 	case err := <-errCh:
 		s.closing.Store(true)
 		replayCancel()
+		_ = ln.Close()
+		s.closeConnections()
 		_ = healthSrv.Close()
 		s.wg.Wait()
 		return err
@@ -192,15 +199,42 @@ func (s *Server) acceptLoop() error {
 			}
 			return err
 		}
+		connCtx, cancel := context.WithCancel(context.Background())
+		s.connMu.Lock()
+		if s.closing.Load() {
+			s.connMu.Unlock()
+			cancel()
+			conn.Close()
+			return nil
+		}
+		s.connections[conn] = cancel
 		s.wg.Add(1)
-		go func() {
+		s.connMu.Unlock()
+		go func(c net.Conn, ctx context.Context, cancel context.CancelFunc) {
 			defer s.wg.Done()
-			s.handleConn(conn)
-		}()
+			defer func() { s.connMu.Lock(); delete(s.connections, c); s.connMu.Unlock() }()
+			s.handleConnContext(c, ctx, cancel)
+		}(conn, connCtx, cancel)
 	}
 }
 
+func (s *Server) closeConnections() {
+	s.connMu.Lock()
+	peers := make(map[net.Conn]context.CancelFunc, len(s.connections))
+	for c, cancel := range s.connections {
+		peers[c] = cancel
+	}
+	s.connMu.Unlock()
+	for c, cancel := range peers {
+		cancel()
+		_ = c.Close()
+	}
+}
 func (s *Server) handleConn(conn net.Conn) {
+	ctx, cancel := context.WithCancel(context.Background())
+	s.handleConnContext(conn, ctx, cancel)
+}
+func (s *Server) handleConnContext(conn net.Conn, connCtx context.Context, cancel context.CancelFunc) {
 	defer conn.Close()
 	s.activeConnections.Add(1)
 	defer s.activeConnections.Add(-1)
@@ -211,7 +245,6 @@ func (s *Server) handleConn(conn net.Conn) {
 	var gatewayName string
 	var gatewayExternalID string
 	var rawSeq atomic.Uint64
-	connCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	var startCommandPolling sync.Once
 
@@ -245,7 +278,7 @@ func (s *Server) handleConn(conn net.Conn) {
 		}
 		_ = conn.SetReadDeadline(time.Now().Add(s.cfg.ReadTimeout))
 		n, err := conn.Read(buf)
-		if err != nil {
+		if err != nil && n == 0 {
 			if ne, ok := err.(net.Error); ok && ne.Timeout() {
 				s.logger.Warn("gateway_connection_read_timeout", map[string]any{
 					"connection_id": connectionID,
@@ -299,10 +332,14 @@ func (s *Server) handleConn(conn net.Conn) {
 		if gatewayName != "" && gatewayExternalID == "" {
 			gatewayExternalID = protocol.GatewayExternalID(gatewayName)
 		}
-		if gatewayExternalID != "" {
+		if gatewayExternalID != "" && err == nil {
 			startCommandPolling.Do(func() {
 				s.startPendingCommandLoop(connCtx, conn, connectionID, gatewayName, gatewayExternalID, remoteAddr, remoteIP, remotePort, &rawSeq)
 			})
+		}
+		// net.Conn may return final bytes and EOF together; preserve bytes first.
+		if err != nil {
+			return
 		}
 	}
 }
@@ -378,6 +415,13 @@ func (s *Server) dispatchPendingCommands(ctx context.Context, conn net.Conn, con
 					"command_id":          command.CommandID,
 					"error":               err.Error(),
 				})
+				continue
+			}
+			if policyErr := controlpolicy.ValidateDownlink(payload, !command.SendOnce); policyErr != nil {
+				s.logger.Warn("gateway_command_policy_rejected_no_send", map[string]any{"command_id": command.CommandID, "error": policyErr.Error()})
+				if reportErr := s.forwarder.RejectUnsafeCommand(ctx, command.CommandID); reportErr != nil {
+					s.logger.Warn("gateway_command_policy_reject_report_failed", map[string]any{"command_id": command.CommandID})
+				}
 				continue
 			}
 			if command.SendOnce {
@@ -596,19 +640,20 @@ func (s *Server) healthRoutes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		writeProbe(w, http.StatusOK, map[string]any{
-			"status":               "ok",
-			"active_connections":   s.activeConnections.Load(),
-			"raw_frames":           s.rawFrames.Load(),
-			"raw_pending":          s.journal.PendingCount(),
-			"raw_write_failures":   s.rawWriteFailures.Load(),
-			"forward_failures":     s.forwardFailures.Load(),
-			"raw_prune_failures":   s.rawPruneFailures.Load(),
-			"raw_pruned_segments":  s.rawPrunedSegments.Load(),
-			"raw_pruned_bytes":     s.rawPrunedBytes.Load(),
-			"raw_pruned_ack_files": s.rawPrunedAckFiles.Load(),
-			"raw_pruned_ack_bytes": s.rawPrunedAckBytes.Load(),
-			"raw_last_prune_at_ms": s.rawLastPruneAtMS.Load(),
-			"raw_last_prune_ok":    s.rawLastPruneOK.Load(),
+			"status":                        "ok",
+			"connection_shutdown_supported": true,
+			"active_connections":            s.activeConnections.Load(),
+			"raw_frames":                    s.rawFrames.Load(),
+			"raw_pending":                   s.journal.PendingCount(),
+			"raw_write_failures":            s.rawWriteFailures.Load(),
+			"forward_failures":              s.forwardFailures.Load(),
+			"raw_prune_failures":            s.rawPruneFailures.Load(),
+			"raw_pruned_segments":           s.rawPrunedSegments.Load(),
+			"raw_pruned_bytes":              s.rawPrunedBytes.Load(),
+			"raw_pruned_ack_files":          s.rawPrunedAckFiles.Load(),
+			"raw_pruned_ack_bytes":          s.rawPrunedAckBytes.Load(),
+			"raw_last_prune_at_ms":          s.rawLastPruneAtMS.Load(),
+			"raw_last_prune_ok":             s.rawLastPruneOK.Load(),
 		})
 	})
 	mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {

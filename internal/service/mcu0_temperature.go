@@ -70,7 +70,7 @@ func IngestMCU0Temperature(ctx context.Context, store MCU0TemperatureStore, rawE
 		return result, err
 	}
 	result.Samples = len(batch.Samples)
-	if f.Mode == "automatic" && r.ACKClockConfirmed && r.ACKClock != nil {
+	if f.Mode == "history" && r.ACKClockConfirmed && r.ACKClock != nil {
 		result.ACK = protocol.BuildMCU0HistoryACK(f.DeviceID, *r.ACKClock)
 	}
 	return result, nil

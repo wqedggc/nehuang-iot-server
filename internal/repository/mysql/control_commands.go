@@ -11,6 +11,14 @@ import (
 )
 
 func (r *Repository) CreateControlCommandForPoint(ctx context.Context, input domain.CreateControlCommandInput) (*domain.ControlCommand, error) {
+	if input.CommandType == domain.CommandTypeCustomHex {
+		safe, err := domain.ValidateControlHex(input.CommandHex)
+		if err != nil {
+			return nil, err
+		}
+		input.CommandHex = safe
+	}
+
 	if input.PointID == 0 {
 		return nil, fmt.Errorf("point_id is required")
 	}

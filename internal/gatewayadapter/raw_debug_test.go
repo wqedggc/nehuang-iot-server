@@ -43,7 +43,7 @@ func TestRawDebugClaimPreventsRetryAcrossConnectionState(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		buf := make([]byte, 3)
+		buf := make([]byte, 11)
 		for {
 			if _, err := io.ReadFull(client, buf); err != nil {
 				return
@@ -52,7 +52,7 @@ func TestRawDebugClaimPreventsRetryAcrossConnectionState(t *testing.T) {
 		}
 	}()
 	var seq atomic.Uint64
-	command := []PendingCommand{{CommandID: 9009, CommandHex: "010203", SendOnce: true}}
+	command := []PendingCommand{{CommandID: 9009, CommandHex: "7E09000103122501818B92", SendOnce: true}}
 	s.dispatchPendingCommands(context.Background(), server, "conn1", "FP_TEST", "TEST", "pipe", "", 0, &seq, command, map[uint64]bool{})
 	// A fresh connection-local cache cannot repeat the durable claim/write.
 	s.dispatchPendingCommands(context.Background(), server, "conn2", "FP_TEST", "TEST", "pipe", "", 0, &seq, command, map[uint64]bool{})
@@ -72,7 +72,7 @@ func TestRawDebugDoesNotWriteWhenClaimResponseFails(t *testing.T) {
 	defer a.Close()
 	defer b.Close()
 	var seq atomic.Uint64
-	s.dispatchPendingCommands(context.Background(), a, "conn", "FP_TEST", "TEST", "pipe", "", 0, &seq, []PendingCommand{{CommandID: 9, CommandHex: "010203", SendOnce: true}}, map[uint64]bool{})
+	s.dispatchPendingCommands(context.Background(), a, "conn", "FP_TEST", "TEST", "pipe", "", 0, &seq, []PendingCommand{{CommandID: 9, CommandHex: "7E09000103122501818B92", SendOnce: true}}, map[uint64]bool{})
 	if len(jw.Pending(10)) != 0 {
 		t.Fatal("write attempted without confirmed claim")
 	}

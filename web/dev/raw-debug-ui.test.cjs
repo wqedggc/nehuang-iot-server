@@ -1,0 +1,28 @@
+const fs = require('node:fs');
+const assert = require('node:assert/strict');
+const { JSDOM } = require('jsdom');
+const root = require('node:path').join(__dirname, '../static/admin/');
+(async () => {
+ const dom = new JSDOM(fs.readFileSync(root+'index.html','utf8'),{url:'http://localhost/#payload-events',runScripts:'outside-only'});
+ const w=dom.window;w.scrollTo=()=>{};w.localStorage.setItem('nh_admin_token','offline-synthetic');let posts=0,calls=[];
+ w.NHApi={getGateways:async()=>({data:[{gateway_id:'123',gateway_name:'FP_TEST'}]}),getPayloadEvents:async p=>{calls.push(p);return {data:{items:[],total:0,page:1,size:20}}},post:async()=>{posts++;throw new Error('send prohibited in rehearsal')}};
+ w.eval(fs.readFileSync(root+'raw-debug.js','utf8'));w.eval(fs.readFileSync(root+'app.js','utf8'));w.renderPage();await new Promise(r=>setTimeout(r,20));
+ assert.ok(w.document.querySelector('#main-content').textContent.includes('报文调试窗口'));
+ w.openRawDebugConsole();const q=id=>w.document.getElementById(id);
+ q('raw-debug-hex').value='01 03 00 00 00 0A';w.previewRawDebugHex();assert.match(q('raw-debug-preview').textContent,/6 字节/);assert.match(q('raw-debug-preview').textContent,/CRC未计算/);assert.match(q('raw-debug-preview').textContent,/未发送/);
+ q('raw-debug-crc').checked=true;w.previewRawDebugHex();assert.match(q('raw-debug-preview').textContent,/明确填写/);
+ q('raw-debug-crc-start').value='0';q('raw-debug-crc-end').value='5';w.previewRawDebugHex();assert.match(q('raw-debug-preview').textContent,/C5 CD/);assert.equal(q('raw-debug-hex').value,'01 03 00 00 00 0A');
+ q('raw-debug-hex').value='<script>alert(1)</script>';w.previewRawDebugHex();assert.match(q('raw-debug-preview').textContent,/校验失败/);assert.equal(q('raw-debug-preview').querySelector('script'),null);
+ q('raw-debug-gateway').value='FP_TEST';w.NHApi.getPayloadEvents=async p=>{calls.push(p);return {data:{items:[{gateway_name:'FP_TEST',source_type:1,message_id:'exact-1',payload_hex:'01<script>'},{gateway_name:'FP_TEST_OTHER',source_type:1,message_id:'wrong-2'},{gateway_name:'FP_TEST',source_type:2,message_id:'wrong-3'}]}}};await w.refreshRawDebugLog();assert.match(q('raw-debug-log').textContent,/exact-1/);assert.doesNotMatch(q('raw-debug-log').textContent,/wrong-/);assert.equal(q('raw-debug-log').querySelector('script'),null);assert.equal(calls.at(-1).size,100);assert.equal(calls.at(-1).source_type,1);
+ let release;w.NHApi.getPayloadEvents=()=>new Promise(r=>{release=r});let pending=w.refreshRawDebugLog();w.openRawDebugConsole();release({data:{items:[{gateway_name:'FP_TEST',source_type:1,message_id:'stale-1'}]}});await pending;assert.equal(q('raw-debug-log').textContent,'尚未读取');assert.equal(posts,0);
+ w.openRawDebugConsole();await new Promise(r=>setTimeout(r,5));w.confirm=()=>true;
+ q('raw-debug-target').value='0';q('raw-debug-hex').value='01 03 00 00 00 0A';await w.sendRawDebugHex();assert.equal(posts,0);
+ q('raw-debug-no-clear').checked=true;q('raw-debug-hex').value='7E 09 00 01 03 12 25 01 81 8B 92';let submitted=[];w.NHApi.post=async(path,body)=>{posts++;submitted.push(body);return {data:{command_id:'456',status:'created'}}};await w.sendRawDebugHex();assert.equal(posts,1);assert.equal(submitted[0].command_hex,'7E09000103122501818B92');assert.equal(submitted[0].gateway_id,'123');assert.equal(submitted[0].gateway_name,'FP_TEST');assert.equal(submitted[0].request_id.length,32);
+ await w.sendRawDebugHex();assert.equal(submitted[1].request_id,submitted[0].request_id);
+ q('raw-debug-hex').value='7E080100020C0000C071';await w.sendRawDebugHex();assert.equal(posts,2);assert.match(q('raw-debug-send-result').textContent,/禁用/);
+ q('raw-debug-hex').value='7E091001030C00008174A0';await w.sendRawDebugHex();assert.equal(posts,2);
+ w.openRawDebugConsole();await new Promise(r=>setTimeout(r,5));q('raw-debug-target').value='0';q('raw-debug-hex').value='7E09000103122501818B92';q('raw-debug-no-clear').checked=true;
+ let failId,failCalls=0;w.NHApi.post=async(path,body)=>{failCalls++;if (!failId) failId=body.request_id;assert.equal(body.request_id,failId);throw new Error('synthetic network failure')};await w.sendRawDebugHex();assert.equal(failCalls,1);assert.match(q('raw-debug-send-result').textContent,/先核对/);await new Promise(r=>setTimeout(r,20));assert.equal(failCalls,1);await w.sendRawDebugHex();assert.equal(failCalls,2);
+ w.openRawDebugConsole();await new Promise(r=>setTimeout(r,5));q('raw-debug-target').value='0';q('raw-debug-hex').value='7E09000103122501818B92';q('raw-debug-no-clear').checked=true;let finishSend;let sends=0;w.NHApi.post=()=>{sends++;return new Promise(r=>finishSend=r)};let activeSend=w.sendRawDebugHex();await w.sendRawDebugHex();assert.equal(sends,1);w.openRawDebugConsole();finishSend({data:{command_id:'old',status:'created'}});await activeSend;assert.equal(q('raw-debug-send-result').textContent,'尚未提交');
+ dom.window.close();console.log('PASS raw debug UI: CRC opt-in, escaped logs, exact gateway, stale response ignored, preview zero sends; explicit confirmed target, stable request ID and BB02 block passed');
+})().catch(e=>{console.error(e);process.exitCode=1});

@@ -1,0 +1,20 @@
+{
+  "version_date": "2026-10-01",
+  "frame_source": {
+    "message_id": "Sentinel_16bd3eaf52888191a530e06b11fa180b",
+    "capture_date": "not present in frame log; do not infer",
+    "status": "user-provided exact byte transcription forwarded from primary task",
+    "frame_count": 50,
+    "sha256": "cc00cd856ee907f5d6b686d1140ae5097e14a4c4d6f665fec799efeaf3aebf56"
+  },
+  "screenshot": {
+    "library_file_id": "libfile_1788737aaa8881918ef1bbc127b8d265",
+    "file_id": "file_00000000894481fbafa9fce017982ec1",
+    "file_name": "image(1).png",
+    "size_bytes": 185728,
+    "sha256": "1de1057ffd4ac4fb243c40407eff998da2a9658a164209371f4e8125e9590cd3",
+    "visual_verified": true,
+    "visible_frame_log": "collapsed; full frame bytes not visible",
+    "privacy": "screenshot retained via Library source, contact names and avatars not reproduced in project docs"
+  }
+}

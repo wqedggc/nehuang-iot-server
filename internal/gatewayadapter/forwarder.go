@@ -214,3 +214,22 @@ func (f *Forwarder) ClaimRawDebugCommand(ctx context.Context, commandID uint64, 
 	}
 	return nil
 }
+
+func (f *Forwarder) RejectUnsafeCommand(ctx context.Context, id uint64) error {
+	body := []byte(`{"status":"failed","error_message":"RAW_POLICY_REJECTED: prohibited or unconfirmed single-frame format; no TCP write attempted"}`)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, f.baseURL+"/api/v1/adapter/commands/"+strconv.FormatUint(id, 10)+"/result", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Adapter-Token", f.token)
+	resp, err := f.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("policy rejection status could not be recorded")
+	}
+	return nil
+}
