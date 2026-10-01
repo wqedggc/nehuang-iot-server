@@ -1,5 +1,8 @@
 # Gateway Adapter
 
+> 历史资料提示（2026-10-02）：下文保留旧MCU1/历史方案，不作为当前MCU0操作或发送依据。当前操作说明见 [硬件接云和报文联调说明](product_manual.md)，已核对协议见 [10/1 MCU0阅读版](protocols/mcu0-20261001/README.md)。BB02清缓存禁止发送；未确认字段不能依据旧文补齐。
+
+
 本文记录硬件端如何接入云端 `gateway-adapter`，以及云端 Adapter 的内部运行方式。硬件协议仍以硬件端最终文档和真实 raw 包为准。
 
 硬件端联调只需要阅读“硬件端联调指南”。`gateway-adapter-mock`、raw journal、replay、运行命令属于云端内部自测和排障工具，硬件端不需要理解或运行。
