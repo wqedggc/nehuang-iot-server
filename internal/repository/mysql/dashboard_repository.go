@@ -146,48 +146,16 @@ func (r *Repository) LatestReportTime(ctx context.Context) (*time.Time, error) {
 //
 //	work_count, control_result_count。
 func (r *Repository) CountIngest(ctx context.Context, rangeCutoff time.Time) (rawEventCount int64, telemetryCount int64, registerCount int64, heartbeatCount int64, workCount int64, controlResultCount int64, err error) {
-	// raw_device_events 总数
-	if err = r.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM raw_device_events WHERE received_at_ms >= ?`, rangeCutoff,
-	).Scan(&rawEventCount); err != nil {
+	// Read the raw-event range once instead of scanning it separately for each type.
+	err = r.db.QueryRowContext(ctx, `SELECT COUNT(*),
+ COALESCE(SUM(event_type = 1), 0), COALESCE(SUM(event_type = 2), 0),
+ COALESCE(SUM(event_type = 3), 0), COALESCE(SUM(event_type = 4), 0)
+ FROM raw_device_events WHERE received_at_ms >= ?`, rangeCutoff).Scan(
+		&rawEventCount, &registerCount, &heartbeatCount, &workCount, &controlResultCount)
+	if err != nil {
 		return
 	}
-
-	// sensor_data 总数（遥测数据）
-	if err = r.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM sensor_data WHERE sampled_at_ms >= ?`, rangeCutoff,
-	).Scan(&telemetryCount); err != nil {
-		return
-	}
-
-	// register: event_type = 1
-	if err = r.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM raw_device_events WHERE received_at_ms >= ? AND event_type = 1`, rangeCutoff,
-	).Scan(&registerCount); err != nil {
-		return
-	}
-
-	// heartbeat: event_type = 2
-	if err = r.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM raw_device_events WHERE received_at_ms >= ? AND event_type = 2`, rangeCutoff,
-	).Scan(&heartbeatCount); err != nil {
-		return
-	}
-
-	// work: event_type = 3
-	if err = r.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM raw_device_events WHERE received_at_ms >= ? AND event_type = 3`, rangeCutoff,
-	).Scan(&workCount); err != nil {
-		return
-	}
-
-	// control_result: event_type = 4
-	if err = r.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM raw_device_events WHERE received_at_ms >= ? AND event_type = 4`, rangeCutoff,
-	).Scan(&controlResultCount); err != nil {
-		return
-	}
-
+	err = r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sensor_data WHERE sampled_at_ms >= ?`, rangeCutoff).Scan(&telemetryCount)
 	return
 }
 
@@ -195,27 +163,10 @@ func (r *Repository) CountIngest(ctx context.Context, rangeCutoff time.Time) (ra
 // TODO: 当前以 parse_status=2（已解析）视为成功，后续 telemetry 完善后改为真实成功率。
 // 返回 heartbeat_total, heartbeat_success, heartbeat_failed。
 func (r *Repository) CountHeartbeatStats(ctx context.Context, rangeCutoff time.Time) (heartbeatTotal int64, heartbeatSuccess int64, heartbeatFailed int64, err error) {
-	// heartbeat 总数（event_type=2）
-	if err = r.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM raw_device_events WHERE received_at_ms >= ? AND event_type = 2`, rangeCutoff,
-	).Scan(&heartbeatTotal); err != nil {
-		return
-	}
-
-	// heartbeat 成功（event_type=2, parse_status=2 已解析）
-	if err = r.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM raw_device_events WHERE received_at_ms >= ? AND event_type = 2 AND parse_status = 2`, rangeCutoff,
-	).Scan(&heartbeatSuccess); err != nil {
-		return
-	}
-
-	// heartbeat 失败（event_type=2, parse_status=3 解析失败）
-	if err = r.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM raw_device_events WHERE received_at_ms >= ? AND event_type = 2 AND parse_status = 3`, rangeCutoff,
-	).Scan(&heartbeatFailed); err != nil {
-		return
-	}
-
+	err = r.db.QueryRowContext(ctx, `SELECT COUNT(*),
+ COALESCE(SUM(parse_status = 2), 0), COALESCE(SUM(parse_status = 3), 0)
+ FROM raw_device_events WHERE received_at_ms >= ? AND event_type = 2`, rangeCutoff).Scan(
+		&heartbeatTotal, &heartbeatSuccess, &heartbeatFailed)
 	return
 }
 
