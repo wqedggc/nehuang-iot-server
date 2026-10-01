@@ -8,6 +8,10 @@ const root = require('node:path').join(__dirname, '../static/admin/');
  w.NHApi={getGateways:async()=>({data:[{gateway_id:'123',gateway_name:'FP_TEST'}]}),getPayloadEvents:async p=>{calls.push(p);return {data:{items:[],total:0,page:1,size:20}}},post:async()=>{posts++;throw new Error('send prohibited in rehearsal')}};
  w.eval(fs.readFileSync(root+'raw-debug.js','utf8'));w.eval(fs.readFileSync(root+'app.js','utf8'));w.renderPage();await new Promise(r=>setTimeout(r,20));
  assert.ok(w.document.querySelector('#main-content').textContent.includes('报文调试窗口'));
+ let finishList;w.NHApi.getPayloadEvents=()=>new Promise(r=>{finishList=r});w.renderPage();assert.ok(w.document.querySelector('#main-content').textContent.includes('报文调试窗口'));finishList({data:{items:[],total:0,page:1,size:20}});await new Promise(r=>setTimeout(r,5));
+ w.NHApi.getPayloadEvents=async()=>{throw new Error('synthetic timeout')};w.renderPage();await new Promise(r=>setTimeout(r,5));assert.ok(w.document.querySelector('#main-content').textContent.includes('报文调试窗口'));assert.ok(w.document.querySelector('#main-content').textContent.includes('synthetic timeout'));
+ w.eval(fs.readFileSync(root+'help-center-content.js','utf8'));for(const section of ['overview','admin','mini','hardware','checklist']){assert.ok(w.NHHelpCenter.render(section).length>100)};
+
  w.openRawDebugConsole();const q=id=>w.document.getElementById(id);
  q('raw-debug-hex').value='01 03 00 00 00 0A';w.previewRawDebugHex();assert.match(q('raw-debug-preview').textContent,/6 字节/);assert.match(q('raw-debug-preview').textContent,/CRC未计算/);assert.match(q('raw-debug-preview').textContent,/未发送/);
  q('raw-debug-crc').checked=true;w.previewRawDebugHex();assert.match(q('raw-debug-preview').textContent,/明确填写/);

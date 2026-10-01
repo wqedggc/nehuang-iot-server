@@ -192,21 +192,32 @@ func (r *Repository) ListPayloadEvents(ctx context.Context, params domain.Payloa
 		}
 	}
 
-	// 查询总数
+	// capture_id's unique index serves transport idempotency, not time browsing.
+	// With a source filter MySQL 5.7 otherwise chooses it and performs a random
+	// clustered-row lookup for every historical capture before filtering by time.
+	browseTable := "raw_device_events"
+	if params.SourceType != nil {
+		browseTable += " IGNORE INDEX (uk_raw_source_capture)"
+	}
 	var total int
-	countQuery := "SELECT COUNT(*) FROM raw_device_events " + whereClause
+	countQuery := "SELECT COUNT(*) FROM " + browseTable + " " + whereClause
 	if err := r.db.QueryRowContext(ctx, countQuery, args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 
-	// 查询列表
+	// Sort only IDs and timestamps, then load payloads for the requested page.
+	// Keep timestamp ordering and use ID as a deterministic tie-breaker.
 	offset := (params.Page - 1) * params.Size
-	listQuery := `SELECT raw_event_id, COALESCE(gateway_name,''), source_type, event_type, parse_status,
-		COALESCE(parse_error,''), COALESCE(message_id,''), event_count, parsed_count,
-		COALESCE(remote_ip,''), COALESCE(remote_port,0), received_at_ms,
-		COALESCE(payload_hex,''), COALESCE(payload_snapshot,'')
-	FROM raw_device_events ` + whereClause +
-		` ORDER BY received_at_ms DESC LIMIT ? OFFSET ?`
+	listQuery := `SELECT e.raw_event_id, COALESCE(e.gateway_name,''), e.source_type, e.event_type, e.parse_status,
+ COALESCE(e.parse_error,''), COALESCE(e.message_id,''), e.event_count, e.parsed_count,
+ COALESCE(e.remote_ip,''), COALESCE(e.remote_port,0), e.received_at_ms,
+ COALESCE(e.payload_hex,''), COALESCE(e.payload_snapshot,'')
+ FROM raw_device_events e JOIN (
+ SELECT raw_event_id, received_at_ms FROM ` + browseTable + " " + whereClause +
+		` ORDER BY received_at_ms DESC, raw_event_id DESC LIMIT ? OFFSET ?
+ ) page ON e.raw_event_id = page.raw_event_id
+ ORDER BY page.received_at_ms DESC, page.raw_event_id DESC`
+
 	listArgs := append(args, params.Size, offset)
 
 	rows, err := r.db.QueryContext(ctx, listQuery, listArgs...)

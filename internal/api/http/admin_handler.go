@@ -1934,7 +1934,13 @@ func (h *adminHandler) handleFarmers(w http.ResponseWriter, r *http.Request) {
 // handlePayloadEvents 处理 GET /api/v1/admin/payload-events。
 // 分页查询 payload 事件列表，支持 source_type/event_type/parse_status/时间范围/keyword 筛选。
 func (h *adminHandler) handlePayloadEvents(w http.ResponseWriter, r *http.Request) {
+	started := time.Now()
+	responseStatus := http.StatusInternalServerError
 	q := r.URL.Query()
+	defer func() {
+		log.Printf("[payload-events] status=%d page=%s size=%s source_type=%s event_type=%s parse_status=%s start=%s end=%s keyword_present=%t duration=%s", responseStatus, q.Get("page"), q.Get("size"), q.Get("source_type"), q.Get("event_type"), q.Get("parse_status"), q.Get("start"), q.Get("end"), q.Get("keyword") != "", time.Since(started))
+	}()
+
 	params := domain.PayloadEventQuery{
 		Page: 1,
 		Size: 20,
@@ -2001,6 +2007,7 @@ func (h *adminHandler) handlePayloadEvents(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
+	responseStatus = http.StatusOK
 	writeJSON(w, http.StatusOK, map[string]any{
 		"data": map[string]any{
 			"items": items,

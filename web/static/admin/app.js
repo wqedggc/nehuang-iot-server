@@ -960,125 +960,7 @@
 
   function renderHelpCenter(container) {
     var activeSection = normalizeHelpSection(getHashParam('section'));
-    container.innerHTML = '<div class="page-header"><span class="table-count">管理员 / C 端 / 硬件联调说明</span></div>' +
-      '<div class="help-tabs">' +
-        helpTab('overview', '总览', activeSection) +
-        helpTab('admin', '管理员手册', activeSection) +
-        helpTab('mini', 'C 端手册', activeSection) +
-        helpTab('hardware', '硬件联调', activeSection) +
-        helpTab('checklist', '上线验证', activeSection) +
-      '</div>' +
-      '<div class="info-card help-section" id="help-overview">' +
-        '<h3>总览</h3>' +
-        '<div class="detail-section">' +
-          '<p style="font-size:13px;color:var(--color-text);margin:0">统一术语：<strong>设备网关</strong> / <strong>采集执行器</strong> / <strong>功能点</strong> / <strong>原始报文</strong>。</p>' +
-        '</div>' +
-        '<div class="detail-section">' +
-          '<h4 style="font-size:14px;margin:0 0 8px">最小操作闭环</h4>' +
-          helpList([
-            '设备网关先注册并持续发送心跳，平台显示在线基础状态。',
-            '管理员把设备网关绑定给农户，并补齐采集执行器和功能点。',
-            'C 端农户查看绑定设备，管理员或农户可在可控功能点发起联调控制。',
-            '所有上行原始报文都进入原始报文排查；所有控制进入控制日志。'
-          ]) +
-        '</div>' +
-        '<div class="detail-section">' +
-          '<h4 style="font-size:14px;margin:0 0 8px">四个节点数据走向</h4>' +
-          renderDataFlowDiagram() +
-        '</div>' +
-        '<div class="detail-section">' +
-          '<h4 style="font-size:14px;margin:0 0 8px">报文方向、周期与处理</h4>' +
-          renderPacketMatrix() +
-        '</div>' +
-        '<div class="detail-section">' +
-          '<h4 style="font-size:14px;margin:0 0 8px">如何理解两种状态</h4>' +
-          '<div class="help-status-guide">' +
-            '<div><strong>协议解码状态</strong><span>回答“这串字节代表什么”。已确认的 BB、Tag、CRC 可以解码；时间、温度换算规则缺失时显示部分解析。</span></div>' +
-            '<div><strong>业务处理状态</strong><span>回答“数据是否已写入网关、传感器、告警或控制结果”。协议能看懂，不代表已经完成业务入库。</span></div>' +
-          '</div>' +
-        '</div>' +
-        '<div class="detail-section">' +
-          '<h4 style="font-size:14px;margin:0 0 8px">如何理解三个标识</h4>' +
-          '<div class="help-status-guide">' +
-            '<div><strong>原始事件 ID</strong><span>数据库中这条 raw 记录的唯一雪花 ID，用于打开详情和排障，不是硬件报文内容。</span></div>' +
-            '<div><strong>连接内消息 ID</strong><span>Adapter 生成的“TCP 连接 ID-帧序号”，例如 abc...-4 表示该连接收到的第 4 帧。</span></div>' +
-            '<div><strong>设备身份</strong><span>FP_xxx 标识设备网关；MCU1 报文前 2 字节 AA AA 标识采集执行器。两者缺一不可，来源 IP 只用于排障，不作为稳定身份。</span></div>' +
-          '</div>' +
-        '</div>' +
-        '<div class="detail-section">' +
-          '<h4 style="font-size:14px;margin:0 0 8px">先后关系</h4>' +
-          renderTimeline() +
-        '</div>' +
-      '</div>' +
-      '<div class="info-card help-section" id="help-admin">' +
-        '<h3>管理员手册</h3>' +
-        '<div class="detail-section">' +
-          '<div class="detail-section-title" style="font-weight:600;font-size:13px">管理员核心操作</div>' +
-          '<p style="font-size:13px;color:var(--color-text-muted);margin-top:6px">' +
-            '目标模型固定为：<strong>设备网关 -> 采集执行器 -> 功能点</strong>。管理端按以下闭环操作。' +
-          '</p>' +
-          '<ol style="margin:10px 0 0 20px;font-size:13px;color:var(--color-text);line-height:1.7">' +
-            '<li>绑定策略：为农户绑定设备网关（默认可见该网关下授权范围），或按采集执行器/功能点做更细粒度授权。</li>' +
-            '<li>在“设备管理”先确认设备网关可见，再补充采集执行器和默认功能点，完成联调展示。</li>' +
-            '<li>在“原始报文排查”中按设备网关、message_id、payload_hex 搜索 raw；详情页分别查看业务处理状态和协议解码状态。</li>' +
-            '<li>控制面板发起控制时先返回 pending，命令状态会按 pending / sent / ack / succeeded / failed / timeout 展示。</li>' +
-            '<li>控制日志用于排查下行命令；点击任一行可查看完整 Hex、目标、生命周期和网关响应，并可跳转同一网关的上行报文。</li>' +
-          '</ol>' +
-        '</div>' +
-        '<div class="detail-section">' +
-          '<h4 style="font-size:14px;margin:0 0 8px">常见问题</h4>' +
-          '<p style="font-size:13px;color:var(--color-text-muted)">请先确认该网关是否有注册/心跳报文；无注册报文通常说明平台尚未建立该设备网关档案。</p>' +
-        '</div>' +
-      '</div>' +
-      '<div class="info-card help-section" id="help-mini">' +
-        '<h3>C 端手册</h3>' +
-        '<div class="detail-section">' +
-          '<div class="detail-section-title" style="font-weight:600;font-size:13px">用户入口</div>' +
-          '<ol style="margin:10px 0 0 20px;font-size:13px;color:var(--color-text);line-height:1.7">' +
-            '<li>登录后进入“我的设备”，系统返回绑定给当前农户的采集执行器与功能点。</li>' +
-            '<li>设备详情页查看实时值、运行范围和设备信息。</li>' +
-            '<li>控制页先确认按钮行为；控制结果会异步返回命令状态（等待下发/已下发/超时）。</li>' +
-            '<li>历史曲线支持 1d/3d/7d/30d 与兼容参数。</li>' +
-            '<li>设置页可查看/编辑基本资料，并可从“使用说明”跳转此帮助章节。</li>' +
-          '</ol>' +
-        '</div>' +
-      '</div>' +
-      '<div class="info-card help-section" id="help-hardware">' +
-        '<h3>硬件联调手册</h3>' +
-        '<div class="detail-section">' +
-          '<p style="font-size:13px;color:var(--color-text-muted);margin-bottom:10px">' +
-            '云端职责为：收 raw bytes、留痕、落库、解析分类与透传控制。硬件侧对齐时，首要保证数据可追溯。' +
-          '</p>' +
-          '<p style="font-size:13px;color:var(--color-text-secondary);font-weight:600;margin-bottom:6px">接入约定（对接方）</p>' +
-          '<ul style="margin:0 0 10px 20px;font-size:13px;color:var(--color-text);line-height:1.7">' +
-            '<li>设备网关作为 TCP 客户端接入 Adapter 的 8081（固定端口以实际发布配置为准）。</li>' +
-            '<li>云端仅收包，不要求设备直连 HTTP。</li>' +
-            '<li>建议在联调阶段先发 register + keepalive + 工作 / 告警样例；未识别样例默认只用于接入层本地排查。</li>' +
-            '<li>MCU1 上行以 BB=01/02/03 区分自动、手动和故障状态；Tag 按 1/N/R/S/V/W/T/U 从高到低解释，CRC 使用低字节在前的 Modbus CRC16。</li>' +
-            '<li>MCU1 下行以 BB=00/01/02/03 区分校时初始化、自动温控配置与读取、历史包收到确认、手动控制；控制日志会按下行方向逐字段解释。</li>' +
-            '<li>HH MM SS 已定位为 3 字节。建议本轮联调暂定为 BCD、Asia/Shanghai（UTC+8）、各 1 字节并参与 CRC；需甲方书面确认后才升级为已确认规则。</li>' +
-            '<li>MCU1 自动无历史包用 00 占位，因此没有温度；自动历史包在一条消息中携带 12–15 组温度；手动包每条带当前温度。</li>' +
-            '<li>温度的 2 字节宽度在历史包中明确，但字节序、符号和缩放尚未说明；换算规则确认前只展示原始值，不伪造摄氏度。</li>' +
-            '<li>当前 PPT 只描述 MCU1 采集执行器及其 NTC、限位、继电器功能，没有给出 MCU2/MCU3 或全部设备类型清单。</li>' +
-            '<li>测试曲线使用结构化 telemetry 生成波动值；MCU1 TCP raw 可独立持续发送，用于验证收包与协议透视。</li>' +
-            '<li>旧单字节 F0/0F/00 只是平台早期 Mock/兼容控制字，不是 PPT 第 14 页定义的完整 MCU1 下行包。</li>' +
-            '<li>所有调试入口使用占位符，不暴露真实内网地址或凭证信息；示例地址使用 192.0.2.1:8081。</li>' +
-          '</ul>' +
-          '<div class="code-panel">示例：\n1) 先发送注册（FP_xxx）\n2) 每隔固定间隔发送心跳\n3) 发送工作/告警样例测试排查</div>' +
-        '</div>' +
-      '</div>' +
-      '<div class="info-card help-section" id="help-checklist">' +
-        '<h3>上线验证清单</h3>' +
-        '<div class="detail-section">' +
-          renderValidationChecklist() +
-        '</div>' +
-      '</div>';
-
-    var sections = container.querySelectorAll('.help-section');
-    for (var i = 0; i < sections.length; i++) {
-      sections[i].style.display = sections[i].id === 'help-' + activeSection ? '' : 'none';
-    }
-
+    container.innerHTML = window.NHHelpCenter.render(activeSection);
   }
 
   function renderPage() {
@@ -3734,8 +3616,12 @@
     }
   }
 
+  function payloadDebugEntry() {
+    return '<div class="table-header"><span>原始报文排查</span><button class="btn btn-outline btn-sm" onclick="openRawDebugConsole()">报文调试窗口</button></div>';
+  }
+
   async function renderPayloadEvents(container) {
-    container.innerHTML = '<div class="loading-state"><div class="loading-spinner"></div><p>加载原始报文...</p></div>';
+    container.innerHTML = payloadDebugEntry() + '<div class="loading-state"><div class="loading-spinner"></div><p>加载原始报文...</p></div>';
 
     try {
       var params = buildPagedLogParams(payloadState);
@@ -3869,7 +3755,7 @@
       bindFilterBarEvents(payloadState, 'pe-filter-keyword', renderPage, 'payloadResetFilters');
 
     } catch (e) {
-      container.innerHTML = '<div class="error-state"><p>加载失败：' + escHtml(e.message || '网络异常') + '</p><button class="btn btn-outline btn-sm" onclick="renderPage()">重试</button></div>';
+      container.innerHTML = payloadDebugEntry() + '<div class="error-state"><p>加载失败：' + escHtml(e.message || '网络异常') + '</p><button class="btn btn-outline btn-sm" onclick="renderPage()">重试</button></div>';
     }
   }
 

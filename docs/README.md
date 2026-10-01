@@ -1,9 +1,9 @@
 # 涅凰智农 Docs 入口
 
-> 2026-09-30 一期联调补充：最新 MCU0 0910 附件的来源、按页原文与结构化阅读版见 [协议资料入口](protocols/README.md)，实测范围与未完成项见 [10/2 联调验收](hardware_integration_20261002.md)。本文件原有 MCU1/历史周期口径不能自动替代 MCU0 附件；4/5分钟、ACK与编码矛盾仍待确认。
+> 硬件人员先看 [接云与报文操作说明](product_manual.md)。最新客户原始包、来源和已验证字段见 [10/1报文阅读版](protocols/mcu0-20261001/README.md)；实测边界见 [10/2联调验收](hardware_integration_20261002.md)。历史5分钟一组、手动约4分钟回显；BB02清缓存当前禁止实发，5种故障样本仍待客户。旧MCU1/4小时读取/BCD建议不替代最新MCU0来源。
 
 
-> 更新日期：2026-07-05
+> 更新日期：2026-10-02
 
 本目录同时包含当前事实文档和早期方案材料。涉及实现、联调、对外说明时，优先阅读本文件列出的当前入口。
 
@@ -11,7 +11,9 @@
 
 | 文档 | 用途 |
 |------|------|
-| `product_manual.md` | 运营与用户侧可用手册（管理员、C 端、联调说明入口） |
+| [product_manual.md](product_manual.md) | 给硬件人员：连云、发包、收发结果、正常表现和排查步骤 |
+| [raw_debug_console.md](raw_debug_console.md) | 报文调试窗口当前实现与维护边界 |
+| [help_center_integration.md](help_center_integration.md) | 独立帮助内容文件的开发集成交接 |
 | `current_product_status.md` | 当前已实现能力、Gap、待确认问题 |
 | `current_api.md` | 当前代码真实注册的 HTTP API |
 | `gateway_adapter.md` | 硬件端联调指南、TCP 接入方式、下行命令链路和云端 Adapter 运行说明 |
