@@ -9,6 +9,7 @@
 - `005_fix_realtime_projection.sql`
 - `006_gateway_access_mode_collector_binding.sql`
 - `007_raw_event_delivery_idempotency.sql`
+- `008_raw_event_time_indexes.sql`（同名异定义失败，禁止 --force）
 
 执行前确认：
 
@@ -17,7 +18,7 @@
 3. 所有业务表必须有主键、`created_at`、`updated_at`。
 4. 既有 5 张核心表字段不能删除或改名。
 5. SQL 文件必须按文件名顺序执行。
-6. `deploy.sh` 使用 `schema_migrations` 记录已执行版本，并会对旧库做 baseline 探测，避免重复执行旧 ALTER。
+6. `deploy.sh` 只检查 `schema_migrations`，不执行 DDL。迁移需先核验实际结构，再登记完整文件名版本；不把缺失迁移静默标为已执行。
 
 开发写库链路见：
 

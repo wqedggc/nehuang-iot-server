@@ -193,7 +193,7 @@ func (r *Repository) ListPayloadEvents(ctx context.Context, params domain.Payloa
 	}
 
 	// capture_id's unique index serves transport idempotency, not time browsing.
-	// With a source filter MySQL 5.7 otherwise chooses it and performs a random
+	// With a source filter the deployed optimizer chose it and performed a random
 	// clustered-row lookup for every historical capture before filtering by time.
 	browseTable := "raw_device_events"
 	if params.SourceType != nil {
